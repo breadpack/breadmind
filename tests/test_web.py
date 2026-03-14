@@ -248,3 +248,147 @@ def test_deny_tool_no_agent():
     client = TestClient(app.app)
     resp = client.post("/api/approvals/abc123/deny")
     assert resp.status_code == 404
+
+
+# --- Config editing endpoint tests ---
+
+def test_get_api_keys_status_empty():
+    """Test GET /api/config/api-keys when no keys are set."""
+    import os
+    # Ensure keys are not set
+    for k in ["ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY"]:
+        os.environ.pop(k, None)
+    app = WebApp(message_handler=lambda m, **kw: "ok")
+    client = TestClient(app.app)
+    resp = client.get("/api/config/api-keys")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "keys" in data
+    for key_name in ["ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY"]:
+        assert data["keys"][key_name]["set"] is False
+        assert data["keys"][key_name]["masked"] == ""
+
+
+def test_get_api_keys_status_with_key():
+    """Test GET /api/config/api-keys returns masked values when keys are set."""
+    import os
+    os.environ["GEMINI_API_KEY"] = "AIzaSyD1234567890abcdef"
+    try:
+        app = WebApp(message_handler=lambda m, **kw: "ok")
+        client = TestClient(app.app)
+        resp = client.get("/api/config/api-keys")
+        assert resp.status_code == 200
+        data = resp.json()
+        gemini = data["keys"]["GEMINI_API_KEY"]
+        assert gemini["set"] is True
+        assert gemini["masked"] == "AIzaSyD1***"
+        assert "1234567890" not in gemini["masked"]
+    finally:
+        os.environ.pop("GEMINI_API_KEY", None)
+
+
+def test_post_api_key_saves(tmp_path, monkeypatch):
+    """Test POST /api/config/api-keys saves the key."""
+    import os as _os
+    import breadmind.config as config_module
+    # Mock save_env_var to avoid writing to real .env
+    saved = {}
+    def mock_save(k, v):
+        saved[k] = v
+        _os.environ[k] = v
+    monkeypatch.setattr(config_module, "save_env_var", mock_save)
+    app = WebApp(message_handler=lambda m, **kw: "ok")
+    client = TestClient(app.app)
+    resp = client.post("/api/config/api-keys", json={
+        "key_name": "ANTHROPIC_API_KEY",
+        "value": "sk-ant-api03-abcdefgh12345678"
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["masked"] == "sk-ant-a***"
+    assert saved["ANTHROPIC_API_KEY"] == "sk-ant-api03-abcdefgh12345678"
+    # Clean up
+    _os.environ.pop("ANTHROPIC_API_KEY", None)
+
+
+def test_post_api_key_invalid_name():
+    """Test POST /api/config/api-keys rejects invalid key names."""
+    app = WebApp(message_handler=lambda m, **kw: "ok")
+    client = TestClient(app.app)
+    resp = client.post("/api/config/api-keys", json={
+        "key_name": "INVALID_KEY",
+        "value": "some-value"
+    })
+    assert resp.status_code == 400
+    assert "Invalid key name" in resp.json()["error"]
+
+
+def test_post_api_key_empty_value():
+    """Test POST /api/config/api-keys rejects empty values."""
+    app = WebApp(message_handler=lambda m, **kw: "ok")
+    client = TestClient(app.app)
+    resp = client.post("/api/config/api-keys", json={
+        "key_name": "ANTHROPIC_API_KEY",
+        "value": ""
+    })
+    assert resp.status_code == 400
+    assert "empty" in resp.json()["error"]
+
+
+def test_post_provider_updates_config():
+    """Test POST /api/config/provider updates runtime config."""
+    from breadmind.config import AppConfig
+    config = AppConfig()
+    app = WebApp(message_handler=lambda m, **kw: "ok", config=config)
+    client = TestClient(app.app)
+    resp = client.post("/api/config/provider", json={
+        "provider": "gemini",
+        "model": "gemini-2.0-flash",
+        "max_turns": 5,
+        "timeout": 60
+    })
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+    assert config.llm.default_provider == "gemini"
+    assert config.llm.default_model == "gemini-2.0-flash"
+    assert config.llm.tool_call_max_turns == 5
+    assert config.llm.tool_call_timeout_seconds == 60
+
+
+def test_post_provider_invalid_provider():
+    """Test POST /api/config/provider rejects invalid provider."""
+    from breadmind.config import AppConfig
+    config = AppConfig()
+    app = WebApp(message_handler=lambda m, **kw: "ok", config=config)
+    client = TestClient(app.app)
+    resp = client.post("/api/config/provider", json={"provider": "invalid_llm"})
+    assert resp.status_code == 400
+    assert "Invalid provider" in resp.json()["error"]
+
+
+def test_post_provider_invalid_max_turns():
+    """Test POST /api/config/provider rejects invalid max_turns."""
+    from breadmind.config import AppConfig
+    config = AppConfig()
+    app = WebApp(message_handler=lambda m, **kw: "ok", config=config)
+    client = TestClient(app.app)
+    resp = client.post("/api/config/provider", json={"max_turns": -1})
+    assert resp.status_code == 400
+    assert "max_turns" in resp.json()["error"]
+
+
+def test_post_mcp_updates_config():
+    """Test POST /api/config/mcp updates MCP settings."""
+    from breadmind.config import AppConfig
+    config = AppConfig()
+    app = WebApp(message_handler=lambda m, **kw: "ok", config=config)
+    client = TestClient(app.app)
+    resp = client.post("/api/config/mcp", json={
+        "auto_discover": False,
+        "max_restart_attempts": 5
+    })
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+    assert config.mcp.auto_discover is False
+    assert config.mcp.max_restart_attempts == 5

@@ -3,7 +3,7 @@ import yaml
 from dataclasses import dataclass, field
 from pathlib import Path
 
-_VALID_PROVIDERS = ("claude", "ollama", "cli")
+_VALID_PROVIDERS = ("claude", "gemini", "ollama", "cli")
 _VALID_LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 
@@ -147,6 +147,28 @@ def _expand_env(obj):
     if isinstance(obj, list):
         return [_expand_env(v) for v in obj]
     return obj
+
+
+_VALID_API_KEY_NAMES = ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY")
+
+
+def save_env_var(key: str, value: str):
+    """Save/update an environment variable to .env file."""
+    env_path = Path(__file__).parent.parent.parent / ".env"
+    lines = []
+    found = False
+    if env_path.exists():
+        lines = env_path.read_text().splitlines()
+        for i, line in enumerate(lines):
+            if line.startswith(f"{key}="):
+                lines[i] = f"{key}={value}"
+                found = True
+                break
+    if not found:
+        lines.append(f"{key}={value}")
+    env_path.write_text("\n".join(lines) + "\n")
+    # Also set in current process
+    os.environ[key] = value
 
 
 def load_safety_config(config_dir: str = "config") -> dict:

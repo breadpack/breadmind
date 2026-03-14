@@ -125,6 +125,45 @@
         .btn-deny { background: #7f1d1d; color: #fca5a5; }
         .btn-deny:hover { background: #991b1b; }
         .no-data { color: #64748b; font-size: 13px; padding: 12px 0; }
+
+        /* Editable settings */
+        .setting-input { background: #1a2332; border: 1px solid #2d3748; border-radius: 6px; color: #e2e8f0; padding: 6px 10px; font-size: 13px; font-family: monospace; width: 220px; outline: none; }
+        .setting-input:focus { border-color: #3b82f6; }
+        .setting-input[type="number"] { width: 100px; }
+        .setting-select { background: #1a2332; border: 1px solid #2d3748; border-radius: 6px; color: #e2e8f0; padding: 6px 10px; font-size: 13px; width: 220px; outline: none; cursor: pointer; }
+        .setting-select:focus { border-color: #3b82f6; }
+        .setting-select option { background: #1a2332; color: #e2e8f0; }
+        .save-btn { padding: 6px 16px; background: #3b82f6; color: white; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: 600; transition: background 0.2s; }
+        .save-btn:hover { background: #2563eb; }
+        .save-btn:disabled { background: #475569; cursor: not-allowed; }
+        .save-btn.success { background: #10b981; }
+        .save-btn.error { background: #ef4444; }
+        .section-footer { display: flex; justify-content: flex-end; margin-top: 14px; padding-top: 10px; border-top: 1px solid #334155; }
+        .key-status { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+        .key-status.set { background: #22c55e; }
+        .key-status.not-set { background: #ef4444; }
+        .password-wrapper { position: relative; display: inline-flex; align-items: center; }
+        .password-wrapper input { padding-right: 32px; }
+        .toggle-pwd { position: absolute; right: 6px; background: none; border: none; color: #94a3b8; cursor: pointer; font-size: 14px; padding: 2px; }
+        .toggle-pwd:hover { color: #e2e8f0; }
+        .key-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #1e293b; flex-wrap: wrap; }
+        .key-row:last-child { border-bottom: none; }
+        .key-label { font-size: 13px; color: #cbd5e1; min-width: 160px; display: flex; align-items: center; }
+        .key-save-btn { padding: 4px 12px; background: #3b82f6; color: white; border: none; border-radius: 4px; font-size: 12px; cursor: pointer; }
+        .key-save-btn:hover { background: #2563eb; }
+        .key-save-btn.success { background: #10b981; }
+        .key-save-btn.error { background: #ef4444; }
+        .key-masked { font-size: 11px; color: #64748b; font-family: monospace; margin-left: 4px; }
+        .toggle-switch { position: relative; width: 44px; height: 24px; display: inline-block; }
+        .toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .toggle-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: #475569; border-radius: 24px; transition: 0.3s; }
+        .toggle-slider:before { content: ''; position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: 0.3s; }
+        .toggle-switch input:checked + .toggle-slider { background: #3b82f6; }
+        .toggle-switch input:checked + .toggle-slider:before { transform: translateX(20px); }
+        .toast { position: fixed; bottom: 20px; right: 20px; padding: 10px 20px; border-radius: 8px; font-size: 13px; color: white; z-index: 1000; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
+        .toast.show { opacity: 1; }
+        .toast.success { background: #10b981; }
+        .toast.error { background: #ef4444; }
     </style>
 </head>
 <body>
@@ -191,6 +230,7 @@
             </div>
         </div>
     </div>
+    <div class="toast" id="toast"></div>
     <script>
         let ws;
         let allEvents = [];
@@ -289,6 +329,90 @@
         }
 
         // Settings
+        function showToast(message, type) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = 'toast show ' + type;
+            setTimeout(() => { toast.className = 'toast'; }, 2500);
+        }
+
+        function flashBtn(btn, success) {
+            const orig = btn.className;
+            btn.className = orig + (success ? ' success' : ' error');
+            btn.textContent = success ? 'Saved!' : 'Error';
+            setTimeout(() => { btn.className = orig; btn.textContent = 'Save'; btn.disabled = false; }, 1500);
+        }
+
+        function togglePassword(btn) {
+            const input = btn.parentElement.querySelector('input');
+            if (input.type === 'password') { input.type = 'text'; btn.textContent = '\u{1F648}'; }
+            else { input.type = 'password'; btn.textContent = '\u{1F441}'; }
+        }
+
+        async function saveApiKey(keyName) {
+            const input = document.getElementById('input-' + keyName);
+            const btn = document.getElementById('btn-' + keyName);
+            const value = input.value.trim();
+            if (!value) { showToast('API key cannot be empty', 'error'); return; }
+            btn.disabled = true; btn.textContent = '...';
+            try {
+                const resp = await fetch('/api/config/api-keys', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({key_name: keyName, value: value})
+                });
+                const data = await resp.json();
+                if (resp.ok) {
+                    flashBtn(btn, true);
+                    showToast(keyName + ' saved successfully', 'success');
+                    input.value = '';
+                    input.placeholder = data.masked || 'Saved';
+                    const dot = document.getElementById('dot-' + keyName);
+                    if (dot) { dot.className = 'key-status set'; }
+                    const maskedEl = document.getElementById('masked-' + keyName);
+                    if (maskedEl) { maskedEl.textContent = data.masked || ''; }
+                } else {
+                    flashBtn(btn, false);
+                    showToast(data.error || 'Failed to save', 'error');
+                }
+            } catch(e) { flashBtn(btn, false); showToast('Network error', 'error'); }
+        }
+
+        async function saveProvider() {
+            const btn = document.getElementById('btn-provider');
+            btn.disabled = true; btn.textContent = '...';
+            const payload = {
+                provider: document.getElementById('input-provider').value,
+                model: document.getElementById('input-model').value,
+                max_turns: parseInt(document.getElementById('input-max-turns').value) || null,
+                timeout: parseInt(document.getElementById('input-timeout').value) || null,
+            };
+            try {
+                const resp = await fetch('/api/config/provider', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                if (resp.ok) { flashBtn(btn, true); showToast('Provider settings saved', 'success'); }
+                else { const d = await resp.json(); flashBtn(btn, false); showToast(d.error || 'Failed', 'error'); }
+            } catch(e) { flashBtn(btn, false); showToast('Network error', 'error'); }
+        }
+
+        async function saveMcp() {
+            const btn = document.getElementById('btn-mcp');
+            btn.disabled = true; btn.textContent = '...';
+            const payload = {
+                auto_discover: document.getElementById('input-auto-discover').checked,
+                max_restart_attempts: parseInt(document.getElementById('input-max-restart').value) || 0,
+            };
+            try {
+                const resp = await fetch('/api/config/mcp', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                if (resp.ok) { flashBtn(btn, true); showToast('MCP settings saved', 'success'); }
+                else { const d = await resp.json(); flashBtn(btn, false); showToast(d.error || 'Failed', 'error'); }
+            } catch(e) { flashBtn(btn, false); showToast('Network error', 'error'); }
+        }
+
         function loadSettings() {
             Promise.all([
                 fetch('/api/config').then(r => r.json()).catch(() => ({})),
@@ -298,7 +422,8 @@
                 fetch('/api/audit').then(r => r.json()).catch(() => ({entries:[]})),
                 fetch('/api/metrics').then(r => r.json()).catch(() => ({metrics:{}})),
                 fetch('/api/approvals').then(r => r.json()).catch(() => ({approvals:[]})),
-            ]).then(([config, safety, monitoring, usage, audit, metrics, approvals]) => {
+                fetch('/api/config/api-keys').then(r => r.json()).catch(() => ({keys:{}})),
+            ]).then(([config, safety, monitoring, usage, audit, metrics, approvals, apiKeys]) => {
                 const c = document.getElementById('settingsContent');
                 let html = '';
 
@@ -373,28 +498,58 @@
                 }
                 html += `</div>`;
 
-                // LLM
+                // API Keys
+                const keys = apiKeys.keys || {};
+                html += `<div class="settings-section"><h3>API Keys</h3>`;
+                ['ANTHROPIC_API_KEY', 'GEMINI_API_KEY', 'OPENAI_API_KEY'].forEach(keyName => {
+                    const info = keys[keyName] || {set: false, masked: ''};
+                    const dotClass = info.set ? 'set' : 'not-set';
+                    const placeholder = info.set ? info.masked : 'Not set';
+                    html += `<div class="key-row">
+                        <span class="key-label"><span class="key-status ${dotClass}" id="dot-${keyName}"></span>${keyName}</span>
+                        <div class="password-wrapper">
+                            <input type="password" class="setting-input" id="input-${keyName}" placeholder="${escapeHtml(placeholder)}">
+                            <button class="toggle-pwd" onclick="togglePassword(this)">\u{1F441}</button>
+                        </div>
+                        <span class="key-masked" id="masked-${keyName}">${info.set ? escapeHtml(info.masked) : ''}</span>
+                        <button class="key-save-btn" id="btn-${keyName}" onclick="saveApiKey('${keyName}')">Save</button>
+                    </div>`;
+                });
+                html += `</div>`;
+
+                // LLM Provider (editable)
                 html += `<div class="settings-section"><h3>LLM Provider</h3>`;
-                if (config.llm) {
-                    html += row('Provider', config.llm.default_provider);
-                    html += row('Model', config.llm.default_model);
-                    html += row('Max Tool Turns', config.llm.tool_call_max_turns);
-                    html += row('Timeout (sec)', config.llm.tool_call_timeout_seconds);
-                }
+                const llm = config.llm || {};
+                const providers = ['claude', 'gemini', 'ollama', 'cli'];
+                html += `<div class="setting-row"><span class="setting-label">Provider</span>
+                    <select class="setting-select" id="input-provider">`;
+                providers.forEach(p => {
+                    html += `<option value="${p}" ${p === llm.default_provider ? 'selected' : ''}>${p}</option>`;
+                });
+                html += `</select></div>`;
+                html += `<div class="setting-row"><span class="setting-label">Model</span>
+                    <input type="text" class="setting-input" id="input-model" value="${escapeHtml(llm.default_model || '')}"></div>`;
+                html += `<div class="setting-row"><span class="setting-label">Max Tool Turns</span>
+                    <input type="number" class="setting-input" id="input-max-turns" value="${llm.tool_call_max_turns || 10}" min="1"></div>`;
+                html += `<div class="setting-row"><span class="setting-label">Timeout (sec)</span>
+                    <input type="number" class="setting-input" id="input-timeout" value="${llm.tool_call_timeout_seconds || 30}" min="1"></div>`;
+                html += `<div class="section-footer"><button class="save-btn" id="btn-provider" onclick="saveProvider()">Save</button></div>`;
                 html += `</div>`;
 
-                // MCP
+                // MCP (editable)
                 html += `<div class="settings-section"><h3>MCP Configuration</h3>`;
-                if (config.mcp) {
-                    html += row('Auto Discover', config.mcp.auto_discover, config.mcp.auto_discover);
-                    html += row('Max Restart Attempts', config.mcp.max_restart_attempts);
-                    html += `<div class="setting-row"><span class="setting-label">Registries</span><div class="tag-list">`;
-                    (config.mcp.registries || []).forEach(r => { html += `<span class="tag">${r.name} (${r.type}) ${r.enabled ? '\u2713' : '\u2717'}</span>`; });
-                    html += `</div></div>`;
-                }
+                const mcp = config.mcp || {};
+                html += `<div class="setting-row"><span class="setting-label">Auto Discover</span>
+                    <label class="toggle-switch"><input type="checkbox" id="input-auto-discover" ${mcp.auto_discover ? 'checked' : ''}><span class="toggle-slider"></span></label></div>`;
+                html += `<div class="setting-row"><span class="setting-label">Max Restart Attempts</span>
+                    <input type="number" class="setting-input" id="input-max-restart" value="${mcp.max_restart_attempts || 3}" min="0"></div>`;
+                html += `<div class="setting-row"><span class="setting-label">Registries</span><div class="tag-list">`;
+                (mcp.registries || []).forEach(r => { html += `<span class="tag">${r.name} (${r.type}) ${r.enabled ? '\u2713' : '\u2717'}</span>`; });
+                html += `</div></div>`;
+                html += `<div class="section-footer"><button class="save-btn" id="btn-mcp" onclick="saveMcp()">Save</button></div>`;
                 html += `</div>`;
 
-                // Safety
+                // Safety (read-only)
                 html += `<div class="settings-section"><h3>Safety Rules</h3>`;
                 if (safety.blacklist) {
                     Object.entries(safety.blacklist).forEach(([cat, actions]) => {
@@ -410,14 +565,14 @@
                 }
                 html += `</div>`;
 
-                // Monitoring
+                // Monitoring (read-only)
                 html += `<div class="settings-section"><h3>Monitoring Engine</h3>`;
                 html += row('Status', monitoring.running ? 'Running' : 'Stopped', monitoring.running);
                 html += row('Rules', monitoring.rules);
                 html += row('Total Events', monitoring.events_total);
                 html += `</div>`;
 
-                // Database
+                // Database (read-only)
                 html += `<div class="settings-section"><h3>Database</h3>`;
                 if (config.database) {
                     html += row('Host', config.database.host);

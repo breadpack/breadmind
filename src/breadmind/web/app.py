@@ -1,8 +1,9 @@
 import asyncio
 import json
 import logging
+import os
 from dataclasses import asdict
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
@@ -216,6 +217,114 @@ class WebApp:
                 status_code=404,
                 content={"error": "Approval not found or agent not configured"},
             )
+
+        @app.get("/api/config/api-keys")
+        async def get_api_keys_status():
+            """Return which API keys are set (masked values)."""
+            keys = {}
+            for key_name in ["ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY"]:
+                val = os.environ.get(key_name, "")
+                if val:
+                    keys[key_name] = {"set": True, "masked": val[:8] + "***" if len(val) > 8 else "***"}
+                else:
+                    keys[key_name] = {"set": False, "masked": ""}
+            return {"keys": keys}
+
+        @app.post("/api/config/api-keys")
+        async def update_api_key(request: Request):
+            """Update an API key."""
+            from breadmind.config import save_env_var, _VALID_API_KEY_NAMES
+            data = await request.json()
+            key_name = data.get("key_name", "")
+            value = data.get("value", "")
+            if key_name not in _VALID_API_KEY_NAMES:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": f"Invalid key name. Must be one of {list(_VALID_API_KEY_NAMES)}"},
+                )
+            if not value:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "API key value cannot be empty"},
+                )
+            save_env_var(key_name, value)
+            masked = value[:8] + "***" if len(value) > 8 else "***"
+            return {"status": "ok", "masked": masked}
+
+        @app.post("/api/config/provider")
+        async def update_provider(request: Request):
+            """Update LLM provider settings."""
+            from breadmind.config import _VALID_PROVIDERS
+            data = await request.json()
+            provider = data.get("provider")
+            model = data.get("model")
+            max_turns = data.get("max_turns")
+            timeout = data.get("timeout")
+
+            if provider is not None:
+                if provider not in _VALID_PROVIDERS:
+                    return JSONResponse(
+                        status_code=400,
+                        content={"error": f"Invalid provider. Must be one of {list(_VALID_PROVIDERS)}"},
+                    )
+                if self._config:
+                    self._config.llm.default_provider = provider
+
+            if model is not None:
+                if self._config:
+                    self._config.llm.default_model = model
+
+            if max_turns is not None:
+                try:
+                    max_turns = int(max_turns)
+                    if max_turns < 1:
+                        raise ValueError()
+                except (ValueError, TypeError):
+                    return JSONResponse(
+                        status_code=400,
+                        content={"error": "max_turns must be a positive integer"},
+                    )
+                if self._config:
+                    self._config.llm.tool_call_max_turns = max_turns
+
+            if timeout is not None:
+                try:
+                    timeout = int(timeout)
+                    if timeout < 1:
+                        raise ValueError()
+                except (ValueError, TypeError):
+                    return JSONResponse(
+                        status_code=400,
+                        content={"error": "timeout must be a positive integer"},
+                    )
+                if self._config:
+                    self._config.llm.tool_call_timeout_seconds = timeout
+
+            return {"status": "ok"}
+
+        @app.post("/api/config/mcp")
+        async def update_mcp(request: Request):
+            """Update MCP configuration."""
+            data = await request.json()
+            auto_discover = data.get("auto_discover")
+            max_restart = data.get("max_restart_attempts")
+
+            if self._config:
+                if auto_discover is not None:
+                    self._config.mcp.auto_discover = bool(auto_discover)
+                if max_restart is not None:
+                    try:
+                        max_restart = int(max_restart)
+                        if max_restart < 0:
+                            raise ValueError()
+                    except (ValueError, TypeError):
+                        return JSONResponse(
+                            status_code=400,
+                            content={"error": "max_restart_attempts must be a non-negative integer"},
+                        )
+                    self._config.mcp.max_restart_attempts = max_restart
+
+            return {"status": "ok"}
 
         @app.websocket("/ws/chat")
         async def websocket_chat(websocket: WebSocket):
