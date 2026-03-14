@@ -319,6 +319,11 @@
                         <button class="active" onclick="showStoreSection('results')">Search Results</button>
                         <button onclick="showStoreSection('installed')">Installed</button>
                     </div>
+                    <div class="store-toggle" id="source-filter" style="margin-bottom:8px;">
+                        <button class="cat-btn active" onclick="filterSource('', this)">All</button>
+                        <button class="cat-btn" onclick="filterSource('mcp_registry', this)">✅ Verified</button>
+                        <button class="cat-btn" onclick="filterSource('clawhub', this)">🐾 ClawHub</button>
+                    </div>
                     <div id="store-categories"></div>
                     <div id="store-results"></div>
                     <div id="store-installed" style="display:none"></div>
@@ -1358,6 +1363,16 @@
         }
 
         // MCP Store
+        var _currentSourceFilter = '';
+
+        function filterSource(source, btn) {
+            _currentSourceFilter = source;
+            var btns = document.querySelectorAll('#source-filter .cat-btn');
+            btns.forEach(function(b) { b.classList.remove('active'); });
+            if (btn) btn.classList.add('active');
+            loadFeatured(source);
+        }
+
         function trustIcon(source) {
             if (source === 'mcp_registry') return '<span title="MCP Registry Verified" style="cursor:help;">✅</span>';
             if (source === 'clawhub') return '<span title="ClawHub" style="cursor:help;">🐾</span>';
@@ -1508,12 +1523,13 @@
             messages.innerHTML += '<div class="install-msg info">Please run manually: ' + escapeHtml(fixCommand) + '</div>';
         }
 
-        async function loadFeatured() {
+        async function loadFeatured(sourceFilter) {
+            var sf = sourceFilter !== undefined ? sourceFilter : _currentSourceFilter;
             const catContainer = document.getElementById('store-categories');
             const resultsContainer = document.getElementById('store-results');
             catContainer.innerHTML = '<div class="loading">Loading featured servers...</div>';
             try {
-                const resp = await fetch('/api/mcp/featured');
+                const resp = await fetch('/api/mcp/featured' + (sf ? '?source=' + encodeURIComponent(sf) : ''));
                 const data = await resp.json();
                 const cats = data.categories || [];
                 if (cats.length === 0) {
@@ -1572,7 +1588,7 @@
             const container = document.getElementById('store-results');
             container.innerHTML = '<div class="loading">Searching...</div>';
 
-            const resp = await fetch('/api/mcp/search?q=' + encodeURIComponent(query) + '&limit=10');
+            const resp = await fetch('/api/mcp/search?q=' + encodeURIComponent(query) + '&limit=10' + (_currentSourceFilter ? '&source=' + encodeURIComponent(_currentSourceFilter) : ''));
             const data = await resp.json();
 
             if (data.results.length === 0) {

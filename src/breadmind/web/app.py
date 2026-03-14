@@ -607,14 +607,16 @@ class WebApp:
         # --- MCP Store endpoints ---
 
         @app.get("/api/mcp/search")
-        async def mcp_search(q: str = "", limit: int = 10):
+        async def mcp_search(q: str = "", limit: int = 10, source: str = ""):
             if not self._mcp_store:
                 return {"results": []}
             results = await self._mcp_store.search(q, limit=limit)
+            if source:
+                results = [r for r in results if r.get("source") == source]
             return {"results": results}
 
         @app.get("/api/mcp/featured")
-        async def mcp_featured():
+        async def mcp_featured(source: str = ""):
             """Return featured/recommended MCP servers by category."""
             if not self._mcp_store:
                 return {"categories": []}
@@ -631,6 +633,8 @@ class WebApp:
             import asyncio
             async def fetch_category(cat):
                 results = await self._mcp_store.search(cat["query"], limit=4)
+                if source:
+                    results = [r for r in results if r.get("source") == source]
                 return {**cat, "servers": results}
             tasks = [fetch_category(c) for c in categories]
             filled = await asyncio.gather(*tasks)
