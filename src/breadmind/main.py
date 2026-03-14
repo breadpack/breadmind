@@ -1,9 +1,10 @@
 import argparse
 import asyncio
 import logging
+import os
 import signal
 import sys
-from breadmind.config import load_config, load_safety_config
+from breadmind.config import load_config, load_safety_config, get_default_config_dir, set_env_file_path
 from breadmind.core.agent import CoreAgent
 from breadmind.core.safety import SafetyGuard
 from breadmind.llm.claude import ClaudeProvider
@@ -53,6 +54,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--web", action="store_true", help="Start web UI mode with uvicorn")
     parser.add_argument("--host", default=None, help="Web server host (default: from config or 0.0.0.0)")
     parser.add_argument("--port", type=int, default=None, help="Web server port (default: from config or 8080)")
+    parser.add_argument("--config-dir", default=None,
+                        help="Config directory path (default: platform-specific)")
     parser.add_argument("--log-level", default=None, choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
                         help="Logging level (default: from config or INFO)")
     return parser.parse_args()
@@ -60,8 +63,27 @@ def _parse_args() -> argparse.Namespace:
 
 async def run():
     args = _parse_args()
-    config = load_config()
+    config_dir = args.config_dir or get_default_config_dir()
+
+    # Try platform config dir first, fall back to local ./config
+    if os.path.isdir(config_dir) and os.path.exists(os.path.join(config_dir, "config.yaml")):
+        config = load_config(config_dir)
+        safety_cfg = load_safety_config(config_dir)
+        print(f"  Config: {config_dir}")
+    elif os.path.isdir("config"):
+        config = load_config("config")
+        safety_cfg = load_safety_config("config")
+        config_dir = "config"
+        print(f"  Config: ./config (local)")
+    else:
+        config = load_config(config_dir)  # will return defaults
+        safety_cfg = load_safety_config(config_dir)
+        print(f"  Config: defaults (no config dir found)")
+
     config.validate()
+
+    # Set .env file path based on resolved config dir
+    set_env_file_path(os.path.join(config_dir, ".env"))
 
     # Configure logging
     log_level = args.log_level or config.logging.level
@@ -69,8 +91,6 @@ async def run():
         level=getattr(logging, log_level, logging.INFO),
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
-
-    safety_cfg = load_safety_config()
 
     # Connect to database and load persisted settings
     db = None

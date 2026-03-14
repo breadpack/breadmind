@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 # BreadMind Installer for Windows
-# Usage: irm https://get.breadmind.dev/windows | iex
-#   or:  .\install.ps1 [-ExternalDB]
+# Usage: irm https://raw.githubusercontent.com/breadpack/breadmind/master/deploy/install/install.ps1 | iex
+#   or:  .\install.ps1 [-ExternalDB] [-Help]
 
 param(
     [switch]$ExternalDB,
@@ -13,6 +13,17 @@ $BreadMindVersion = "0.1.0"
 $ConfigDir = Join-Path $env:APPDATA "breadmind"
 $NssmUrl = "https://nssm.cc/release/nssm-2.24.zip"
 
+$script:DbPort = 5432
+$script:DbHost = "localhost"
+$script:DbName = "breadmind"
+$script:DbUser = "breadmind"
+$script:DbPassword = "breadmind_dev"
+$script:SkipDockerPg = $false
+$script:PythonCmd = $null
+
+# Detect if running non-interactively (piped from irm)
+$script:IsInteractive = [Environment]::UserInteractive -and -not ([Console]::IsInputRedirected)
+
 function Write-Info  { Write-Host "[INFO] $args" -ForegroundColor Blue }
 function Write-Ok    { Write-Host "[OK] $args" -ForegroundColor Green }
 function Write-Warn  { Write-Host "[WARN] $args" -ForegroundColor Yellow }
@@ -20,22 +31,107 @@ function Write-Err   { Write-Host "[ERROR] $args" -ForegroundColor Red }
 
 function Ask-YesNo {
     param([string]$Prompt, [bool]$Default = $true)
+    if (-not $script:IsInteractive) {
+        return $Default
+    }
     $suffix = if ($Default) { "[Y/n]" } else { "[y/N]" }
     $answer = Read-Host "$Prompt $suffix"
     if ([string]::IsNullOrEmpty($answer)) { return $Default }
     return $answer -match '^[Yy]'
 }
 
+# -------------------------------------------------------------------
+# Port checking
+# -------------------------------------------------------------------
+function Test-PortAvailable {
+    param([int]$Port)
+    try {
+        $connections = netstat -an 2>$null | Select-String "LISTENING" | Select-String ":$Port\b"
+        return ($null -eq $connections -or $connections.Count -eq 0)
+    } catch {
+        return $true
+    }
+}
+
+function Test-PortHasPostgres {
+    param([int]$Port)
+    try {
+        $conn = New-Object System.Net.Sockets.TcpClient
+        $conn.Connect("localhost", $Port)
+        $conn.Close()
+        # Port is reachable; check if it's postgres via process
+        $listeners = netstat -ano 2>$null | Select-String "LISTENING" | Select-String ":$Port\b"
+        if ($listeners) {
+            foreach ($line in $listeners) {
+                $parts = $line.ToString().Trim() -split '\s+'
+                $pid = $parts[-1]
+                try {
+                    $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+                    if ($proc -and $proc.ProcessName -match "postgres") {
+                        return $true
+                    }
+                } catch {}
+            }
+        }
+        return $false
+    } catch {
+        return $false
+    }
+}
+
+function Resolve-DbPort {
+    if ($ExternalDB) { return }
+
+    # Check if there's already a PostgreSQL on port 5432
+    if (-not (Test-PortAvailable -Port 5432)) {
+        if (Test-PortHasPostgres -Port 5432) {
+            Write-Info "PostgreSQL detected on port 5432."
+            if (Ask-YesNo "Use existing PostgreSQL instead of starting a new container?" $true) {
+                $script:DbPort = 5432
+                $script:SkipDockerPg = $true
+                Write-Ok "Will use existing PostgreSQL on port 5432."
+                return
+            }
+        }
+        # Port 5432 in use, try alternatives
+        Write-Warn "Port 5432 is in use, trying 5433..."
+        $script:DbPort = 5433
+        if (-not (Test-PortAvailable -Port 5433)) {
+            Write-Warn "Port 5433 is also in use, trying 5434..."
+            $script:DbPort = 5434
+            if (-not (Test-PortAvailable -Port 5434)) {
+                Write-Err "Ports 5432, 5433, and 5434 are all in use."
+                Write-Err "Please free a port or use -ExternalDB flag."
+                exit 1
+            }
+        }
+        Write-Info "Will use port $($script:DbPort) for PostgreSQL."
+    }
+}
+
+# -------------------------------------------------------------------
+# Python
+# -------------------------------------------------------------------
 function Test-PythonVersion {
     Write-Info "Checking Python 3.12+..."
-    foreach ($cmd in @("python", "python3", "py -3.12")) {
+    foreach ($cmd in @("python", "python3", "py")) {
         try {
-            $ver = & ($cmd.Split()[0]) ($cmd.Split() | Select-Object -Skip 1) -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>$null
+            $cmdArgs = @("-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+            if ($cmd -eq "py") {
+                $cmdArgs = @("-3.12") + $cmdArgs
+            }
+            $ver = & $cmd @cmdArgs 2>$null
             if ($ver) {
                 $parts = $ver.Split('.')
                 if ([int]$parts[0] -ge 3 -and [int]$parts[1] -ge 12) {
-                    $script:PythonCmd = $cmd.Split()[0]
-                    Write-Ok "Python found: $($cmd) ($ver)"
+                    $script:PythonCmd = $cmd
+                    if ($cmd -eq "py") {
+                        $script:PythonCmd = "py"
+                        $script:PythonArgs = @("-3.12")
+                    } else {
+                        $script:PythonArgs = @()
+                    }
+                    Write-Ok "Python found: $cmd ($ver)"
                     return $true
                 }
             }
@@ -57,8 +153,12 @@ function Install-Python {
     }
 }
 
+# -------------------------------------------------------------------
+# Docker
+# -------------------------------------------------------------------
 function Test-Docker {
     if ($ExternalDB) { return }
+    if ($script:SkipDockerPg) { return }
     Write-Info "Checking Docker..."
     try {
         $null = docker version 2>$null
@@ -82,12 +182,41 @@ function Test-Docker {
     }
 }
 
+# -------------------------------------------------------------------
+# BreadMind installation
+# -------------------------------------------------------------------
 function Install-BreadMind {
     Write-Info "Installing BreadMind..."
-    & $PythonCmd -m pip install breadmind
-    Write-Ok "BreadMind installed."
+    $installed = $false
+
+    # Try PyPI first, fall back to git
+    try {
+        & $script:PythonCmd @($script:PythonArgs + @("-m", "pip", "install", "breadmind")) 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Ok "BreadMind installed from PyPI."
+            $installed = $true
+        }
+    } catch {}
+
+    if (-not $installed) {
+        try {
+            & $script:PythonCmd @($script:PythonArgs + @("-m", "pip", "install", "git+https://github.com/breadpack/breadmind.git"))
+            if ($LASTEXITCODE -eq 0) {
+                Write-Ok "BreadMind installed from GitHub."
+                $installed = $true
+            }
+        } catch {}
+    }
+
+    if (-not $installed) {
+        Write-Err "Failed to install BreadMind. Check your network connection."
+        exit 1
+    }
 }
 
+# -------------------------------------------------------------------
+# Configuration
+# -------------------------------------------------------------------
 function Setup-Config {
     Write-Info "Setting up configuration..."
     if (-not (Test-Path $ConfigDir)) {
@@ -117,13 +246,15 @@ mcp:
       enabled: true
 
 database:
-  host: localhost
-  port: 5432
-  name: breadmind
-  user: breadmind
-  password: breadmind_dev
+  host: $($script:DbHost)
+  port: $($script:DbPort)
+  name: $($script:DbName)
+  user: $($script:DbUser)
+  password: $($script:DbPassword)
 "@ | Set-Content $configPath -Encoding UTF8
         Write-Ok "Created $configPath"
+    } else {
+        Write-Ok "Config already exists at $configPath"
     }
 
     $safetyPath = Join-Path $ConfigDir "safety.yaml"
@@ -152,45 +283,67 @@ require_approval:
         Write-Ok "Created $safetyPath"
     }
 
-    # API Key
+    # API Key - create .env in CONFIG_DIR
     $envPath = Join-Path $ConfigDir ".env"
     if (-not (Test-Path $envPath)) {
-        $apiKey = Read-Host "Enter your Anthropic API key (or press Enter to skip)"
+        $apiKey = ""
+        if ($script:IsInteractive) {
+            $apiKey = Read-Host "Enter your Anthropic API key (or press Enter to skip)"
+        } else {
+            Write-Info "Non-interactive mode: skipping API key prompt. Set ANTHROPIC_API_KEY in $envPath later."
+        }
         @"
 ANTHROPIC_API_KEY=$apiKey
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=breadmind
-DB_USER=breadmind
-DB_PASSWORD=breadmind_dev
+DB_HOST=$($script:DbHost)
+DB_PORT=$($script:DbPort)
+DB_NAME=$($script:DbName)
+DB_USER=$($script:DbUser)
+DB_PASSWORD=$($script:DbPassword)
 "@ | Set-Content $envPath -Encoding UTF8
         Write-Ok "Created $envPath"
     }
 }
 
+# -------------------------------------------------------------------
+# Database
+# -------------------------------------------------------------------
 function Setup-Database {
     if ($ExternalDB) {
         Write-Info "External database mode. Configure DB in $ConfigDir\config.yaml"
         return
     }
 
-    Write-Info "Starting PostgreSQL container..."
+    if ($script:SkipDockerPg) {
+        Write-Ok "Using existing PostgreSQL on port $($script:DbPort) (no Docker container needed)."
+        return
+    }
+
+    Write-Info "Starting PostgreSQL container on port $($script:DbPort)..."
     try {
         docker run -d `
             --name breadmind-postgres `
             --restart unless-stopped `
-            -e POSTGRES_DB=breadmind `
-            -e POSTGRES_USER=breadmind `
-            -e POSTGRES_PASSWORD=breadmind_dev `
-            -p 5432:5432 `
+            -e POSTGRES_DB=$($script:DbName) `
+            -e POSTGRES_USER=$($script:DbUser) `
+            -e POSTGRES_PASSWORD=$($script:DbPassword) `
+            -p "$($script:DbPort):5432" `
             -v breadmind-pgdata:/var/lib/postgresql/data `
             pgvector/pgvector:pg17 2>$null
-        Write-Ok "PostgreSQL running on port 5432."
+        Write-Ok "PostgreSQL running on port $($script:DbPort)."
     } catch {
-        Write-Info "PostgreSQL container may already exist."
+        # Container might already exist - try starting it
+        try {
+            docker start breadmind-postgres 2>$null
+            Write-Ok "Existing PostgreSQL container started."
+        } catch {
+            Write-Info "PostgreSQL container may already be running."
+        }
     }
 }
 
+# -------------------------------------------------------------------
+# Service setup
+# -------------------------------------------------------------------
 function Install-Nssm {
     if (Get-Command nssm -ErrorAction SilentlyContinue) { return }
     Write-Info "Downloading NSSM..."
@@ -210,29 +363,41 @@ function Setup-Service {
     Write-Info "Setting up Windows service..."
     Install-Nssm
 
-    $breadmindPath = & $PythonCmd -c "import shutil; print(shutil.which('breadmind') or '')" 2>$null
-    if (-not $breadmindPath) {
-        $breadmindPath = Join-Path (& $PythonCmd -c "import site; print(site.getusersitepackages().replace('site-packages','Scripts'))") "breadmind.exe"
+    # Get Python executable path
+    $pythonPath = & $script:PythonCmd @($script:PythonArgs + @("-c", "import sys; print(sys.executable)")) 2>$null
+    if (-not $pythonPath) {
+        Write-Err "Could not determine Python executable path."
+        exit 1
     }
 
     try {
-        nssm install BreadMind $breadmindPath "--config-dir" $ConfigDir
+        nssm install BreadMind $pythonPath "-m" "breadmind" "--web" "--config-dir" $ConfigDir
         nssm set BreadMind AppDirectory $ConfigDir
         nssm set BreadMind Description "BreadMind AI Infrastructure Agent"
         nssm set BreadMind Start SERVICE_AUTO_START
+        nssm set BreadMind AppEnvironmentExtra "PYTHONUNBUFFERED=1"
         nssm set BreadMind AppStdout (Join-Path $ConfigDir "breadmind.log")
         nssm set BreadMind AppStderr (Join-Path $ConfigDir "breadmind.err")
         nssm start BreadMind
-        Write-Ok "BreadMind service started."
+        Write-Ok "BreadMind service started (NSSM)."
     } catch {
-        Write-Warn "NSSM service setup failed. Trying sc.exe fallback..."
-        sc.exe create BreadMind binPath= "$breadmindPath --config-dir $ConfigDir" start= auto
-        sc.exe start BreadMind
-        Write-Ok "BreadMind service started (sc.exe)."
+        Write-Warn "NSSM service setup failed: $_"
+        Write-Warn "Trying sc.exe fallback..."
+        try {
+            sc.exe create BreadMind binPath= "`"$pythonPath`" -m breadmind --web --config-dir `"$ConfigDir`"" start= auto
+            sc.exe description BreadMind "BreadMind AI Infrastructure Agent"
+            sc.exe start BreadMind
+            Write-Ok "BreadMind service started (sc.exe)."
+        } catch {
+            Write-Err "Failed to create service. You can run BreadMind manually:"
+            Write-Err "  $pythonPath -m breadmind --web --config-dir `"$ConfigDir`""
+        }
     }
 }
 
+# -------------------------------------------------------------------
 # Main
+# -------------------------------------------------------------------
 Write-Host ""
 Write-Host "=========================================" -ForegroundColor Cyan
 Write-Host "  BreadMind Installer v$BreadMindVersion" -ForegroundColor Cyan
@@ -242,7 +407,13 @@ Write-Host ""
 
 if ($Help) {
     Write-Host "Usage: .\install.ps1 [-ExternalDB] [-Help]"
-    Write-Host "  -ExternalDB  Use external PostgreSQL instead of Docker"
+    Write-Host ""
+    Write-Host "Options:"
+    Write-Host "  -ExternalDB  Use an existing PostgreSQL instead of starting a Docker container"
+    Write-Host "  -Help        Show this help message"
+    Write-Host ""
+    Write-Host "One-liner install:"
+    Write-Host "  irm https://raw.githubusercontent.com/breadpack/breadmind/master/deploy/install/install.ps1 | iex"
     exit 0
 }
 
@@ -260,6 +431,7 @@ if (-not (Test-PythonVersion)) {
     }
 }
 
+Resolve-DbPort
 Test-Docker
 Install-BreadMind
 Setup-Config
@@ -272,5 +444,6 @@ Write-Ok "  BreadMind installation complete!"
 Write-Ok "========================================="
 Write-Host ""
 Write-Info "Config: $ConfigDir"
+Write-Info "DB Port: $($script:DbPort)"
 Write-Info "Logs:   Get-Content $ConfigDir\breadmind.log -Wait"
 Write-Host ""

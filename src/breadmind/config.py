@@ -1,4 +1,5 @@
 import os
+import platform
 import yaml
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -135,6 +136,18 @@ def build_system_prompt(persona: dict) -> str:
     return " ".join(parts)
 
 
+def get_default_config_dir() -> str:
+    """Return platform-specific default config directory."""
+    system = platform.system()
+    if system == "Windows":
+        base = os.environ.get("APPDATA", os.path.expanduser("~"))
+        return os.path.join(base, "breadmind")
+    elif system == "Darwin":
+        return os.path.expanduser("~/.config/breadmind")
+    else:  # Linux and others
+        return os.path.expanduser("~/.config/breadmind")
+
+
 def load_config(config_dir: str = "config") -> AppConfig:
     config_path = Path(config_dir) / "config.yaml"
     if not config_path.exists():
@@ -188,6 +201,14 @@ def _expand_env(obj):
 
 _VALID_API_KEY_NAMES = ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY")
 
+_env_file_path: str | None = None
+
+
+def set_env_file_path(path: str):
+    """Set the .env file path for save_env_var."""
+    global _env_file_path
+    _env_file_path = path
+
 
 def _get_or_create_master_key() -> bytes:
     """Get master encryption key from env, or generate and save one."""
@@ -219,7 +240,10 @@ def decrypt_value(ciphertext: str) -> str:
 
 def save_env_var(key: str, value: str):
     """Save/update an environment variable to .env file."""
-    env_path = Path(__file__).parent.parent.parent / ".env"
+    if _env_file_path:
+        env_path = Path(_env_file_path)
+    else:
+        env_path = Path(__file__).parent.parent.parent / ".env"
     lines = []
     found = False
     if env_path.exists():
