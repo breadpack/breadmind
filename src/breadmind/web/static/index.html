@@ -7,46 +7,101 @@
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; height: 100vh; display: flex; flex-direction: column; }
-        header { background: #1e293b; padding: 16px 24px; border-bottom: 1px solid #334155; display: flex; align-items: center; gap: 12px; }
+        header { background: #1e293b; padding: 12px 24px; border-bottom: 1px solid #334155; display: flex; align-items: center; gap: 12px; }
         header h1 { font-size: 20px; color: #f8fafc; }
         header .badge { background: #22c55e; color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 10px; }
-        .container { display: flex; flex: 1; overflow: hidden; }
-        .sidebar { width: 280px; background: #1e293b; border-right: 1px solid #334155; padding: 16px; overflow-y: auto; }
-        .sidebar h2 { font-size: 13px; text-transform: uppercase; color: #94a3b8; margin-bottom: 12px; letter-spacing: 1px; }
-        .sidebar .section { margin-bottom: 24px; }
-        .tool-item { padding: 6px 10px; font-size: 13px; color: #cbd5e1; border-radius: 4px; margin-bottom: 2px; }
-        .tool-item:hover { background: #334155; }
-        .tool-item .source { font-size: 11px; color: #64748b; }
-        .chat-area { flex: 1; display: flex; flex-direction: column; }
-        .messages { flex: 1; overflow-y: auto; padding: 24px; }
-        .message { margin-bottom: 16px; max-width: 80%; }
-        .message.user { margin-left: auto; }
-        .message .bubble { padding: 12px 16px; border-radius: 12px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; }
-        .message.user .bubble { background: #3b82f6; color: white; border-bottom-right-radius: 4px; }
-        .message.bot .bubble { background: #1e293b; border: 1px solid #334155; border-bottom-left-radius: 4px; }
-        .message .meta { font-size: 11px; color: #64748b; margin-top: 4px; padding: 0 4px; }
-        .message.user .meta { text-align: right; }
-        .notification { background: #fbbf24; color: #1e293b; padding: 8px 16px; border-radius: 8px; margin-bottom: 8px; font-size: 13px; text-align: center; }
-        .input-area { padding: 16px 24px; background: #1e293b; border-top: 1px solid #334155; }
-        .input-row { display: flex; gap: 12px; }
-        .input-row input { flex: 1; padding: 12px 16px; background: #0f172a; border: 1px solid #334155; border-radius: 8px; color: #e2e8f0; font-size: 14px; outline: none; }
-        .input-row input:focus { border-color: #3b82f6; }
-        .input-row button { padding: 12px 24px; background: #3b82f6; color: white; border: none; border-radius: 8px; font-size: 14px; cursor: pointer; }
-        .input-row button:hover { background: #2563eb; }
-        .input-row button:disabled { background: #475569; cursor: not-allowed; }
         .status { display: flex; align-items: center; gap: 6px; }
         .status .dot { width: 8px; height: 8px; border-radius: 50%; }
         .status .dot.connected { background: #22c55e; }
         .status .dot.disconnected { background: #ef4444; }
-        .server-item { padding: 8px 10px; margin-bottom: 4px; border-radius: 4px; font-size: 13px; }
-        .server-item .status-badge { font-size: 11px; padding: 1px 6px; border-radius: 4px; }
-        .server-item .status-badge.running { background: #166534; color: #86efac; }
-        .server-item .status-badge.stopped { background: #7f1d1d; color: #fca5a5; }
+
+        /* Tabs */
+        .tabs { display: flex; background: #1e293b; border-bottom: 1px solid #334155; padding: 0 24px; }
+        .tab { padding: 10px 20px; cursor: pointer; color: #94a3b8; font-size: 14px; border-bottom: 2px solid transparent; transition: all 0.2s; }
+        .tab:hover { color: #e2e8f0; }
+        .tab.active { color: #3b82f6; border-bottom-color: #3b82f6; }
+        .tab .count { background: #334155; color: #94a3b8; font-size: 11px; padding: 1px 6px; border-radius: 8px; margin-left: 6px; }
+        .tab .count.alert { background: #dc2626; color: #fff; }
+
+        /* Main content */
+        .main { flex: 1; overflow: hidden; display: flex; }
+        .tab-content { display: none; flex: 1; overflow: hidden; }
+        .tab-content.active { display: flex; }
+
+        /* Chat tab */
+        .container { display: flex; flex: 1; overflow: hidden; }
+        .sidebar { width: 260px; background: #1e293b; border-right: 1px solid #334155; padding: 16px; overflow-y: auto; flex-shrink: 0; }
+        .sidebar h2 { font-size: 12px; text-transform: uppercase; color: #94a3b8; margin-bottom: 10px; letter-spacing: 1px; }
+        .sidebar .section { margin-bottom: 20px; }
+        .tool-item { padding: 5px 8px; font-size: 12px; color: #cbd5e1; border-radius: 4px; margin-bottom: 2px; }
+        .tool-item:hover { background: #334155; }
+        .tool-item .source { font-size: 10px; color: #64748b; }
+        .chat-area { flex: 1; display: flex; flex-direction: column; }
+        .messages { flex: 1; overflow-y: auto; padding: 20px; }
+        .message { margin-bottom: 14px; max-width: 80%; }
+        .message.user { margin-left: auto; }
+        .message .bubble { padding: 10px 14px; border-radius: 12px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; }
+        .message.user .bubble { background: #3b82f6; color: white; border-bottom-right-radius: 4px; }
+        .message.bot .bubble { background: #1e293b; border: 1px solid #334155; border-bottom-left-radius: 4px; }
+        .message .meta { font-size: 11px; color: #64748b; margin-top: 3px; padding: 0 4px; }
+        .message.user .meta { text-align: right; }
+        .input-area { padding: 14px 20px; background: #1e293b; border-top: 1px solid #334155; }
+        .input-row { display: flex; gap: 10px; }
+        .input-row input { flex: 1; padding: 10px 14px; background: #0f172a; border: 1px solid #334155; border-radius: 8px; color: #e2e8f0; font-size: 14px; outline: none; }
+        .input-row input:focus { border-color: #3b82f6; }
+        .input-row button { padding: 10px 20px; background: #3b82f6; color: white; border: none; border-radius: 8px; font-size: 14px; cursor: pointer; }
+        .input-row button:hover { background: #2563eb; }
+        .input-row button:disabled { background: #475569; cursor: not-allowed; }
+
+        /* Monitoring tab */
+        .monitoring { flex: 1; display: flex; flex-direction: column; padding: 20px; }
+        .monitoring-header { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; }
+        .monitoring-header h2 { font-size: 18px; }
+        .monitoring-stats { display: flex; gap: 12px; }
+        .stat-card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 12px 16px; min-width: 120px; }
+        .stat-card .label { font-size: 11px; color: #94a3b8; text-transform: uppercase; }
+        .stat-card .value { font-size: 24px; font-weight: 600; margin-top: 4px; }
+        .filter-bar { display: flex; gap: 8px; margin-bottom: 16px; }
+        .filter-btn { padding: 6px 14px; border-radius: 6px; border: 1px solid #334155; background: transparent; color: #94a3b8; cursor: pointer; font-size: 12px; }
+        .filter-btn.active { background: #334155; color: #e2e8f0; }
+        .filter-btn.critical.active { background: #7f1d1d; color: #fca5a5; border-color: #dc2626; }
+        .filter-btn.warning.active { background: #713f12; color: #fde68a; border-color: #f59e0b; }
+        .filter-btn.info.active { background: #1e3a5f; color: #93c5fd; border-color: #3b82f6; }
+        .events-list { flex: 1; overflow-y: auto; }
+        .event-card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 12px 16px; margin-bottom: 8px; border-left: 4px solid; }
+        .event-card.critical { border-left-color: #dc2626; }
+        .event-card.warning { border-left-color: #f59e0b; }
+        .event-card.info { border-left-color: #3b82f6; }
+        .event-card .event-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+        .event-card .event-target { font-weight: 600; font-size: 14px; }
+        .event-card .event-time { font-size: 11px; color: #64748b; }
+        .event-card .event-condition { font-size: 13px; color: #cbd5e1; }
+        .event-card .severity-badge { font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: 600; }
+        .severity-badge.critical { background: #7f1d1d; color: #fca5a5; }
+        .severity-badge.warning { background: #713f12; color: #fde68a; }
+        .severity-badge.info { background: #1e3a5f; color: #93c5fd; }
+        .no-events { text-align: center; color: #64748b; padding: 40px; font-size: 14px; }
+
+        /* Settings tab */
+        .settings { flex: 1; overflow-y: auto; padding: 20px; max-width: 800px; }
+        .settings h2 { font-size: 18px; margin-bottom: 20px; }
+        .settings-section { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+        .settings-section h3 { font-size: 14px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 14px; padding-bottom: 8px; border-bottom: 1px solid #334155; }
+        .setting-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #1e293b; }
+        .setting-row:last-child { border-bottom: none; }
+        .setting-label { font-size: 13px; color: #cbd5e1; }
+        .setting-value { font-size: 13px; color: #94a3b8; font-family: monospace; background: #0f172a; padding: 3px 8px; border-radius: 4px; }
+        .setting-value.enabled { color: #86efac; }
+        .setting-value.disabled { color: #fca5a5; }
+        .tag-list { display: flex; flex-wrap: wrap; gap: 6px; }
+        .tag { font-size: 11px; padding: 3px 8px; border-radius: 4px; background: #334155; color: #cbd5e1; }
+        .tag.danger { background: #7f1d1d; color: #fca5a5; }
+        .tag.approval { background: #713f12; color: #fde68a; }
     </style>
 </head>
 <body>
     <header>
-        <h1>BreadMind</h1>
+        <h1>&#x1F35E; BreadMind</h1>
         <span class="badge">v0.1.0</span>
         <div style="flex:1"></div>
         <div class="status">
@@ -54,52 +109,87 @@
             <span id="statusText" style="font-size:13px;color:#94a3b8;">Connecting...</span>
         </div>
     </header>
-    <div class="container">
-        <div class="sidebar">
-            <div class="section">
-                <h2>Tools</h2>
-                <div id="toolList"><div class="tool-item">Loading...</div></div>
-            </div>
-            <div class="section">
-                <h2>MCP Servers</h2>
-                <div id="serverList"><div class="tool-item">Loading...</div></div>
+    <div class="tabs">
+        <div class="tab active" onclick="switchTab('chat')">Chat</div>
+        <div class="tab" onclick="switchTab('monitoring')">Monitoring <span class="count" id="eventCount">0</span></div>
+        <div class="tab" onclick="switchTab('settings')">Settings</div>
+    </div>
+    <div class="main">
+        <!-- Chat Tab -->
+        <div class="tab-content active" id="tab-chat">
+            <div class="container">
+                <div class="sidebar">
+                    <div class="section"><h2>Tools</h2><div id="toolList"><div class="tool-item">Loading...</div></div></div>
+                    <div class="section"><h2>MCP Servers</h2><div id="serverList"><div class="tool-item">Loading...</div></div></div>
+                </div>
+                <div class="chat-area">
+                    <div class="messages" id="messages">
+                        <div class="message bot"><div class="bubble">Welcome to BreadMind! I'm your AI infrastructure agent. How can I help?</div><div class="meta">BreadMind</div></div>
+                    </div>
+                    <div class="input-area"><div class="input-row">
+                        <input type="text" id="messageInput" placeholder="Type a message..." autocomplete="off">
+                        <button id="sendBtn" onclick="sendMessage()">Send</button>
+                    </div></div>
+                </div>
             </div>
         </div>
-        <div class="chat-area">
-            <div class="messages" id="messages">
-                <div class="message bot">
-                    <div class="bubble">Welcome to BreadMind! I'm your AI infrastructure agent. How can I help?</div>
-                    <div class="meta">BreadMind</div>
+        <!-- Monitoring Tab -->
+        <div class="tab-content" id="tab-monitoring">
+            <div class="monitoring">
+                <div class="monitoring-header">
+                    <h2>Monitoring Events</h2>
+                    <div class="monitoring-stats">
+                        <div class="stat-card"><div class="label">Total Events</div><div class="value" id="totalEvents">0</div></div>
+                        <div class="stat-card"><div class="label">Critical</div><div class="value" style="color:#fca5a5" id="criticalCount">0</div></div>
+                        <div class="stat-card"><div class="label">Warning</div><div class="value" style="color:#fde68a" id="warningCount">0</div></div>
+                    </div>
+                </div>
+                <div class="filter-bar">
+                    <button class="filter-btn active" onclick="filterEvents('all', this)">All</button>
+                    <button class="filter-btn critical" onclick="filterEvents('critical', this)">Critical</button>
+                    <button class="filter-btn warning" onclick="filterEvents('warning', this)">Warning</button>
+                    <button class="filter-btn info" onclick="filterEvents('info', this)">Info</button>
+                </div>
+                <div class="events-list" id="eventsList">
+                    <div class="no-events">No monitoring events yet. Events will appear here in real-time.</div>
                 </div>
             </div>
-            <div class="input-area">
-                <div class="input-row">
-                    <input type="text" id="messageInput" placeholder="Type a message..." autocomplete="off">
-                    <button id="sendBtn" onclick="sendMessage()">Send</button>
-                </div>
+        </div>
+        <!-- Settings Tab -->
+        <div class="tab-content" id="tab-settings">
+            <div class="settings">
+                <h2>Configuration</h2>
+                <div id="settingsContent"><div class="settings-section"><h3>Loading...</h3></div></div>
             </div>
         </div>
     </div>
     <script>
         let ws;
+        let allEvents = [];
+        let currentFilter = 'all';
         const messagesDiv = document.getElementById('messages');
         const input = document.getElementById('messageInput');
         const sendBtn = document.getElementById('sendBtn');
-        const statusDot = document.getElementById('statusDot');
-        const statusText = document.getElementById('statusText');
 
         function connect() {
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
             ws = new WebSocket(`${protocol}//${location.host}/ws/chat`);
-            ws.onopen = () => { statusDot.className = 'dot connected'; statusText.textContent = 'Connected'; };
-            ws.onclose = () => { statusDot.className = 'dot disconnected'; statusText.textContent = 'Disconnected'; setTimeout(connect, 3000); };
+            ws.onopen = () => { document.getElementById('statusDot').className = 'dot connected'; document.getElementById('statusText').textContent = 'Connected'; };
+            ws.onclose = () => { document.getElementById('statusDot').className = 'dot disconnected'; document.getElementById('statusText').textContent = 'Disconnected'; setTimeout(connect, 3000); };
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
-                if (data.type === 'response') addMessage(data.message, 'bot');
-                else if (data.type === 'notification') addNotification(data.message);
-                sendBtn.disabled = false;
-                sendBtn.textContent = 'Send';
+                if (data.type === 'response') { addMessage(data.message, 'bot'); sendBtn.disabled = false; sendBtn.textContent = 'Send'; }
+                else if (data.type === 'notification') addMessage(data.message, 'bot');
+                else if (data.type === 'monitoring_event') addMonitoringEvent(data.event);
             };
+        }
+
+        function switchTab(name) {
+            document.querySelectorAll('.tab').forEach((t, i) => { t.classList.toggle('active', ['chat','monitoring','settings'][i] === name); });
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.getElementById('tab-' + name).classList.add('active');
+            if (name === 'settings') loadSettings();
+            if (name === 'monitoring') loadEvents();
         }
 
         function sendMessage() {
@@ -108,8 +198,7 @@
             addMessage(text, 'user');
             ws.send(JSON.stringify({ message: text }));
             input.value = '';
-            sendBtn.disabled = true;
-            sendBtn.textContent = '...';
+            sendBtn.disabled = true; sendBtn.textContent = '...';
         }
 
         function addMessage(text, type) {
@@ -121,32 +210,140 @@
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
 
-        function addNotification(text) {
-            const div = document.createElement('div');
-            div.className = 'notification';
-            div.textContent = text;
-            messagesDiv.appendChild(div);
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+        input.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
+
+        // Monitoring
+        function addMonitoringEvent(event) {
+            allEvents.unshift(event);
+            updateEventCounts();
+            renderEvents();
         }
 
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
+        function updateEventCounts() {
+            document.getElementById('totalEvents').textContent = allEvents.length;
+            document.getElementById('criticalCount').textContent = allEvents.filter(e => e.severity === 'critical').length;
+            document.getElementById('warningCount').textContent = allEvents.filter(e => e.severity === 'warning').length;
+            const crit = allEvents.filter(e => e.severity === 'critical').length;
+            const countEl = document.getElementById('eventCount');
+            countEl.textContent = allEvents.length;
+            countEl.className = crit > 0 ? 'count alert' : 'count';
         }
 
-        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendMessage(); });
+        function filterEvents(severity, btn) {
+            currentFilter = severity;
+            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            renderEvents();
+        }
 
-        // Load tools and servers
+        function renderEvents() {
+            const list = document.getElementById('eventsList');
+            const filtered = currentFilter === 'all' ? allEvents : allEvents.filter(e => e.severity === currentFilter);
+            if (filtered.length === 0) { list.innerHTML = '<div class="no-events">No events matching filter.</div>'; return; }
+            list.innerHTML = filtered.map(e => `
+                <div class="event-card ${e.severity}">
+                    <div class="event-header">
+                        <span class="event-target">${escapeHtml(e.target)}</span>
+                        <span><span class="severity-badge ${e.severity}">${e.severity.toUpperCase()}</span> <span class="event-time">${new Date(e.timestamp).toLocaleString()}</span></span>
+                    </div>
+                    <div class="event-condition">${escapeHtml(e.source)} — ${escapeHtml(e.condition)}${e.details ? ' — ' + escapeHtml(JSON.stringify(e.details)) : ''}</div>
+                </div>
+            `).join('');
+        }
+
+        function loadEvents() {
+            fetch('/api/monitoring/events').then(r => r.json()).then(data => {
+                allEvents = (data.events || []).reverse();
+                updateEventCounts();
+                renderEvents();
+            }).catch(() => {});
+        }
+
+        // Settings
+        function loadSettings() {
+            Promise.all([
+                fetch('/api/config').then(r => r.json()).catch(() => ({})),
+                fetch('/api/safety').then(r => r.json()).catch(() => ({blacklist:{},require_approval:[]})),
+                fetch('/api/monitoring/status').then(r => r.json()).catch(() => ({running:false,rules:0})),
+            ]).then(([config, safety, monitoring]) => {
+                const c = document.getElementById('settingsContent');
+                let html = '';
+
+                // LLM
+                html += `<div class="settings-section"><h3>LLM Provider</h3>`;
+                if (config.llm) {
+                    html += row('Provider', config.llm.default_provider);
+                    html += row('Model', config.llm.default_model);
+                    html += row('Max Tool Turns', config.llm.tool_call_max_turns);
+                    html += row('Timeout (sec)', config.llm.tool_call_timeout_seconds);
+                }
+                html += `</div>`;
+
+                // MCP
+                html += `<div class="settings-section"><h3>MCP Configuration</h3>`;
+                if (config.mcp) {
+                    html += row('Auto Discover', config.mcp.auto_discover, config.mcp.auto_discover);
+                    html += row('Max Restart Attempts', config.mcp.max_restart_attempts);
+                    html += `<div class="setting-row"><span class="setting-label">Registries</span><div class="tag-list">`;
+                    (config.mcp.registries || []).forEach(r => { html += `<span class="tag">${r.name} (${r.type}) ${r.enabled ? '✓' : '✗'}</span>`; });
+                    html += `</div></div>`;
+                }
+                html += `</div>`;
+
+                // Safety
+                html += `<div class="settings-section"><h3>Safety Rules</h3>`;
+                if (safety.blacklist) {
+                    Object.entries(safety.blacklist).forEach(([cat, actions]) => {
+                        html += `<div class="setting-row"><span class="setting-label">${cat} (blacklist)</span><div class="tag-list">`;
+                        actions.forEach(a => { html += `<span class="tag danger">${a}</span>`; });
+                        html += `</div></div>`;
+                    });
+                }
+                if (safety.require_approval) {
+                    html += `<div class="setting-row"><span class="setting-label">Require Approval</span><div class="tag-list">`;
+                    safety.require_approval.forEach(a => { html += `<span class="tag approval">${a}</span>`; });
+                    html += `</div></div>`;
+                }
+                html += `</div>`;
+
+                // Monitoring
+                html += `<div class="settings-section"><h3>Monitoring Engine</h3>`;
+                html += row('Status', monitoring.running ? 'Running' : 'Stopped', monitoring.running);
+                html += row('Rules', monitoring.rules);
+                html += row('Total Events', monitoring.events_total);
+                html += `</div>`;
+
+                // Database
+                html += `<div class="settings-section"><h3>Database</h3>`;
+                if (config.database) {
+                    html += row('Host', config.database.host);
+                    html += row('Port', config.database.port);
+                    html += row('Database', config.database.name);
+                }
+                html += `</div>`;
+
+                c.innerHTML = html;
+            });
+        }
+
+        function row(label, value, isEnabled) {
+            let cls = 'setting-value';
+            if (isEnabled === true) cls += ' enabled';
+            else if (isEnabled === false) cls += ' disabled';
+            return `<div class="setting-row"><span class="setting-label">${label}</span><span class="${cls}">${value}</span></div>`;
+        }
+
+        // Load initial data
         fetch('/api/tools').then(r => r.json()).then(data => {
-            const list = document.getElementById('toolList');
-            list.innerHTML = data.tools.map(t => `<div class="tool-item">${t.name}<br><span class="source">${t.source} · ${t.description.substring(0, 50)}</span></div>`).join('');
+            document.getElementById('toolList').innerHTML = data.tools.map(t =>
+                `<div class="tool-item">${t.name}<br><span class="source">${t.source} · ${t.description.substring(0,50)}</span></div>`
+            ).join('');
         }).catch(() => {});
-
         fetch('/api/mcp/servers').then(r => r.json()).then(data => {
             const list = document.getElementById('serverList');
             if (data.servers.length === 0) { list.innerHTML = '<div class="tool-item" style="color:#64748b">No servers connected</div>'; return; }
-            list.innerHTML = data.servers.map(s => `<div class="server-item">${s.name} <span class="status-badge ${s.status}">${s.status}</span></div>`).join('');
+            list.innerHTML = data.servers.map(s => `<div class="tool-item">${s.name} <span style="font-size:10px;padding:1px 4px;border-radius:3px;background:${s.status==='running'?'#166534':'#7f1d1d'};color:${s.status==='running'?'#86efac':'#fca5a5'}">${s.status}</span></div>`).join('');
         }).catch(() => {});
 
         connect();
