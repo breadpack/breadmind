@@ -1358,6 +1358,12 @@
         }
 
         // MCP Store
+        function trustIcon(source) {
+            if (source === 'mcp_registry') return '<span title="MCP Registry Verified" style="cursor:help;">✅</span>';
+            if (source === 'clawhub') return '<span title="ClawHub" style="cursor:help;">🐾</span>';
+            return '';
+        }
+
         async function showDetail(slug, name, source) {
             const messages = document.getElementById('install-messages');
             const actions = document.getElementById('install-actions');
@@ -1530,7 +1536,7 @@
                         html += '<div class="server-card" style="cursor:pointer;" onclick="showDetail(\'' + escapeHtml(r.slug) + '\', \'' + escapeHtml(r.name) + '\', \'' + escapeHtml(r.source) + '\')">' +
                             '<div class="server-name">' + escapeHtml(r.name) + '</div>' +
                             '<div class="server-desc">' + escapeHtml(r.description || '').substring(0, 100) + '</div>' +
-                            '<div class="server-meta"><span class="server-source">' + escapeHtml(r.source) + '</span></div>' +
+                            '<div class="server-meta">' + trustIcon(r.source) + '<span class="server-source">' + escapeHtml(r.source) + '</span></div>' +
                             '</div>';
                     });
                     html += '</div>';
@@ -1578,7 +1584,7 @@
                 return '<div class="server-card" style="cursor:pointer;" onclick="showDetail(\'' + escapeHtml(r.slug) + '\', \'' + escapeHtml(r.name) + '\', \'' + escapeHtml(r.source) + '\')">' +
                     '<div class="server-name">' + escapeHtml(r.name) + '</div>' +
                     '<div class="server-desc">' + escapeHtml(r.description || 'No description') + '</div>' +
-                    '<div class="server-meta"><span class="server-source">' + escapeHtml(r.source) + '</span></div>' +
+                    '<div class="server-meta">' + trustIcon(r.source) + '<span class="server-source">' + escapeHtml(r.source) + '</span></div>' +
                     '</div>';
             }).join('');
         }
@@ -1600,7 +1606,7 @@
                             '<span class="server-name">' + escapeHtml(s.name) + '</span>' +
                             '<span class="server-status ' + s.status + '">' + s.status + '</span>' +
                         '</div>' +
-                        '<div class="server-meta"><span class="server-source">' + escapeHtml(s.source || '') + '</span> · ' + (s.tools || []).length + ' tools</div>' +
+                        '<div class="server-meta">' + trustIcon(s.source || '') + '<span class="server-source">' + escapeHtml(s.source || '') + '</span> · ' + (s.tools || []).length + ' tools</div>' +
                         '<div class="server-actions">' +
                             '<button onclick="startMCPServer(\'' + escapeHtml(s.name) + '\')" class="btn-sm btn-start" ' + (s.status === 'running' ? 'disabled' : '') + '>Start</button>' +
                             '<button onclick="stopMCPServer(\'' + escapeHtml(s.name) + '\')" class="btn-sm btn-stop" ' + (s.status !== 'running' ? 'disabled' : '') + '>Stop</button>' +
