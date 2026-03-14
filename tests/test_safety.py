@@ -152,6 +152,76 @@ def test_cleanup_no_expired():
     assert removed == []
 
 
+# --- Dynamic update tests ---
+
+def test_update_blacklist_replaces():
+    guard = SafetyGuard(blacklist={"old": ["old_tool"]})
+    guard.update_blacklist({"new_cat": ["new_tool_a", "new_tool_b"]})
+    assert guard._blacklist == {"new_cat": ["new_tool_a", "new_tool_b"]}
+    assert guard._flat_blacklist == {"new_tool_a", "new_tool_b"}
+    assert "old_tool" not in guard._flat_blacklist
+    # Verify check behavior
+    assert guard.check("new_tool_a", {}, user="u", channel="c") == SafetyResult.DENY
+    assert guard.check("old_tool", {}, user="u", channel="c") == SafetyResult.ALLOW
+
+
+def test_update_require_approval_replaces():
+    guard = SafetyGuard(require_approval=["old_tool"])
+    guard.update_require_approval(["new_tool_x", "new_tool_y"])
+    assert guard._require_approval == {"new_tool_x", "new_tool_y"}
+    assert guard.check("new_tool_x", {}, user="u", channel="c") == SafetyResult.REQUIRE_APPROVAL
+    assert guard.check("old_tool", {}, user="u", channel="c") == SafetyResult.ALLOW
+
+
+def test_update_user_permissions():
+    guard = SafetyGuard(
+        user_permissions={"alice": ["tool_a"]},
+        admin_users=["old_admin"],
+    )
+    guard.update_user_permissions(
+        {"bob": ["tool_b", "tool_c"]},
+        admins=["new_admin"],
+    )
+    assert guard._user_permissions == {"bob": ["tool_b", "tool_c"]}
+    assert guard._admin_users == ["new_admin"]
+    # bob can use tool_b
+    assert guard.check("tool_b", {}, user="bob", channel="c") == SafetyResult.ALLOW
+    # alice no longer has permissions
+    assert guard.check("tool_a", {}, user="alice", channel="c") == SafetyResult.DENY
+    # new_admin bypasses
+    assert guard.check("anything", {}, user="new_admin", channel="c") == SafetyResult.ALLOW
+
+
+def test_update_user_permissions_no_admins():
+    guard = SafetyGuard(admin_users=["keep_admin"])
+    guard.update_user_permissions({"user1": ["tool1"]})
+    # admins should remain unchanged when not passed
+    assert guard._admin_users == ["keep_admin"]
+
+
+def test_get_config_complete():
+    guard = SafetyGuard(
+        blacklist={"k8s": ["delete_ns"]},
+        require_approval=["shell_exec"],
+        user_permissions={"alice": ["tool_a"]},
+        admin_users=["admin1"],
+    )
+    config = guard.get_config()
+    assert config["blacklist"] == {"k8s": ["delete_ns"]}
+    assert config["require_approval"] == ["shell_exec"]
+    assert config["user_permissions"] == {"alice": ["tool_a"]}
+    assert config["admin_users"] == ["admin1"]
+
+
+def test_get_config_empty():
+    guard = SafetyGuard()
+    config = guard.get_config()
+    assert config["blacklist"] == {}
+    assert config["require_approval"] == []
+    assert config["user_permissions"] == {}
+    assert config["admin_users"] == []
+
+
 def test_session_last_active_updates():
     memory = WorkingMemory()
     session = memory.get_or_create_session("s1")

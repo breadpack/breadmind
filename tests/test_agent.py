@@ -687,3 +687,44 @@ def test_set_persona_no_specialties(agent):
     }
     agent.set_persona(persona)
     assert "expertise areas" not in agent._system_prompt
+
+
+# --- Dynamic timeout/max_turns config tests ---
+
+def test_update_timeouts_changes_values(agent):
+    agent.update_timeouts(tool_timeout=60, chat_timeout=240)
+    assert agent._tool_timeout == 60
+    assert agent._chat_timeout == 240
+
+
+def test_get_timeouts_returns_correct_values(agent):
+    agent._tool_timeout = 45
+    agent._chat_timeout = 180
+    agent._max_turns = 5
+    timeouts = agent.get_timeouts()
+    assert timeouts["tool_timeout"] == 45
+    assert timeouts["chat_timeout"] == 180
+    assert timeouts["max_turns"] == 5
+
+
+def test_update_max_turns(agent):
+    agent.update_max_turns(20)
+    assert agent._max_turns == 20
+
+
+def test_update_timeouts_rejects_invalid(agent):
+    original_tool = agent._tool_timeout
+    original_chat = agent._chat_timeout
+    original_turns = agent._max_turns
+    agent.update_timeouts(tool_timeout=0)
+    assert agent._tool_timeout == original_tool
+    agent.update_timeouts(tool_timeout=-1)
+    assert agent._tool_timeout == original_tool
+    agent.update_timeouts(chat_timeout=0)
+    assert agent._chat_timeout == original_chat
+    agent.update_timeouts(chat_timeout=-5)
+    assert agent._chat_timeout == original_chat
+    agent.update_max_turns(0)
+    assert agent._max_turns == original_turns
+    agent.update_max_turns(-1)
+    assert agent._max_turns == original_turns

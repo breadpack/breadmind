@@ -45,6 +45,24 @@ class CoreAgent:
         self._summarizer = summarizer
         self._pending_approvals: dict[str, dict] = {}
 
+    def update_timeouts(self, tool_timeout: int = None, chat_timeout: int = None):
+        """Update timeout settings at runtime."""
+        if tool_timeout is not None and tool_timeout >= 1:
+            self._tool_timeout = tool_timeout
+        if chat_timeout is not None and chat_timeout >= 1:
+            self._chat_timeout = chat_timeout
+
+    def get_timeouts(self) -> dict:
+        return {
+            "tool_timeout": self._tool_timeout,
+            "chat_timeout": self._chat_timeout,
+            "max_turns": self._max_turns,
+        }
+
+    def update_max_turns(self, max_turns: int):
+        if max_turns >= 1:
+            self._max_turns = max_turns
+
     def set_system_prompt(self, prompt: str):
         self._system_prompt = prompt
 

@@ -78,9 +78,9 @@ def _check_wan_down(state: dict, prev: dict | None) -> list[MonitoringEvent]:
 
 # Default rules
 DEFAULT_RULES = [
-    MonitoringRule(name="k8s_pod_crash", source="k8s", condition_fn=_check_pod_crash, interval_seconds=60, severity="critical"),
-    MonitoringRule(name="k8s_node_not_ready", source="k8s", condition_fn=_check_node_not_ready, interval_seconds=300, severity="critical"),
-    MonitoringRule(name="memory_high", source="system", condition_fn=_check_memory_high, interval_seconds=300, severity="warning"),
-    MonitoringRule(name="pve_vm_unexpected_stop", source="proxmox", condition_fn=_check_vm_unexpected_stop, interval_seconds=300, severity="critical"),
-    MonitoringRule(name="owrt_wan_down", source="openwrt", condition_fn=_check_wan_down, interval_seconds=300, severity="critical"),
+    MonitoringRule(name="k8s_pod_crash", source="k8s", condition_fn=_check_pod_crash, interval_seconds=60, severity="critical", description="Detect pods in CrashLoopBackOff state"),
+    MonitoringRule(name="k8s_node_not_ready", source="k8s", condition_fn=_check_node_not_ready, interval_seconds=300, severity="critical", description="Detect nodes in NotReady state"),
+    MonitoringRule(name="memory_high", source="system", condition_fn=_check_memory_high, interval_seconds=300, severity="warning", description="Detect hosts with memory usage above 90%"),
+    MonitoringRule(name="pve_vm_unexpected_stop", source="proxmox", condition_fn=_check_vm_unexpected_stop, interval_seconds=300, severity="critical", description="Detect VMs that stopped unexpectedly"),
+    MonitoringRule(name="owrt_wan_down", source="openwrt", condition_fn=_check_wan_down, interval_seconds=300, severity="critical", description="Detect WAN interface down"),
 ]

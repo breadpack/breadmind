@@ -15,7 +15,7 @@ class WebApp:
     def __init__(self, message_handler: Callable | None = None, tool_registry=None, mcp_manager=None,
                  config=None, monitoring_engine=None, safety_config=None,
                  agent=None, audit_logger=None, metrics_collector=None, database=None,
-                 mcp_store=None):
+                 mcp_store=None, safety_guard=None, working_memory=None, message_router=None):
         self.app = FastAPI(title="BreadMind", version="0.1.0")
         self._message_handler = message_handler
         self._tool_registry = tool_registry
@@ -28,6 +28,9 @@ class WebApp:
         self._metrics_collector = metrics_collector
         self._db = database
         self._mcp_store = mcp_store
+        self._safety_guard = safety_guard
+        self._working_memory = working_memory
+        self._message_router = message_router
         self._connections: list[WebSocket] = []
         self._events: list[dict] = []
         self._lock = asyncio.Lock()
@@ -145,6 +148,53 @@ class WebApp:
             if self._safety_config:
                 return self._safety_config
             return {"blacklist": {}, "require_approval": []}
+
+        @app.get("/api/config/safety")
+        async def get_safety_config():
+            """Get editable safety configuration."""
+            if self._safety_guard and hasattr(self._safety_guard, 'get_config'):
+                return {"safety": self._safety_guard.get_config()}
+            # Fallback to raw config
+            if self._safety_config:
+                return {"safety": self._safety_config}
+            return {"safety": {"blacklist": {}, "require_approval": [], "user_permissions": {}, "admin_users": []}}
+
+        @app.post("/api/config/safety/blacklist")
+        async def update_blacklist(request: Request):
+            """Update safety blacklist."""
+            data = await request.json()
+            blacklist = data.get("blacklist", {})
+            if not isinstance(blacklist, dict):
+                return JSONResponse(status_code=400, content={"error": "blacklist must be a dict"})
+            if self._safety_guard:
+                self._safety_guard.update_blacklist(blacklist)
+            # Persist to DB
+            if self._db:
+                await self._db.set_setting("safety_blacklist", blacklist)
+            return {"status": "ok"}
+
+        @app.post("/api/config/safety/approval")
+        async def update_require_approval(request: Request):
+            """Update require_approval list."""
+            data = await request.json()
+            tools = data.get("require_approval", [])
+            if self._safety_guard:
+                self._safety_guard.update_require_approval(tools)
+            if self._db:
+                await self._db.set_setting("safety_approval", tools)
+            return {"status": "ok"}
+
+        @app.post("/api/config/safety/permissions")
+        async def update_permissions(request: Request):
+            """Update user permissions and admin list."""
+            data = await request.json()
+            permissions = data.get("user_permissions", {})
+            admins = data.get("admin_users", [])
+            if self._safety_guard:
+                self._safety_guard.update_user_permissions(permissions, admins)
+            if self._db:
+                await self._db.set_setting("safety_permissions", {"user_permissions": permissions, "admin_users": admins})
+            return {"status": "ok"}
 
         @app.get("/api/monitoring/events")
         async def get_monitoring_events():
@@ -560,6 +610,154 @@ class WebApp:
                 return {"tools": []}
             tools = await self._mcp_store.get_server_tools(name)
             return {"tools": tools}
+
+        # --- Monitoring Rules ---
+        @app.get("/api/config/monitoring/rules")
+        async def get_monitoring_rules():
+            if self._monitoring_engine and hasattr(self._monitoring_engine, 'get_rules_config'):
+                rules = self._monitoring_engine.get_rules_config()
+                lp = self._monitoring_engine.get_loop_protector_config()
+                return {"rules": rules, "loop_protector": lp}
+            return {"rules": [], "loop_protector": {}}
+
+        @app.post("/api/config/monitoring/rules")
+        async def update_monitoring_rules(request: Request):
+            data = await request.json()
+            if not self._monitoring_engine:
+                return JSONResponse(status_code=503, content={"error": "Monitoring not configured"})
+            # Update individual rules
+            for rule_update in data.get("rules", []):
+                name = rule_update.get("name")
+                if "enabled" in rule_update:
+                    if rule_update["enabled"]:
+                        self._monitoring_engine.enable_rule(name)
+                    else:
+                        self._monitoring_engine.disable_rule(name)
+                if "interval_seconds" in rule_update:
+                    self._monitoring_engine.update_rule_interval(name, rule_update["interval_seconds"])
+            # Update loop protector
+            lp = data.get("loop_protector", {})
+            if lp:
+                self._monitoring_engine.update_loop_protector_config(
+                    cooldown_minutes=lp.get("cooldown_minutes"),
+                    max_auto_actions=lp.get("max_auto_actions"),
+                )
+            if self._db:
+                try:
+                    await self._db.set_setting("monitoring_config", data)
+                except Exception:
+                    pass
+            return {"status": "ok"}
+
+        # --- Messenger Allowed Users ---
+        @app.get("/api/config/messenger")
+        async def get_messenger_config():
+            if self._message_router and hasattr(self._message_router, 'get_allowed_users'):
+                return {"allowed_users": self._message_router.get_allowed_users()}
+            return {"allowed_users": {"slack": [], "discord": [], "telegram": []}}
+
+        @app.post("/api/config/messenger")
+        async def update_messenger_config(request: Request):
+            data = await request.json()
+            if not self._message_router:
+                return JSONResponse(status_code=503, content={"error": "Messenger not configured"})
+            for platform, users in data.get("allowed_users", {}).items():
+                self._message_router.update_allowed_users(platform, users)
+            if self._db:
+                try:
+                    await self._db.set_setting("messenger_config", data.get("allowed_users", {}))
+                except Exception:
+                    pass
+            return {"status": "ok"}
+
+        # --- Memory Config ---
+        @app.get("/api/config/memory")
+        async def get_memory_config():
+            if self._working_memory and hasattr(self._working_memory, 'get_config'):
+                return {"memory": self._working_memory.get_config()}
+            return {"memory": {"max_messages_per_session": 50, "session_timeout_minutes": 30, "active_sessions": 0}}
+
+        @app.post("/api/config/memory")
+        async def update_memory_config(request: Request):
+            data = await request.json()
+            if self._working_memory:
+                self._working_memory.update_config(
+                    max_messages=data.get("max_messages"),
+                    timeout_minutes=data.get("timeout_minutes"),
+                )
+            if self._db:
+                try:
+                    await self._db.set_setting("memory_config", data)
+                except Exception:
+                    pass
+            return {"status": "ok"}
+
+        # --- Tool Security ---
+        @app.get("/api/config/tool-security")
+        async def get_tool_security():
+            from breadmind.tools.builtin import ToolSecurityConfig
+            return {"security": ToolSecurityConfig.get_config()}
+
+        @app.post("/api/config/tool-security")
+        async def update_tool_security(request: Request):
+            from breadmind.tools.builtin import ToolSecurityConfig
+            data = await request.json()
+            ToolSecurityConfig.update(
+                dangerous_patterns=data.get("dangerous_patterns"),
+                sensitive_patterns=data.get("sensitive_patterns"),
+                allowed_ssh_hosts=data.get("allowed_ssh_hosts"),
+                base_directory=data.get("base_directory"),
+            )
+            if self._db:
+                try:
+                    await self._db.set_setting("tool_security", ToolSecurityConfig.get_config())
+                except Exception:
+                    pass
+            return {"status": "ok"}
+
+        # --- Agent Timeouts ---
+        @app.get("/api/config/timeouts")
+        async def get_timeouts():
+            if self._agent and hasattr(self._agent, 'get_timeouts'):
+                return {"timeouts": self._agent.get_timeouts()}
+            return {"timeouts": {"tool_timeout": 30, "chat_timeout": 120, "max_turns": 10}}
+
+        @app.post("/api/config/timeouts")
+        async def update_timeouts(request: Request):
+            data = await request.json()
+            if self._agent:
+                if hasattr(self._agent, 'update_timeouts'):
+                    self._agent.update_timeouts(
+                        tool_timeout=data.get("tool_timeout"),
+                        chat_timeout=data.get("chat_timeout"),
+                    )
+                if "max_turns" in data and hasattr(self._agent, 'update_max_turns'):
+                    self._agent.update_max_turns(data["max_turns"])
+            if self._db:
+                try:
+                    await self._db.set_setting("agent_timeouts", data)
+                except Exception:
+                    pass
+            return {"status": "ok"}
+
+        # --- Logging Level ---
+        @app.post("/api/config/logging")
+        async def update_logging(request: Request):
+            import logging as _logging
+            data = await request.json()
+            level = data.get("level", "INFO").upper()
+            valid = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+            if level not in valid:
+                return JSONResponse(status_code=400, content={"error": f"Invalid level. Must be one of {valid}"})
+            _logging.getLogger().setLevel(getattr(_logging, level))
+            if self._config:
+                self._config.logging.level = level
+            if self._db:
+                try:
+                    await self._db.set_setting("logging_config", {"level": level})
+                except Exception:
+                    pass
+            return {"status": "ok", "level": level}
 
         @app.websocket("/ws/chat")
         async def websocket_chat(websocket: WebSocket):

@@ -43,6 +43,32 @@ class SafetyGuard:
             return SafetyResult.REQUIRE_APPROVAL
         return SafetyResult.ALLOW
 
+    def update_blacklist(self, blacklist: dict):
+        """Replace blacklist. blacklist = {"kubernetes": ["k8s_delete_namespace", ...], ...}"""
+        self._blacklist = blacklist
+        self._flat_blacklist = set()
+        for tools in blacklist.values():
+            self._flat_blacklist.update(tools)
+
+    def update_require_approval(self, tools: list[str]):
+        """Replace require_approval list."""
+        self._require_approval = set(tools)
+
+    def update_user_permissions(self, permissions: dict[str, list[str]], admins: list[str] = None):
+        """Update user permissions and admin list."""
+        self._user_permissions = permissions
+        if admins is not None:
+            self._admin_users = admins
+
+    def get_config(self) -> dict:
+        """Return current safety config as dict."""
+        return {
+            "blacklist": self._blacklist if hasattr(self, '_blacklist') else {},
+            "require_approval": list(self._require_approval),
+            "user_permissions": self._user_permissions,
+            "admin_users": self._admin_users,
+        }
+
     def check_cooldown(self, target: str, action: str, cooldown_minutes: int = 10) -> bool:
         """Returns True if action is allowed (not in cooldown)."""
         key = f"{target}:{action}"

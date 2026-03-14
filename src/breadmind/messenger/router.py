@@ -64,6 +64,24 @@ class MessageRouter:
     def set_allowed_users(self, platform: str, user_ids: list[str]):
         self._allowed_users[platform] = user_ids
 
+    def update_allowed_users(self, platform: str, users: list[str]):
+        """Update allowed users for a messenger platform."""
+        self._allowed_users[platform] = users
+
+    def get_allowed_users(self) -> dict[str, list[str]]:
+        """Return allowed users for all platforms."""
+        return dict(self._allowed_users)
+
+    def add_allowed_user(self, platform: str, user: str):
+        if platform not in self._allowed_users:
+            self._allowed_users[platform] = []
+        if user not in self._allowed_users[platform]:
+            self._allowed_users[platform].append(user)
+
+    def remove_allowed_user(self, platform: str, user: str):
+        if platform in self._allowed_users:
+            self._allowed_users[platform] = [u for u in self._allowed_users[platform] if u != user]
+
     def is_authorized(self, platform: str, user_id: str) -> bool:
         allowed = self._allowed_users.get(platform, [])
         if not allowed:  # empty list = allow all

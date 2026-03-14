@@ -510,6 +510,105 @@ def test_post_persona_with_custom_prompt():
     assert data["persona"]["language"] == "ja"
 
 
+# --- Safety config endpoint tests ---
+
+def test_get_safety_config_with_guard():
+    """Test GET /api/config/safety returns data from SafetyGuard."""
+    from breadmind.core.safety import SafetyGuard
+    guard = SafetyGuard(
+        blacklist={"k8s": ["delete_ns"]},
+        require_approval=["shell_exec"],
+        user_permissions={"alice": ["tool_a"]},
+        admin_users=["admin1"],
+    )
+    app = WebApp(message_handler=lambda m, **kw: "ok", safety_guard=guard)
+    client = TestClient(app.app)
+    resp = client.get("/api/config/safety")
+    assert resp.status_code == 200
+    data = resp.json()["safety"]
+    assert data["blacklist"] == {"k8s": ["delete_ns"]}
+    assert data["require_approval"] == ["shell_exec"]
+    assert data["user_permissions"] == {"alice": ["tool_a"]}
+    assert data["admin_users"] == ["admin1"]
+
+
+def test_get_safety_config_fallback_to_raw():
+    """Test GET /api/config/safety falls back to safety_config."""
+    safety = {"blacklist": {"test": ["t1"]}, "require_approval": ["t2"]}
+    app = WebApp(message_handler=lambda m, **kw: "ok", safety_config=safety)
+    client = TestClient(app.app)
+    resp = client.get("/api/config/safety")
+    assert resp.status_code == 200
+    data = resp.json()["safety"]
+    assert data["blacklist"] == {"test": ["t1"]}
+
+
+def test_get_safety_config_empty():
+    """Test GET /api/config/safety returns empty defaults."""
+    app = WebApp(message_handler=lambda m, **kw: "ok")
+    client = TestClient(app.app)
+    resp = client.get("/api/config/safety")
+    assert resp.status_code == 200
+    data = resp.json()["safety"]
+    assert data["blacklist"] == {}
+    assert data["require_approval"] == []
+
+
+def test_post_blacklist_update():
+    """Test POST /api/config/safety/blacklist updates SafetyGuard."""
+    from breadmind.core.safety import SafetyGuard
+    guard = SafetyGuard()
+    app = WebApp(message_handler=lambda m, **kw: "ok", safety_guard=guard)
+    client = TestClient(app.app)
+    resp = client.post("/api/config/safety/blacklist", json={
+        "blacklist": {"network": ["delete_firewall", "reset_dns"]}
+    })
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+    assert guard._blacklist == {"network": ["delete_firewall", "reset_dns"]}
+    assert "delete_firewall" in guard._flat_blacklist
+
+
+def test_post_blacklist_invalid_type():
+    """Test POST /api/config/safety/blacklist rejects non-dict."""
+    from breadmind.core.safety import SafetyGuard
+    guard = SafetyGuard()
+    app = WebApp(message_handler=lambda m, **kw: "ok", safety_guard=guard)
+    client = TestClient(app.app)
+    resp = client.post("/api/config/safety/blacklist", json={"blacklist": ["not", "a", "dict"]})
+    assert resp.status_code == 400
+
+
+def test_post_approval_update():
+    """Test POST /api/config/safety/approval updates SafetyGuard."""
+    from breadmind.core.safety import SafetyGuard
+    guard = SafetyGuard()
+    app = WebApp(message_handler=lambda m, **kw: "ok", safety_guard=guard)
+    client = TestClient(app.app)
+    resp = client.post("/api/config/safety/approval", json={
+        "require_approval": ["shell_exec", "file_write"]
+    })
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+    assert guard._require_approval == {"shell_exec", "file_write"}
+
+
+def test_post_permissions_update():
+    """Test POST /api/config/safety/permissions updates SafetyGuard."""
+    from breadmind.core.safety import SafetyGuard
+    guard = SafetyGuard()
+    app = WebApp(message_handler=lambda m, **kw: "ok", safety_guard=guard)
+    client = TestClient(app.app)
+    resp = client.post("/api/config/safety/permissions", json={
+        "user_permissions": {"bob": ["tool_x", "tool_y"]},
+        "admin_users": ["superadmin"],
+    })
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+    assert guard._user_permissions == {"bob": ["tool_x", "tool_y"]}
+    assert guard._admin_users == ["superadmin"]
+
+
 def test_post_persona_applies_to_agent():
     """Test POST /api/config/persona applies persona to the agent."""
     from breadmind.config import AppConfig
@@ -528,3 +627,235 @@ def test_post_persona_applies_to_agent():
     mock_agent.set_persona.assert_called_once()
     call_args = mock_agent.set_persona.call_args[0][0]
     assert call_args["preset"] == "humorous"
+
+
+# --- Monitoring Rules endpoint tests ---
+
+def test_get_monitoring_rules_no_engine():
+    app = WebApp(message_handler=lambda m, **kw: "ok")
+    client = TestClient(app.app)
+    resp = client.get("/api/config/monitoring/rules")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["rules"] == []
+    assert data["loop_protector"] == {}
+
+
+def test_get_monitoring_rules_with_engine():
+    mock_engine = MagicMock()
+    mock_engine.get_rules_config.return_value = [
+        {"name": "cpu_check", "description": "Check CPU", "interval_seconds": 60, "enabled": True},
+    ]
+    mock_engine.get_loop_protector_config.return_value = {"cooldown_minutes": 5, "max_auto_actions": 3}
+    app = WebApp(message_handler=lambda m, **kw: "ok", monitoring_engine=mock_engine)
+    client = TestClient(app.app)
+    resp = client.get("/api/config/monitoring/rules")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["rules"]) == 1
+    assert data["rules"][0]["name"] == "cpu_check"
+    assert data["loop_protector"]["cooldown_minutes"] == 5
+
+
+def test_post_monitoring_rules_no_engine():
+    app = WebApp(message_handler=lambda m, **kw: "ok")
+    client = TestClient(app.app)
+    resp = client.post("/api/config/monitoring/rules", json={"rules": []})
+    assert resp.status_code == 503
+
+
+def test_post_monitoring_rules_with_engine():
+    mock_engine = MagicMock()
+    app = WebApp(message_handler=lambda m, **kw: "ok", monitoring_engine=mock_engine)
+    client = TestClient(app.app)
+    resp = client.post("/api/config/monitoring/rules", json={
+        "rules": [
+            {"name": "cpu_check", "enabled": False, "interval_seconds": 120},
+            {"name": "mem_check", "enabled": True},
+        ],
+        "loop_protector": {"cooldown_minutes": 10, "max_auto_actions": 5},
+    })
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+    mock_engine.disable_rule.assert_called_once_with("cpu_check")
+    mock_engine.enable_rule.assert_called_once_with("mem_check")
+    mock_engine.update_rule_interval.assert_called_once_with("cpu_check", 120)
+    mock_engine.update_loop_protector_config.assert_called_once_with(cooldown_minutes=10, max_auto_actions=5)
+
+
+# --- Messenger endpoint tests ---
+
+def test_get_messenger_config_no_router():
+    app = WebApp(message_handler=lambda m, **kw: "ok")
+    client = TestClient(app.app)
+    resp = client.get("/api/config/messenger")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["allowed_users"] == {"slack": [], "discord": [], "telegram": []}
+
+
+def test_get_messenger_config_with_router():
+    mock_router = MagicMock()
+    mock_router.get_allowed_users.return_value = {"slack": ["user1"], "discord": [], "telegram": ["user2"]}
+    app = WebApp(message_handler=lambda m, **kw: "ok", message_router=mock_router)
+    client = TestClient(app.app)
+    resp = client.get("/api/config/messenger")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["allowed_users"]["slack"] == ["user1"]
+    assert data["allowed_users"]["telegram"] == ["user2"]
+
+
+def test_post_messenger_config_no_router():
+    app = WebApp(message_handler=lambda m, **kw: "ok")
+    client = TestClient(app.app)
+    resp = client.post("/api/config/messenger", json={"allowed_users": {"slack": ["u1"]}})
+    assert resp.status_code == 503
+
+
+def test_post_messenger_config_with_router():
+    mock_router = MagicMock()
+    app = WebApp(message_handler=lambda m, **kw: "ok", message_router=mock_router)
+    client = TestClient(app.app)
+    resp = client.post("/api/config/messenger", json={
+        "allowed_users": {"slack": ["u1", "u2"], "discord": ["u3"]}
+    })
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+    mock_router.update_allowed_users.assert_any_call("slack", ["u1", "u2"])
+    mock_router.update_allowed_users.assert_any_call("discord", ["u3"])
+
+
+# --- Memory endpoint tests ---
+
+def test_get_memory_config_no_working_memory():
+    app = WebApp(message_handler=lambda m, **kw: "ok")
+    client = TestClient(app.app)
+    resp = client.get("/api/config/memory")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["memory"]["max_messages_per_session"] == 50
+    assert data["memory"]["session_timeout_minutes"] == 30
+
+
+def test_get_memory_config_with_working_memory():
+    mock_wm = MagicMock()
+    mock_wm.get_config.return_value = {"max_messages_per_session": 100, "session_timeout_minutes": 60, "active_sessions": 3}
+    app = WebApp(message_handler=lambda m, **kw: "ok", working_memory=mock_wm)
+    client = TestClient(app.app)
+    resp = client.get("/api/config/memory")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["memory"]["max_messages_per_session"] == 100
+    assert data["memory"]["active_sessions"] == 3
+
+
+def test_post_memory_config():
+    mock_wm = MagicMock()
+    app = WebApp(message_handler=lambda m, **kw: "ok", working_memory=mock_wm)
+    client = TestClient(app.app)
+    resp = client.post("/api/config/memory", json={"max_messages": 200, "timeout_minutes": 45})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+    mock_wm.update_config.assert_called_once_with(max_messages=200, timeout_minutes=45)
+
+
+# --- Tool Security endpoint tests ---
+
+def test_get_tool_security():
+    app = WebApp(message_handler=lambda m, **kw: "ok")
+    client = TestClient(app.app)
+    resp = client.get("/api/config/tool-security")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "security" in data
+
+
+def test_post_tool_security():
+    app = WebApp(message_handler=lambda m, **kw: "ok")
+    client = TestClient(app.app)
+    resp = client.post("/api/config/tool-security", json={
+        "dangerous_patterns": ["rm -rf", "mkfs"],
+        "allowed_ssh_hosts": ["server1.example.com"],
+        "base_directory": "/home/user",
+    })
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+
+
+# --- Timeouts endpoint tests ---
+
+def test_get_timeouts_no_agent():
+    app = WebApp(message_handler=lambda m, **kw: "ok")
+    client = TestClient(app.app)
+    resp = client.get("/api/config/timeouts")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["timeouts"]["tool_timeout"] == 30
+    assert data["timeouts"]["chat_timeout"] == 120
+    assert data["timeouts"]["max_turns"] == 10
+
+
+def test_get_timeouts_with_agent():
+    mock_agent = MagicMock()
+    mock_agent.get_timeouts.return_value = {"tool_timeout": 60, "chat_timeout": 180, "max_turns": 20}
+    app = WebApp(message_handler=lambda m, **kw: "ok", agent=mock_agent)
+    client = TestClient(app.app)
+    resp = client.get("/api/config/timeouts")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["timeouts"]["tool_timeout"] == 60
+    assert data["timeouts"]["max_turns"] == 20
+
+
+def test_post_timeouts_with_agent():
+    mock_agent = MagicMock()
+    app = WebApp(message_handler=lambda m, **kw: "ok", agent=mock_agent)
+    client = TestClient(app.app)
+    resp = client.post("/api/config/timeouts", json={
+        "tool_timeout": 45,
+        "chat_timeout": 90,
+        "max_turns": 15,
+    })
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+    mock_agent.update_timeouts.assert_called_once_with(tool_timeout=45, chat_timeout=90)
+    mock_agent.update_max_turns.assert_called_once_with(15)
+
+
+def test_post_timeouts_no_agent():
+    app = WebApp(message_handler=lambda m, **kw: "ok")
+    client = TestClient(app.app)
+    resp = client.post("/api/config/timeouts", json={"tool_timeout": 45})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+
+
+# --- Logging endpoint tests ---
+
+def test_post_logging_valid_level():
+    app = WebApp(message_handler=lambda m, **kw: "ok")
+    client = TestClient(app.app)
+    resp = client.post("/api/config/logging", json={"level": "DEBUG"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["level"] == "DEBUG"
+
+
+def test_post_logging_invalid_level():
+    app = WebApp(message_handler=lambda m, **kw: "ok")
+    client = TestClient(app.app)
+    resp = client.post("/api/config/logging", json={"level": "TRACE"})
+    assert resp.status_code == 400
+    assert "Invalid level" in resp.json()["error"]
+
+
+def test_post_logging_with_config():
+    from breadmind.config import AppConfig
+    config = AppConfig()
+    app = WebApp(message_handler=lambda m, **kw: "ok", config=config)
+    client = TestClient(app.app)
+    resp = client.post("/api/config/logging", json={"level": "WARNING"})
+    assert resp.status_code == 200
+    assert config.logging.level == "WARNING"

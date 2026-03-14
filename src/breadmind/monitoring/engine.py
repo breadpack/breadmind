@@ -22,6 +22,8 @@ class MonitoringRule:
     condition_fn: Callable[[dict, dict | None], list[MonitoringEvent]]
     interval_seconds: int = 60
     severity: str = "warning"
+    description: str = ""
+    enabled: bool = True
 
 class LoopProtector:
     def __init__(self, cooldown_minutes: int = 10, max_auto_actions: int = 3):
@@ -157,6 +159,9 @@ class MonitoringEngine:
     async def _run_rule(self, rule: MonitoringRule):
         try:
             while self._running:
+                if not rule.enabled:
+                    await asyncio.sleep(rule.interval_seconds)
+                    continue
                 try:
                     prev = self._previous_states.get(rule.name)
                     current_state = {}  # Placeholder: real collectors would fetch state here
@@ -186,9 +191,62 @@ class MonitoringEngine:
         events = []
         rules = self._rules if rule_name is None else [r for r in self._rules if r.name == rule_name]
         for rule in rules:
+            if not rule.enabled:
+                continue
             prev = self._previous_states.get(rule.name)
             current_state = {}
             new_events = rule.condition_fn(current_state, prev)
             self._previous_states[rule.name] = current_state
             events.extend(new_events)
         return events
+
+    def update_rule_interval(self, rule_name: str, interval_seconds: int) -> bool:
+        """Update a rule's check interval."""
+        for rule in self._rules:
+            if rule.name == rule_name:
+                rule.interval_seconds = interval_seconds
+                return True
+        return False
+
+    def enable_rule(self, rule_name: str) -> bool:
+        for rule in self._rules:
+            if rule.name == rule_name:
+                rule.enabled = True
+                return True
+        return False
+
+    def disable_rule(self, rule_name: str) -> bool:
+        for rule in self._rules:
+            if rule.name == rule_name:
+                rule.enabled = False
+                return True
+        return False
+
+    def get_rules_config(self) -> list[dict]:
+        """Return all rules with their config."""
+        return [
+            {
+                "name": r.name,
+                "description": r.description,
+                "interval_seconds": r.interval_seconds,
+                "enabled": r.enabled,
+                "severity": r.severity,
+            }
+            for r in self._rules
+        ]
+
+    def update_loop_protector_config(self, cooldown_minutes: int | None = None, max_auto_actions: int | None = None):
+        """Update LoopProtector settings."""
+        if self._loop_protector:
+            if cooldown_minutes is not None:
+                self._loop_protector._cooldown_minutes = cooldown_minutes
+            if max_auto_actions is not None:
+                self._loop_protector._max_auto_actions = max_auto_actions
+
+    def get_loop_protector_config(self) -> dict:
+        if self._loop_protector:
+            return {
+                "cooldown_minutes": self._loop_protector._cooldown_minutes,
+                "max_auto_actions": self._loop_protector._max_auto_actions,
+            }
+        return {}

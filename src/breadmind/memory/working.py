@@ -72,6 +72,20 @@ class WorkingMemory:
                 self._sessions.pop(sid)
         return expired
 
+    def update_config(self, max_messages: int = None, timeout_minutes: int = None):
+        """Update memory configuration at runtime."""
+        if max_messages is not None and max_messages >= 1:
+            self._max_messages = max_messages
+        if timeout_minutes is not None and timeout_minutes >= 1:
+            self._session_timeout_minutes = timeout_minutes
+
+    def get_config(self) -> dict:
+        return {
+            "max_messages_per_session": self._max_messages,
+            "session_timeout_minutes": self._session_timeout_minutes,
+            "active_sessions": len(self._sessions),
+        }
+
     def get_session_summary(self, session_id: str) -> dict:
         session = self._sessions.get(session_id)
         if not session:

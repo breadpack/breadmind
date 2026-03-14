@@ -72,6 +72,51 @@ async def test_start_stop_all(router):
     await router.stop_all()
     assert gw.stopped is True
 
+# --- Dynamic allowed_users config tests ---
+
+def test_update_allowed_users(router):
+    router.update_allowed_users("slack", ["U1", "U2"])
+    assert router._allowed_users["slack"] == ["U1", "U2"]
+
+def test_update_allowed_users_replaces(router):
+    router.update_allowed_users("slack", ["U1"])
+    router.update_allowed_users("slack", ["U3", "U4"])
+    assert router._allowed_users["slack"] == ["U3", "U4"]
+
+def test_get_allowed_users(router):
+    router.update_allowed_users("slack", ["U1"])
+    router.update_allowed_users("discord", ["D1", "D2"])
+    result = router.get_allowed_users()
+    assert result == {"slack": ["U1"], "discord": ["D1", "D2"]}
+
+def test_get_allowed_users_empty(router):
+    assert router.get_allowed_users() == {}
+
+def test_add_allowed_user(router):
+    router.add_allowed_user("slack", "U1")
+    assert router._allowed_users["slack"] == ["U1"]
+    # Adding again should not duplicate
+    router.add_allowed_user("slack", "U1")
+    assert router._allowed_users["slack"] == ["U1"]
+
+def test_add_allowed_user_new_platform(router):
+    router.add_allowed_user("telegram", "T1")
+    assert router._allowed_users["telegram"] == ["T1"]
+
+def test_remove_allowed_user(router):
+    router.update_allowed_users("slack", ["U1", "U2", "U3"])
+    router.remove_allowed_user("slack", "U2")
+    assert router._allowed_users["slack"] == ["U1", "U3"]
+
+def test_remove_allowed_user_not_present(router):
+    router.update_allowed_users("slack", ["U1"])
+    router.remove_allowed_user("slack", "U999")
+    assert router._allowed_users["slack"] == ["U1"]
+
+def test_remove_allowed_user_no_platform(router):
+    # Should not raise
+    router.remove_allowed_user("nonexistent", "U1")
+
 @pytest.mark.asyncio
 async def test_broadcast(router):
     gw1 = MockGateway()

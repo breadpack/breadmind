@@ -33,10 +33,48 @@ BASE_DIRECTORY: str = os.getcwd()
 ALLOWED_SSH_HOSTS: list[str] = []
 
 
+class ToolSecurityConfig:
+    """Runtime-configurable security settings for builtin tools."""
+
+    _dangerous_patterns: list[str] = list(DANGEROUS_PATTERNS)
+    _sensitive_patterns: list[str] = list(SENSITIVE_FILE_PATTERNS)
+    _allowed_ssh_hosts: list[str] = list(ALLOWED_SSH_HOSTS)
+    _base_directory: str = str(Path.cwd())
+
+    @classmethod
+    def update(cls, dangerous_patterns=None, sensitive_patterns=None,
+               allowed_ssh_hosts=None, base_directory=None):
+        if dangerous_patterns is not None:
+            cls._dangerous_patterns = dangerous_patterns
+        if sensitive_patterns is not None:
+            cls._sensitive_patterns = sensitive_patterns
+        if allowed_ssh_hosts is not None:
+            cls._allowed_ssh_hosts = allowed_ssh_hosts
+        if base_directory is not None:
+            cls._base_directory = base_directory
+
+    @classmethod
+    def get_config(cls) -> dict:
+        return {
+            "dangerous_patterns": cls._dangerous_patterns,
+            "sensitive_file_patterns": cls._sensitive_patterns,
+            "allowed_ssh_hosts": cls._allowed_ssh_hosts,
+            "base_directory": cls._base_directory,
+        }
+
+    @classmethod
+    def reset(cls):
+        """Reset to module-level defaults."""
+        cls._dangerous_patterns = list(DANGEROUS_PATTERNS)
+        cls._sensitive_patterns = list(SENSITIVE_FILE_PATTERNS)
+        cls._allowed_ssh_hosts = list(ALLOWED_SSH_HOSTS)
+        cls._base_directory = str(Path.cwd())
+
+
 def _is_dangerous_command(command: str) -> bool:
     """Check if a command matches any dangerous pattern."""
     cmd_lower = command.lower().strip()
-    for pattern in DANGEROUS_PATTERNS:
+    for pattern in ToolSecurityConfig._dangerous_patterns:
         if pattern.lower() in cmd_lower:
             return True
     return False
@@ -48,7 +86,7 @@ def _validate_path(path: str) -> Path:
     Returns the resolved Path if valid, raises ValueError otherwise.
     """
     p = Path(path).resolve()
-    base = Path(BASE_DIRECTORY).resolve()
+    base = Path(ToolSecurityConfig._base_directory).resolve()
 
     # Check symlink traversal: resolved path must be under base
     try:
@@ -60,7 +98,7 @@ def _validate_path(path: str) -> Path:
 
     # Check sensitive file patterns
     filename = p.name
-    for pattern in SENSITIVE_FILE_PATTERNS:
+    for pattern in ToolSecurityConfig._sensitive_patterns:
         if fnmatch.fnmatch(filename.lower(), pattern.lower()):
             raise ValueError(f"Access to sensitive file blocked: {filename}")
 
@@ -108,8 +146,8 @@ async def shell_exec(command: str, host: str = "localhost", timeout: int = 30,
         return result.strip()
     else:
         # Validate SSH host
-        if ALLOWED_SSH_HOSTS and host not in ALLOWED_SSH_HOSTS:
-            return f"Error: SSH host not allowed: {host}. Allowed hosts: {ALLOWED_SSH_HOSTS}"
+        if ToolSecurityConfig._allowed_ssh_hosts and host not in ToolSecurityConfig._allowed_ssh_hosts:
+            return f"Error: SSH host not allowed: {host}. Allowed hosts: {ToolSecurityConfig._allowed_ssh_hosts}"
 
         try:
             import asyncssh

@@ -137,3 +137,85 @@ async def test_engine_get_status_running():
     status = engine.get_status()
     assert status["running"] is False
     assert status["tasks_count"] == 0
+
+
+# --- Dynamic rule config tests ---
+
+def test_update_rule_interval():
+    engine = MonitoringEngine()
+    engine.add_rule_sync(MonitoringRule(name="r1", source="test", condition_fn=lambda s, p: [], interval_seconds=60))
+    assert engine.update_rule_interval("r1", 120) is True
+    assert engine._rules[0].interval_seconds == 120
+
+def test_update_rule_interval_not_found():
+    engine = MonitoringEngine()
+    assert engine.update_rule_interval("nonexistent", 120) is False
+
+def test_enable_rule():
+    engine = MonitoringEngine()
+    engine.add_rule_sync(MonitoringRule(name="r1", source="test", condition_fn=lambda s, p: [], enabled=False))
+    assert engine._rules[0].enabled is False
+    assert engine.enable_rule("r1") is True
+    assert engine._rules[0].enabled is True
+
+def test_disable_rule():
+    engine = MonitoringEngine()
+    engine.add_rule_sync(MonitoringRule(name="r1", source="test", condition_fn=lambda s, p: []))
+    assert engine._rules[0].enabled is True
+    assert engine.disable_rule("r1") is True
+    assert engine._rules[0].enabled is False
+
+def test_enable_disable_not_found():
+    engine = MonitoringEngine()
+    assert engine.enable_rule("nonexistent") is False
+    assert engine.disable_rule("nonexistent") is False
+
+def test_get_rules_config():
+    engine = MonitoringEngine()
+    engine.add_rule_sync(MonitoringRule(name="r1", source="test", condition_fn=lambda s, p: [], severity="warning", description="Test rule", interval_seconds=30))
+    config = engine.get_rules_config()
+    assert len(config) == 1
+    assert config[0]["name"] == "r1"
+    assert config[0]["description"] == "Test rule"
+    assert config[0]["interval_seconds"] == 30
+    assert config[0]["enabled"] is True
+    assert config[0]["severity"] == "warning"
+
+def test_update_loop_protector_config():
+    lp = LoopProtector(cooldown_minutes=10, max_auto_actions=3)
+    engine = MonitoringEngine(loop_protector=lp)
+    engine.update_loop_protector_config(cooldown_minutes=20, max_auto_actions=5)
+    assert lp._cooldown_minutes == 20
+    assert lp._max_auto_actions == 5
+
+def test_update_loop_protector_config_partial():
+    lp = LoopProtector(cooldown_minutes=10, max_auto_actions=3)
+    engine = MonitoringEngine(loop_protector=lp)
+    engine.update_loop_protector_config(cooldown_minutes=15)
+    assert lp._cooldown_minutes == 15
+    assert lp._max_auto_actions == 3
+
+def test_get_loop_protector_config():
+    lp = LoopProtector(cooldown_minutes=10, max_auto_actions=3)
+    engine = MonitoringEngine(loop_protector=lp)
+    config = engine.get_loop_protector_config()
+    assert config == {"cooldown_minutes": 10, "max_auto_actions": 3}
+
+def test_get_loop_protector_config_none():
+    engine = MonitoringEngine()
+    # Default engine creates a LoopProtector, so config should not be empty
+    config = engine.get_loop_protector_config()
+    assert "cooldown_minutes" in config
+
+@pytest.mark.asyncio
+async def test_disabled_rule_skipped_in_check_once():
+    call_count = 0
+    def counting_rule(state, prev):
+        nonlocal call_count
+        call_count += 1
+        return [MonitoringEvent(source="test", target="test:1", severity="info", condition="test_event")]
+    engine = MonitoringEngine()
+    engine.add_rule_sync(MonitoringRule(name="r1", source="test", condition_fn=counting_rule, enabled=False))
+    events = await engine.check_once()
+    assert len(events) == 0
+    assert call_count == 0

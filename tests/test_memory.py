@@ -42,6 +42,39 @@ def test_working_memory_list_sessions():
     assert len(wm.list_sessions()) == 2
 
 
+def test_working_memory_update_config_max_messages():
+    wm = WorkingMemory(max_messages_per_session=10)
+    wm.update_config(max_messages=20)
+    assert wm._max_messages == 20
+
+
+def test_working_memory_update_config_timeout():
+    wm = WorkingMemory(session_timeout_minutes=30)
+    wm.update_config(timeout_minutes=60)
+    assert wm._session_timeout_minutes == 60
+
+
+def test_working_memory_get_config():
+    wm = WorkingMemory(max_messages_per_session=25, session_timeout_minutes=15)
+    wm.get_or_create_session("s1")
+    config = wm.get_config()
+    assert config["max_messages_per_session"] == 25
+    assert config["session_timeout_minutes"] == 15
+    assert config["active_sessions"] == 1
+
+
+def test_working_memory_update_config_rejects_invalid():
+    wm = WorkingMemory(max_messages_per_session=10, session_timeout_minutes=30)
+    wm.update_config(max_messages=0)
+    assert wm._max_messages == 10  # unchanged
+    wm.update_config(max_messages=-5)
+    assert wm._max_messages == 10  # unchanged
+    wm.update_config(timeout_minutes=0)
+    assert wm._session_timeout_minutes == 30  # unchanged
+    wm.update_config(timeout_minutes=-1)
+    assert wm._session_timeout_minutes == 30  # unchanged
+
+
 # =========================================================================
 # Episodic Memory (in-memory)
 # =========================================================================

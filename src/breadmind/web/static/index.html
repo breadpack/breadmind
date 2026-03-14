@@ -97,6 +97,10 @@
         .tag { font-size: 11px; padding: 3px 8px; border-radius: 4px; background: #334155; color: #cbd5e1; }
         .tag.danger { background: #7f1d1d; color: #fca5a5; }
         .tag.approval { background: #713f12; color: #fde68a; }
+        .tag.info { background: #1e3a5f; color: #93c5fd; }
+        .tag-remove { cursor: pointer; margin-left: 4px; font-weight: bold; opacity: 0.7; }
+        .tag-remove:hover { opacity: 1; }
+        .safety-subsection { padding: 4px 0; }
 
         /* Usage / Audit / Metrics / Approvals */
         .usage-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
@@ -499,14 +503,19 @@
         function loadSettings() {
             Promise.all([
                 fetch('/api/config').then(r => r.json()).catch(() => ({})),
-                fetch('/api/safety').then(r => r.json()).catch(() => ({blacklist:{},require_approval:[]})),
+                fetch('/api/config/safety').then(r => r.json()).then(d => d.safety || {}).catch(() => ({blacklist:{},require_approval:[],user_permissions:{},admin_users:[]})),
                 fetch('/api/monitoring/status').then(r => r.json()).catch(() => ({running:false,rules:0})),
                 fetch('/api/usage').then(r => r.json()).catch(() => ({usage:{}})),
                 fetch('/api/audit').then(r => r.json()).catch(() => ({entries:[]})),
                 fetch('/api/metrics').then(r => r.json()).catch(() => ({metrics:{}})),
                 fetch('/api/approvals').then(r => r.json()).catch(() => ({approvals:[]})),
                 fetch('/api/config/api-keys').then(r => r.json()).catch(() => ({keys:{}})),
-            ]).then(([config, safety, monitoring, usage, audit, metrics, approvals, apiKeys]) => {
+                fetch('/api/config/timeouts').then(r => r.json()).catch(() => ({timeouts:{}})),
+                fetch('/api/config/memory').then(r => r.json()).catch(() => ({memory:{}})),
+                fetch('/api/config/monitoring/rules').then(r => r.json()).catch(() => ({rules:[],loop_protector:{}})),
+                fetch('/api/config/messenger').then(r => r.json()).catch(() => ({allowed_users:{slack:[],discord:[],telegram:[]}})),
+                fetch('/api/config/tool-security').then(r => r.json()).catch(() => ({security:{}})),
+            ]).then(([config, safety, monitoring, usage, audit, metrics, approvals, apiKeys, timeoutsData, memoryData, monRules, messengerData, toolSecData]) => {
                 const c = document.getElementById('settingsContent');
                 let html = '';
 
@@ -651,6 +660,28 @@
                 html += `<div class="section-footer"><button class="save-btn" id="btn-provider" onclick="saveProvider()">Save</button></div>`;
                 html += `</div>`;
 
+                // Agent Timeouts
+                html += `<div class="settings-section"><h3>Agent Timeouts</h3>`;
+                html += `<div class="setting-row"><span class="setting-label">Tool Timeout (sec)</span>
+                    <input type="number" id="timeout-tool" class="setting-input" min="1" style="width:80px;" /></div>`;
+                html += `<div class="setting-row"><span class="setting-label">Chat Timeout (sec)</span>
+                    <input type="number" id="timeout-chat" class="setting-input" min="1" style="width:80px;" /></div>`;
+                html += `<div class="setting-row"><span class="setting-label">Max Tool Turns</span>
+                    <input type="number" id="timeout-max-turns" class="setting-input" min="1" style="width:80px;" /></div>`;
+                html += `<div class="section-footer"><button class="save-btn" id="btn-timeouts" onclick="saveTimeouts()">Save</button></div>`;
+                html += `</div>`;
+
+                // Memory
+                html += `<div class="settings-section"><h3>Memory</h3>`;
+                html += `<div class="setting-row"><span class="setting-label">Max Messages/Session</span>
+                    <input type="number" id="mem-max-messages" class="setting-input" min="1" style="width:80px;" /></div>`;
+                html += `<div class="setting-row"><span class="setting-label">Session Timeout (min)</span>
+                    <input type="number" id="mem-timeout" class="setting-input" min="1" style="width:80px;" /></div>`;
+                html += `<div class="setting-row"><span class="setting-label">Active Sessions</span>
+                    <span class="setting-value" id="mem-active">0</span></div>`;
+                html += `<div class="section-footer"><button class="save-btn" id="btn-memory" onclick="saveMemory()">Save</button></div>`;
+                html += `</div>`;
+
                 // MCP (editable)
                 html += `<div class="settings-section"><h3>MCP Configuration</h3>`;
                 const mcp = config.mcp || {};
@@ -664,27 +695,104 @@
                 html += `<div class="section-footer"><button class="save-btn" id="btn-mcp" onclick="saveMcp()">Save</button></div>`;
                 html += `</div>`;
 
-                // Safety (read-only)
+                // Safety Rules (editable)
                 html += `<div class="settings-section"><h3>Safety Rules</h3>`;
-                if (safety.blacklist) {
-                    Object.entries(safety.blacklist).forEach(([cat, actions]) => {
-                        html += `<div class="setting-row"><span class="setting-label">${cat} (blacklist)</span><div class="tag-list">`;
-                        actions.forEach(a => { html += `<span class="tag danger">${a}</span>`; });
-                        html += `</div></div>`;
-                    });
-                }
-                if (safety.require_approval) {
-                    html += `<div class="setting-row"><span class="setting-label">Require Approval</span><div class="tag-list">`;
-                    safety.require_approval.forEach(a => { html += `<span class="tag approval">${a}</span>`; });
-                    html += `</div></div>`;
-                }
+
+                // Blacklist
+                html += `<div class="safety-subsection">`;
+                html += `<h4 style="color:#94a3b8;font-size:13px;margin:0 0 8px;">Blacklist (blocked tools by category)</h4>`;
+                html += `<div id="blacklist-editor"></div>`;
+                html += `<div style="display:flex;gap:8px;margin-top:8px;">`;
+                html += `<input type="text" id="bl-new-category" placeholder="Category name" class="setting-input" style="width:120px;" />`;
+                html += `<input type="text" id="bl-new-tool" placeholder="tool_name" class="setting-input" style="flex:1;" />`;
+                html += `<button class="save-btn" onclick="addBlacklistItem()" style="padding:6px 12px;">Add</button>`;
+                html += `</div>`;
+                html += `<div class="section-footer"><button class="save-btn" id="btn-save-blacklist" onclick="saveBlacklist()">Save Blacklist</button></div>`;
                 html += `</div>`;
 
-                // Monitoring (read-only)
-                html += `<div class="settings-section"><h3>Monitoring Engine</h3>`;
-                html += row('Status', monitoring.running ? 'Running' : 'Stopped', monitoring.running);
-                html += row('Rules', monitoring.rules);
-                html += row('Total Events', monitoring.events_total);
+                // Require Approval
+                html += `<div class="safety-subsection" style="margin-top:16px;">`;
+                html += `<h4 style="color:#94a3b8;font-size:13px;margin:0 0 8px;">Require Approval</h4>`;
+                html += `<div id="approval-editor"></div>`;
+                html += `<div style="display:flex;gap:8px;margin-top:8px;">`;
+                html += `<input type="text" id="approval-new-tool" placeholder="tool_name" class="setting-input" style="flex:1;" />`;
+                html += `<button class="save-btn" onclick="addApprovalItem()" style="padding:6px 12px;">Add</button>`;
+                html += `</div>`;
+                html += `<div class="section-footer"><button class="save-btn" id="btn-save-approval" onclick="saveApproval()">Save Approval List</button></div>`;
+                html += `</div>`;
+
+                // User Permissions
+                html += `<div class="safety-subsection" style="margin-top:16px;">`;
+                html += `<h4 style="color:#94a3b8;font-size:13px;margin:0 0 8px;">User Permissions</h4>`;
+                html += `<div id="permissions-editor"></div>`;
+                html += `<div style="display:flex;gap:8px;margin-top:8px;">`;
+                html += `<input type="text" id="perm-user" placeholder="username" class="setting-input" style="width:120px;" />`;
+                html += `<input type="text" id="perm-tools" placeholder="tool1, tool2 (comma-separated)" class="setting-input" style="flex:1;" />`;
+                html += `<button class="save-btn" onclick="addPermission()" style="padding:6px 12px;">Add</button>`;
+                html += `</div>`;
+                html += `<h4 style="color:#94a3b8;font-size:13px;margin:12px 0 8px;">Admin Users</h4>`;
+                html += `<div id="admins-editor"></div>`;
+                html += `<div style="display:flex;gap:8px;margin-top:8px;">`;
+                html += `<input type="text" id="admin-new" placeholder="username" class="setting-input" style="flex:1;" />`;
+                html += `<button class="save-btn" onclick="addAdmin()" style="padding:6px 12px;">Add</button>`;
+                html += `</div>`;
+                html += `<div class="section-footer"><button class="save-btn" id="btn-save-permissions" onclick="savePermissions()">Save Permissions</button></div>`;
+                html += `</div>`;
+
+                html += `</div>`;
+
+                // Load safety data into editors after DOM update
+                window._safetyData = safety;
+
+                // Monitoring Rules (editable)
+                html += `<div class="settings-section"><h3>Monitoring Rules</h3>`;
+                html += `<div id="monitoring-rules-editor"></div>`;
+                html += `<h4 style="color:#94a3b8;font-size:13px;margin:12px 0 8px;">Loop Protector</h4>`;
+                html += `<div class="setting-row"><span class="setting-label">Cooldown (min)</span>
+                    <input type="number" id="lp-cooldown" class="setting-input" min="1" style="width:80px;" /></div>`;
+                html += `<div class="setting-row"><span class="setting-label">Max Auto Actions</span>
+                    <input type="number" id="lp-max-actions" class="setting-input" min="1" style="width:80px;" /></div>`;
+                html += `<div class="section-footer"><button class="save-btn" id="btn-monitoring-rules" onclick="saveMonitoringRules()">Save</button></div>`;
+                html += `</div>`;
+
+                // Messenger
+                html += `<div class="settings-section"><h3>Messenger Allowed Users</h3>`;
+                html += `<div id="messenger-editor"></div>`;
+                html += `<div class="section-footer"><button class="save-btn" id="btn-messenger" onclick="saveMessenger()">Save</button></div>`;
+                html += `</div>`;
+
+                // Tool Security
+                html += `<div class="settings-section"><h3>Tool Security</h3>`;
+                html += `<div class="setting-row" style="flex-direction:column;align-items:flex-start;">
+                    <span class="setting-label">Dangerous Command Patterns</span>
+                    <div id="dangerous-patterns-editor"></div>
+                    <div style="display:flex;gap:8px;margin-top:4px;">
+                        <input type="text" id="new-dangerous" class="setting-input" placeholder="pattern" style="flex:1;" />
+                        <button class="save-btn" onclick="addDangerousPattern()" style="padding:6px 12px;">Add</button>
+                    </div></div>`;
+                html += `<div class="setting-row" style="flex-direction:column;align-items:flex-start;margin-top:12px;">
+                    <span class="setting-label">SSH Allowed Hosts</span>
+                    <div id="ssh-hosts-editor"></div>
+                    <div style="display:flex;gap:8px;margin-top:4px;">
+                        <input type="text" id="new-ssh-host" class="setting-input" placeholder="hostname" style="flex:1;" />
+                        <button class="save-btn" onclick="addSSHHost()" style="padding:6px 12px;">Add</button>
+                    </div></div>`;
+                html += `<div class="setting-row" style="margin-top:12px;"><span class="setting-label">Base Directory</span>
+                    <input type="text" id="tool-base-dir" class="setting-input" style="flex:1;" /></div>`;
+                html += `<div class="section-footer"><button class="save-btn" id="btn-tool-security" onclick="saveToolSecurity()">Save</button></div>`;
+                html += `</div>`;
+
+                // Logging
+                html += `<div class="settings-section"><h3>Logging</h3>`;
+                html += `<div class="setting-row"><span class="setting-label">Level</span>
+                    <select id="log-level" class="setting-select">
+                        <option value="DEBUG">DEBUG</option>
+                        <option value="INFO" selected>INFO</option>
+                        <option value="WARNING">WARNING</option>
+                        <option value="ERROR">ERROR</option>
+                        <option value="CRITICAL">CRITICAL</option>
+                    </select></div>`;
+                html += `<div class="section-footer"><button class="save-btn" id="btn-logging" onclick="saveLogging()">Save</button></div>`;
                 html += `</div>`;
 
                 // Database (read-only)
@@ -697,8 +805,184 @@
                 html += `</div>`;
 
                 c.innerHTML = html;
+                loadSafetyEditors(window._safetyData);
                 loadPersona();
+                loadNewSettingsData(timeoutsData, memoryData, monRules, messengerData, toolSecData);
             });
+        }
+
+        // --- Safety editors state ---
+        let _blacklistData = {};
+        let _approvalData = [];
+        let _permissionsData = {};
+        let _adminsData = [];
+
+        function loadSafetyEditors(safety) {
+            _blacklistData = safety.blacklist || {};
+            _approvalData = safety.require_approval || [];
+            _permissionsData = safety.user_permissions || {};
+            _adminsData = safety.admin_users || [];
+            renderBlacklist();
+            renderApproval();
+            renderPermissions();
+            renderAdmins();
+        }
+
+        function renderBlacklist() {
+            const el = document.getElementById('blacklist-editor');
+            if (!el) return;
+            let html = '';
+            Object.entries(_blacklistData).forEach(([cat, tools]) => {
+                html += `<div class="setting-row"><span class="setting-label">${cat}</span><div class="tag-list">`;
+                tools.forEach(t => {
+                    html += `<span class="tag danger">${t} <span class="tag-remove" onclick="removeBlacklistItem('${cat}','${t}')">&times;</span></span>`;
+                });
+                html += `</div></div>`;
+            });
+            el.innerHTML = html;
+        }
+
+        function addBlacklistItem() {
+            const cat = document.getElementById('bl-new-category').value.trim();
+            const tool = document.getElementById('bl-new-tool').value.trim();
+            if (!cat || !tool) return;
+            if (!_blacklistData[cat]) _blacklistData[cat] = [];
+            if (!_blacklistData[cat].includes(tool)) _blacklistData[cat].push(tool);
+            document.getElementById('bl-new-category').value = '';
+            document.getElementById('bl-new-tool').value = '';
+            renderBlacklist();
+        }
+
+        function removeBlacklistItem(cat, tool) {
+            if (_blacklistData[cat]) {
+                _blacklistData[cat] = _blacklistData[cat].filter(t => t !== tool);
+                if (_blacklistData[cat].length === 0) delete _blacklistData[cat];
+            }
+            renderBlacklist();
+        }
+
+        async function saveBlacklist() {
+            const btn = document.getElementById('btn-save-blacklist');
+            try {
+                const resp = await fetch('/api/config/safety/blacklist', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({blacklist: _blacklistData})
+                });
+                if (resp.ok) { flashBtn(btn, true); showToast('Blacklist saved', 'success'); }
+                else { const d = await resp.json(); flashBtn(btn, false); showToast(d.error || 'Failed', 'error'); }
+            } catch(e) { flashBtn(btn, false); showToast('Network error', 'error'); }
+        }
+
+        function renderApproval() {
+            const el = document.getElementById('approval-editor');
+            if (!el) return;
+            let html = '<div class="tag-list">';
+            _approvalData.forEach(t => {
+                html += `<span class="tag approval">${t} <span class="tag-remove" onclick="removeApprovalItem('${t}')">&times;</span></span>`;
+            });
+            html += '</div>';
+            el.innerHTML = html;
+        }
+
+        function addApprovalItem() {
+            const tool = document.getElementById('approval-new-tool').value.trim();
+            if (!tool) return;
+            if (!_approvalData.includes(tool)) _approvalData.push(tool);
+            document.getElementById('approval-new-tool').value = '';
+            renderApproval();
+        }
+
+        function removeApprovalItem(tool) {
+            _approvalData = _approvalData.filter(t => t !== tool);
+            renderApproval();
+        }
+
+        async function saveApproval() {
+            const btn = document.getElementById('btn-save-approval');
+            try {
+                const resp = await fetch('/api/config/safety/approval', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({require_approval: _approvalData})
+                });
+                if (resp.ok) { flashBtn(btn, true); showToast('Approval list saved', 'success'); }
+                else { const d = await resp.json(); flashBtn(btn, false); showToast(d.error || 'Failed', 'error'); }
+            } catch(e) { flashBtn(btn, false); showToast('Network error', 'error'); }
+        }
+
+        function renderPermissions() {
+            const el = document.getElementById('permissions-editor');
+            if (!el) return;
+            let html = '';
+            Object.entries(_permissionsData).forEach(([user, tools]) => {
+                html += `<div class="setting-row"><span class="setting-label">${user}</span><div class="tag-list">`;
+                tools.forEach(t => {
+                    html += `<span class="tag info">${t} <span class="tag-remove" onclick="removePermissionTool('${user}','${t}')">&times;</span></span>`;
+                });
+                html += `<span class="tag-remove" onclick="removePermissionUser('${user}')" style="color:#ef4444;cursor:pointer;margin-left:4px;" title="Remove user">&times; user</span>`;
+                html += `</div></div>`;
+            });
+            el.innerHTML = html;
+        }
+
+        function addPermission() {
+            const user = document.getElementById('perm-user').value.trim();
+            const toolsStr = document.getElementById('perm-tools').value.trim();
+            if (!user || !toolsStr) return;
+            const tools = toolsStr.split(',').map(t => t.trim()).filter(t => t);
+            if (!_permissionsData[user]) _permissionsData[user] = [];
+            tools.forEach(t => { if (!_permissionsData[user].includes(t)) _permissionsData[user].push(t); });
+            document.getElementById('perm-user').value = '';
+            document.getElementById('perm-tools').value = '';
+            renderPermissions();
+        }
+
+        function removePermissionTool(user, tool) {
+            if (_permissionsData[user]) {
+                _permissionsData[user] = _permissionsData[user].filter(t => t !== tool);
+                if (_permissionsData[user].length === 0) delete _permissionsData[user];
+            }
+            renderPermissions();
+        }
+
+        function removePermissionUser(user) {
+            delete _permissionsData[user];
+            renderPermissions();
+        }
+
+        function renderAdmins() {
+            const el = document.getElementById('admins-editor');
+            if (!el) return;
+            let html = '<div class="tag-list">';
+            _adminsData.forEach(a => {
+                html += `<span class="tag info">${a} <span class="tag-remove" onclick="removeAdmin('${a}')">&times;</span></span>`;
+            });
+            html += '</div>';
+            el.innerHTML = html;
+        }
+
+        function addAdmin() {
+            const user = document.getElementById('admin-new').value.trim();
+            if (!user) return;
+            if (!_adminsData.includes(user)) _adminsData.push(user);
+            document.getElementById('admin-new').value = '';
+            renderAdmins();
+        }
+
+        function removeAdmin(user) {
+            _adminsData = _adminsData.filter(a => a !== user);
+            renderAdmins();
+        }
+
+        async function savePermissions() {
+            const btn = document.getElementById('btn-save-permissions');
+            try {
+                const resp = await fetch('/api/config/safety/permissions', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({user_permissions: _permissionsData, admin_users: _adminsData})
+                });
+                if (resp.ok) { flashBtn(btn, true); showToast('Permissions saved', 'success'); }
+                else { const d = await resp.json(); flashBtn(btn, false); showToast(d.error || 'Failed', 'error'); }
+            } catch(e) { flashBtn(btn, false); showToast('Network error', 'error'); }
         }
 
         async function loadPersona() {
@@ -755,6 +1039,246 @@
                     flashBtn(btn, false);
                     showToast(data.error || 'Failed', 'error');
                 }
+            } catch(e) { flashBtn(btn, false); showToast('Network error', 'error'); }
+        }
+
+        // --- New settings data loaders and state ---
+        let _monitoringRulesData = [];
+        let _messengerData = {slack:[], discord:[], telegram:[]};
+        let _dangerousPatterns = [];
+        let _sshHosts = [];
+
+        function loadNewSettingsData(timeoutsData, memoryData, monRules, messengerData, toolSecData) {
+            // Timeouts
+            const t = timeoutsData.timeouts || {};
+            const toolTimeoutEl = document.getElementById('timeout-tool');
+            const chatTimeoutEl = document.getElementById('timeout-chat');
+            const maxTurnsEl = document.getElementById('timeout-max-turns');
+            if (toolTimeoutEl) toolTimeoutEl.value = t.tool_timeout || 30;
+            if (chatTimeoutEl) chatTimeoutEl.value = t.chat_timeout || 120;
+            if (maxTurnsEl) maxTurnsEl.value = t.max_turns || 10;
+
+            // Memory
+            const mem = memoryData.memory || {};
+            const memMaxEl = document.getElementById('mem-max-messages');
+            const memTimeoutEl = document.getElementById('mem-timeout');
+            const memActiveEl = document.getElementById('mem-active');
+            if (memMaxEl) memMaxEl.value = mem.max_messages_per_session || 50;
+            if (memTimeoutEl) memTimeoutEl.value = mem.session_timeout_minutes || 30;
+            if (memActiveEl) memActiveEl.textContent = mem.active_sessions || 0;
+
+            // Monitoring Rules
+            _monitoringRulesData = monRules.rules || [];
+            renderMonitoringRules();
+            const lp = monRules.loop_protector || {};
+            const lpCooldownEl = document.getElementById('lp-cooldown');
+            const lpMaxEl = document.getElementById('lp-max-actions');
+            if (lpCooldownEl) lpCooldownEl.value = lp.cooldown_minutes || 5;
+            if (lpMaxEl) lpMaxEl.value = lp.max_auto_actions || 3;
+
+            // Messenger
+            _messengerData = messengerData.allowed_users || {slack:[], discord:[], telegram:[]};
+            renderMessenger();
+
+            // Tool Security
+            const sec = toolSecData.security || {};
+            _dangerousPatterns = sec.dangerous_patterns || [];
+            _sshHosts = sec.allowed_ssh_hosts || [];
+            renderDangerousPatterns();
+            renderSSHHosts();
+            const baseDirEl = document.getElementById('tool-base-dir');
+            if (baseDirEl) baseDirEl.value = sec.base_directory || '';
+        }
+
+        function renderMonitoringRules() {
+            const el = document.getElementById('monitoring-rules-editor');
+            if (!el) return;
+            if (_monitoringRulesData.length === 0) { el.innerHTML = '<div class="no-data">No monitoring rules configured.</div>'; return; }
+            let html = '';
+            _monitoringRulesData.forEach((r, i) => {
+                html += `<div class="setting-row" style="gap:10px;">
+                    <label class="toggle-switch"><input type="checkbox" id="rule-enabled-${i}" ${r.enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
+                    <span class="setting-label" style="min-width:120px;">${escapeHtml(r.name)}</span>
+                    <span style="color:#64748b;font-size:12px;flex:1;">${escapeHtml(r.description || '')}</span>
+                    <span style="color:#94a3b8;font-size:12px;">interval:</span>
+                    <input type="number" class="setting-input" id="rule-interval-${i}" value="${r.interval_seconds || 60}" min="1" style="width:70px;" /><span style="color:#64748b;font-size:12px;">s</span>
+                </div>`;
+            });
+            el.innerHTML = html;
+        }
+
+        function renderMessenger() {
+            const el = document.getElementById('messenger-editor');
+            if (!el) return;
+            let html = '';
+            ['slack', 'discord', 'telegram'].forEach(platform => {
+                const users = _messengerData[platform] || [];
+                html += `<div class="setting-row" style="flex-direction:column;align-items:flex-start;">
+                    <span class="setting-label" style="text-transform:capitalize;margin-bottom:4px;">${platform}</span>
+                    <div class="tag-list" id="messenger-tags-${platform}">`;
+                users.forEach(u => {
+                    html += `<span class="tag info">${escapeHtml(u)} <span class="tag-remove" onclick="removeMessengerUser('${platform}','${escapeHtml(u)}')">&times;</span></span>`;
+                });
+                html += `</div>
+                    <div style="display:flex;gap:8px;margin-top:4px;">
+                        <input type="text" id="messenger-new-${platform}" class="setting-input" placeholder="user ID" style="flex:1;" />
+                        <button class="save-btn" onclick="addMessengerUser('${platform}')" style="padding:6px 12px;">Add</button>
+                    </div></div>`;
+            });
+            el.innerHTML = html;
+        }
+
+        function addMessengerUser(platform) {
+            const input = document.getElementById('messenger-new-' + platform);
+            const val = input.value.trim();
+            if (!val) return;
+            if (!_messengerData[platform]) _messengerData[platform] = [];
+            if (!_messengerData[platform].includes(val)) _messengerData[platform].push(val);
+            input.value = '';
+            renderMessenger();
+        }
+
+        function removeMessengerUser(platform, user) {
+            if (_messengerData[platform]) {
+                _messengerData[platform] = _messengerData[platform].filter(u => u !== user);
+            }
+            renderMessenger();
+        }
+
+        function renderDangerousPatterns() {
+            const el = document.getElementById('dangerous-patterns-editor');
+            if (!el) return;
+            let html = '<div class="tag-list">';
+            _dangerousPatterns.forEach(p => {
+                html += `<span class="tag danger">${escapeHtml(p)} <span class="tag-remove" onclick="removeDangerousPattern('${escapeHtml(p)}')">&times;</span></span>`;
+            });
+            html += '</div>';
+            el.innerHTML = html;
+        }
+
+        function addDangerousPattern() {
+            const input = document.getElementById('new-dangerous');
+            const val = input.value.trim();
+            if (!val) return;
+            if (!_dangerousPatterns.includes(val)) _dangerousPatterns.push(val);
+            input.value = '';
+            renderDangerousPatterns();
+        }
+
+        function removeDangerousPattern(pattern) {
+            _dangerousPatterns = _dangerousPatterns.filter(p => p !== pattern);
+            renderDangerousPatterns();
+        }
+
+        function renderSSHHosts() {
+            const el = document.getElementById('ssh-hosts-editor');
+            if (!el) return;
+            let html = '<div class="tag-list">';
+            _sshHosts.forEach(h => {
+                html += `<span class="tag info">${escapeHtml(h)} <span class="tag-remove" onclick="removeSSHHost('${escapeHtml(h)}')">&times;</span></span>`;
+            });
+            html += '</div>';
+            el.innerHTML = html;
+        }
+
+        function addSSHHost() {
+            const input = document.getElementById('new-ssh-host');
+            const val = input.value.trim();
+            if (!val) return;
+            if (!_sshHosts.includes(val)) _sshHosts.push(val);
+            input.value = '';
+            renderSSHHosts();
+        }
+
+        function removeSSHHost(host) {
+            _sshHosts = _sshHosts.filter(h => h !== host);
+            renderSSHHosts();
+        }
+
+        async function saveTimeouts() {
+            const btn = document.getElementById('btn-timeouts');
+            btn.disabled = true; btn.textContent = '...';
+            const payload = {
+                tool_timeout: parseInt(document.getElementById('timeout-tool').value) || null,
+                chat_timeout: parseInt(document.getElementById('timeout-chat').value) || null,
+                max_turns: parseInt(document.getElementById('timeout-max-turns').value) || null,
+            };
+            try {
+                const resp = await fetch('/api/config/timeouts', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+                if (resp.ok) { flashBtn(btn, true); showToast('Timeouts saved', 'success'); }
+                else { const d = await resp.json(); flashBtn(btn, false); showToast(d.error || 'Failed', 'error'); }
+            } catch(e) { flashBtn(btn, false); showToast('Network error', 'error'); }
+        }
+
+        async function saveMemory() {
+            const btn = document.getElementById('btn-memory');
+            btn.disabled = true; btn.textContent = '...';
+            const payload = {
+                max_messages: parseInt(document.getElementById('mem-max-messages').value) || null,
+                timeout_minutes: parseInt(document.getElementById('mem-timeout').value) || null,
+            };
+            try {
+                const resp = await fetch('/api/config/memory', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+                if (resp.ok) { flashBtn(btn, true); showToast('Memory settings saved', 'success'); }
+                else { const d = await resp.json(); flashBtn(btn, false); showToast(d.error || 'Failed', 'error'); }
+            } catch(e) { flashBtn(btn, false); showToast('Network error', 'error'); }
+        }
+
+        async function saveMonitoringRules() {
+            const btn = document.getElementById('btn-monitoring-rules');
+            btn.disabled = true; btn.textContent = '...';
+            const rules = _monitoringRulesData.map((r, i) => ({
+                name: r.name,
+                enabled: document.getElementById('rule-enabled-' + i)?.checked ?? r.enabled,
+                interval_seconds: parseInt(document.getElementById('rule-interval-' + i)?.value) || r.interval_seconds,
+            }));
+            const payload = {
+                rules: rules,
+                loop_protector: {
+                    cooldown_minutes: parseInt(document.getElementById('lp-cooldown').value) || null,
+                    max_auto_actions: parseInt(document.getElementById('lp-max-actions').value) || null,
+                }
+            };
+            try {
+                const resp = await fetch('/api/config/monitoring/rules', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+                if (resp.ok) { flashBtn(btn, true); showToast('Monitoring rules saved', 'success'); }
+                else { const d = await resp.json(); flashBtn(btn, false); showToast(d.error || 'Failed', 'error'); }
+            } catch(e) { flashBtn(btn, false); showToast('Network error', 'error'); }
+        }
+
+        async function saveMessenger() {
+            const btn = document.getElementById('btn-messenger');
+            btn.disabled = true; btn.textContent = '...';
+            try {
+                const resp = await fetch('/api/config/messenger', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({allowed_users: _messengerData}) });
+                if (resp.ok) { flashBtn(btn, true); showToast('Messenger settings saved', 'success'); }
+                else { const d = await resp.json(); flashBtn(btn, false); showToast(d.error || 'Failed', 'error'); }
+            } catch(e) { flashBtn(btn, false); showToast('Network error', 'error'); }
+        }
+
+        async function saveToolSecurity() {
+            const btn = document.getElementById('btn-tool-security');
+            btn.disabled = true; btn.textContent = '...';
+            const payload = {
+                dangerous_patterns: _dangerousPatterns,
+                allowed_ssh_hosts: _sshHosts,
+                base_directory: document.getElementById('tool-base-dir').value.trim() || null,
+            };
+            try {
+                const resp = await fetch('/api/config/tool-security', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+                if (resp.ok) { flashBtn(btn, true); showToast('Tool security saved', 'success'); }
+                else { const d = await resp.json(); flashBtn(btn, false); showToast(d.error || 'Failed', 'error'); }
+            } catch(e) { flashBtn(btn, false); showToast('Network error', 'error'); }
+        }
+
+        async function saveLogging() {
+            const btn = document.getElementById('btn-logging');
+            btn.disabled = true; btn.textContent = '...';
+            const payload = { level: document.getElementById('log-level').value };
+            try {
+                const resp = await fetch('/api/config/logging', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+                if (resp.ok) { flashBtn(btn, true); showToast('Logging level saved', 'success'); }
+                else { const d = await resp.json(); flashBtn(btn, false); showToast(d.error || 'Failed', 'error'); }
             } catch(e) { flashBtn(btn, false); showToast('Network error', 'error'); }
         }
 

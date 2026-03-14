@@ -8,6 +8,7 @@ from breadmind.tools.builtin import (
     shell_exec, web_search, file_read, file_write,
     _is_dangerous_command, _validate_path,
     DANGEROUS_PATTERNS, BASE_DIRECTORY,
+    ToolSecurityConfig,
 )
 import breadmind.tools.builtin as builtin_module
 
@@ -73,14 +74,14 @@ async def test_shell_exec_shlex_split():
 @pytest.mark.asyncio
 async def test_shell_exec_ssh_host_validation():
     """Test that SSH to non-allowed hosts is blocked."""
-    # Set allowed hosts to a specific list
-    original = builtin_module.ALLOWED_SSH_HOSTS
+    # Set allowed hosts via ToolSecurityConfig (shell_exec reads from there)
+    original = list(ToolSecurityConfig._allowed_ssh_hosts)
     try:
-        builtin_module.ALLOWED_SSH_HOSTS = ["trusted.example.com"]
+        ToolSecurityConfig.update(allowed_ssh_hosts=["trusted.example.com"])
         result = await shell_exec(command="echo hi", host="evil.example.com", timeout=5)
         assert "not allowed" in result.lower()
     finally:
-        builtin_module.ALLOWED_SSH_HOSTS = original
+        ToolSecurityConfig._allowed_ssh_hosts = original
 
 
 @pytest.mark.asyncio
@@ -246,9 +247,9 @@ def test_shell_exec_has_port_username_key_file_params():
 @pytest.mark.asyncio
 async def test_shell_exec_ssh_with_port_username_key_file():
     """Test SSH connect is called with port, username, key_file."""
-    original = builtin_module.ALLOWED_SSH_HOSTS
+    original = list(ToolSecurityConfig._allowed_ssh_hosts)
     try:
-        builtin_module.ALLOWED_SSH_HOSTS = []  # allow all
+        ToolSecurityConfig.update(allowed_ssh_hosts=[])  # allow all
 
         mock_conn = AsyncMock()
         mock_result = MagicMock()
@@ -282,15 +283,15 @@ async def test_shell_exec_ssh_with_port_username_key_file():
             )
             assert "success" in result
     finally:
-        builtin_module.ALLOWED_SSH_HOSTS = original
+        ToolSecurityConfig._allowed_ssh_hosts = original
 
 
 @pytest.mark.asyncio
 async def test_shell_exec_ssh_default_port_no_username_no_key():
     """Test SSH connect with defaults: port=22, no username, no key_file."""
-    original = builtin_module.ALLOWED_SSH_HOSTS
+    original = list(ToolSecurityConfig._allowed_ssh_hosts)
     try:
-        builtin_module.ALLOWED_SSH_HOSTS = []
+        ToolSecurityConfig.update(allowed_ssh_hosts=[])  # allow all
 
         mock_conn = AsyncMock()
         mock_result = MagicMock()
@@ -319,4 +320,51 @@ async def test_shell_exec_ssh_default_port_no_username_no_key():
             )
             assert "ok" in result
     finally:
-        builtin_module.ALLOWED_SSH_HOSTS = original
+        ToolSecurityConfig._allowed_ssh_hosts = original
+
+
+# =========================================================================
+# ToolSecurityConfig tests
+# =========================================================================
+
+@pytest.fixture(autouse=False)
+def reset_security_config():
+    """Reset ToolSecurityConfig after each test that uses it."""
+    yield
+    ToolSecurityConfig.reset()
+
+
+def test_tool_security_config_update_dangerous_patterns(reset_security_config):
+    ToolSecurityConfig.update(dangerous_patterns=["custom_danger"])
+    assert ToolSecurityConfig._dangerous_patterns == ["custom_danger"]
+
+
+def test_tool_security_config_update_allowed_ssh_hosts(reset_security_config):
+    ToolSecurityConfig.update(allowed_ssh_hosts=["host1.example.com", "host2.example.com"])
+    assert ToolSecurityConfig._allowed_ssh_hosts == ["host1.example.com", "host2.example.com"]
+
+
+def test_tool_security_config_get_config(reset_security_config):
+    config = ToolSecurityConfig.get_config()
+    assert "dangerous_patterns" in config
+    assert "sensitive_file_patterns" in config
+    assert "allowed_ssh_hosts" in config
+    assert "base_directory" in config
+
+
+def test_tool_security_config_updated_dangerous_patterns_used_by_is_dangerous(reset_security_config):
+    """Test that _is_dangerous_command uses ToolSecurityConfig patterns."""
+    # Default should block "rm -rf /"
+    assert _is_dangerous_command("rm -rf /") is True
+    # Update to a custom list that does not include "rm -rf /"
+    ToolSecurityConfig.update(dangerous_patterns=["custom_only"])
+    assert _is_dangerous_command("rm -rf /") is False
+    assert _is_dangerous_command("custom_only something") is True
+
+
+@pytest.mark.asyncio
+async def test_tool_security_config_updated_ssh_hosts_used_by_shell_exec(reset_security_config):
+    """Test that shell_exec uses ToolSecurityConfig for SSH host validation."""
+    ToolSecurityConfig.update(allowed_ssh_hosts=["trusted.example.com"])
+    result = await shell_exec(command="echo hi", host="evil.example.com", timeout=5)
+    assert "not allowed" in result.lower()
