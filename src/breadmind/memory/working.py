@@ -1,0 +1,55 @@
+from dataclasses import dataclass, field
+from datetime import datetime
+from breadmind.llm.base import LLMMessage
+
+@dataclass
+class ConversationSession:
+    session_id: str
+    user: str
+    channel: str
+    messages: list[LLMMessage] = field(default_factory=list)
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    metadata: dict = field(default_factory=dict)
+
+class WorkingMemory:
+    """Layer 1: In-memory working memory for active conversations."""
+
+    def __init__(self, max_messages_per_session: int = 50):
+        self._sessions: dict[str, ConversationSession] = {}
+        self._max_messages = max_messages_per_session
+
+    def get_or_create_session(self, session_id: str, user: str = "", channel: str = "") -> ConversationSession:
+        if session_id not in self._sessions:
+            self._sessions[session_id] = ConversationSession(
+                session_id=session_id, user=user, channel=channel,
+            )
+        return self._sessions[session_id]
+
+    def add_message(self, session_id: str, message: LLMMessage):
+        session = self._sessions.get(session_id)
+        if session:
+            session.messages.append(message)
+            if len(session.messages) > self._max_messages:
+                session.messages = session.messages[-self._max_messages:]
+
+    def get_messages(self, session_id: str) -> list[LLMMessage]:
+        session = self._sessions.get(session_id)
+        return session.messages if session else []
+
+    def clear_session(self, session_id: str):
+        self._sessions.pop(session_id, None)
+
+    def list_sessions(self) -> list[str]:
+        return list(self._sessions.keys())
+
+    def get_session_summary(self, session_id: str) -> dict:
+        session = self._sessions.get(session_id)
+        if not session:
+            return {}
+        return {
+            "session_id": session.session_id,
+            "user": session.user,
+            "channel": session.channel,
+            "message_count": len(session.messages),
+            "created_at": session.created_at.isoformat(),
+        }
