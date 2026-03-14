@@ -225,6 +225,15 @@
         .btn-retry { background:#3b82f6; color:white; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; }
 
         .loading, .empty { color:#64748b; text-align:center; padding:20px; }
+
+        /* Category browsing */
+        .cat-buttons { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }
+        .cat-btn { background:#1a2332; border:1px solid #2d3748; color:#94a3b8; padding:6px 12px; border-radius:8px; cursor:pointer; font-size:12px; transition:0.2s; }
+        .cat-btn:hover { border-color:#3b82f6; color:#e2e8f0; }
+        .cat-btn.active { background:#3b82f6; color:white; border-color:#3b82f6; }
+        .cat-section { margin-bottom:16px; }
+        .cat-section h4 { color:#94a3b8; font-size:13px; margin:0 0 8px 0; }
+        .cat-section .server-card { margin-bottom:6px; }
     </style>
 </head>
 <body>
@@ -296,6 +305,7 @@
                         <button class="active" onclick="showStoreSection('results')">Search Results</button>
                         <button onclick="showStoreSection('installed')">Installed</button>
                     </div>
+                    <div id="store-categories"></div>
                     <div id="store-results"></div>
                     <div id="store-installed" style="display:none"></div>
                 </div>
@@ -344,7 +354,7 @@
             document.getElementById('tab-' + name).classList.add('active');
             if (name === 'settings') loadSettings();
             if (name === 'monitoring') loadEvents();
-            if (name === 'store') loadInstalledServers();
+            if (name === 'store') { loadFeatured(); loadInstalledServers(); }
         }
 
         function sendMessage() {
@@ -1439,9 +1449,68 @@
             messages.innerHTML += '<div class="install-msg info">Please run manually: ' + escapeHtml(fixCommand) + '</div>';
         }
 
+        async function loadFeatured() {
+            const catContainer = document.getElementById('store-categories');
+            const resultsContainer = document.getElementById('store-results');
+            catContainer.innerHTML = '<div class="loading">Loading featured servers...</div>';
+            try {
+                const resp = await fetch('/api/mcp/featured');
+                const data = await resp.json();
+                const cats = data.categories || [];
+                if (cats.length === 0) {
+                    catContainer.innerHTML = '';
+                    return;
+                }
+                // Category buttons
+                let html = '<div class="cat-buttons">';
+                cats.forEach(function(c) {
+                    html += '<button class="cat-btn" onclick="filterCategory(\'' + escapeHtml(c.name) + '\')">' + c.icon + ' ' + escapeHtml(c.name) + '</button>';
+                });
+                html += '</div>';
+                // All category sections
+                cats.forEach(function(c) {
+                    html += '<div class="cat-section" data-cat="' + escapeHtml(c.name) + '">';
+                    html += '<h4>' + c.icon + ' ' + escapeHtml(c.name) + '</h4>';
+                    (c.servers || []).forEach(function(r) {
+                        var desc = (r.description || 'No description').replace(/'/g, "\\'");
+                        var cmd = (r.install_command || '').replace(/'/g, "\\'");
+                        html += '<div class="server-card">' +
+                            '<div class="server-name">' + escapeHtml(r.name) + '</div>' +
+                            '<div class="server-desc">' + escapeHtml(r.description || '').substring(0, 100) + '</div>' +
+                            '<div class="server-meta"><span class="server-source">' + escapeHtml(r.source) + '</span></div>' +
+                            '<button class="btn-install" onclick="startInstall(\'' + escapeHtml(r.slug) + '\', \'' + escapeHtml(r.name) + '\', \'' + desc.substring(0,100) + '\', \'' + escapeHtml(r.source) + '\', \'' + cmd + '\')">Install</button>' +
+                            '</div>';
+                    });
+                    html += '</div>';
+                });
+                catContainer.innerHTML = html;
+            } catch(e) {
+                catContainer.innerHTML = '';
+            }
+        }
+
+        function filterCategory(name) {
+            var btns = document.querySelectorAll('.cat-btn');
+            var sections = document.querySelectorAll('.cat-section');
+            var clicked = false;
+            btns.forEach(function(b) {
+                if (b.textContent.includes(name)) {
+                    clicked = b.classList.contains('active');
+                    b.classList.toggle('active');
+                } else {
+                    b.classList.remove('active');
+                }
+            });
+            sections.forEach(function(s) {
+                if (clicked) { s.style.display = ''; }
+                else { s.style.display = s.dataset.cat === name ? '' : 'none'; }
+            });
+        }
+
         async function searchMCP() {
             const query = document.getElementById('mcp-search-input').value.trim();
             if (!query) return;
+            document.getElementById('store-categories').style.display = 'none';
             const container = document.getElementById('store-results');
             container.innerHTML = '<div class="loading">Searching...</div>';
 

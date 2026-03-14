@@ -613,6 +613,30 @@ class WebApp:
             results = await self._mcp_store.search(q, limit=limit)
             return {"results": results}
 
+        @app.get("/api/mcp/featured")
+        async def mcp_featured():
+            """Return featured/recommended MCP servers by category."""
+            if not self._mcp_store:
+                return {"categories": []}
+            categories = [
+                {"name": "Infrastructure", "icon": "🏗️", "query": "kubernetes docker"},
+                {"name": "Development", "icon": "💻", "query": "github git code"},
+                {"name": "Database", "icon": "🗄️", "query": "database sql postgres"},
+                {"name": "AI & LLM", "icon": "🤖", "query": "ai llm openai"},
+                {"name": "Monitoring", "icon": "📊", "query": "monitoring metrics"},
+                {"name": "Cloud", "icon": "☁️", "query": "aws azure cloud"},
+                {"name": "Network", "icon": "🌐", "query": "network http api"},
+                {"name": "File & Storage", "icon": "📁", "query": "file storage s3"},
+            ]
+            import asyncio
+            async def fetch_category(cat):
+                results = await self._mcp_store.search(cat["query"], limit=4)
+                return {**cat, "servers": results}
+            tasks = [fetch_category(c) for c in categories]
+            filled = await asyncio.gather(*tasks)
+            # Only return categories that have results
+            return {"categories": [c for c in filled if c.get("servers")]}
+
         @app.post("/api/mcp/install/analyze")
         async def mcp_install_analyze(request: Request):
             if not self._mcp_store:
