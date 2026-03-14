@@ -1,0 +1,6 @@
+apiVersion: v2
+name: breadmind
+description: AI Infrastructure Agent for K8s, Proxmox, OpenWrt
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

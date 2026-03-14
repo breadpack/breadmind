@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+data:
+  config.yaml: |
+    llm:
+      default_provider: {{ .Values.config.llm.defaultProvider }}
+      default_model: {{ .Values.config.llm.defaultModel }}
+      tool_call_max_turns: {{ .Values.config.llm.toolCallMaxTurns }}
+    mcp:
+      auto_discover: {{ .Values.config.mcp.autoDiscover }}
+      max_restart_attempts: {{ .Values.config.mcp.maxRestartAttempts }}
+    database:
+      {{- if .Values.postgres.enabled }}
+      host: {{ .Release.Name }}-postgres
+      {{- else }}
+      host: {{ .Values.externalDatabase.host }}
+      {{- end }}
+      port: {{ if .Values.postgres.enabled }}5432{{ else }}{{ .Values.externalDatabase.port }}{{ end }}
+      name: {{ if .Values.postgres.enabled }}breadmind{{ else }}{{ .Values.externalDatabase.name }}{{ end }}
+      user: {{ if .Values.postgres.enabled }}breadmind{{ else }}{{ .Values.externalDatabase.user }}{{ end }}
+  safety.yaml: |
+    blacklist:
+      kubernetes:
+        - k8s_delete_namespace
+        - k8s_drain_node
+        - k8s_delete_pv
+      proxmox:
+        - pve_delete_vm
+        - pve_delete_storage
+        - pve_format_disk
+      openwrt:
+        - owrt_factory_reset
+        - owrt_firmware_upgrade
+    require_approval:
+      - mcp_install
+      - mcp_uninstall
+      - pve_create_vm
+      - k8s_apply_manifest
+      - shell_exec
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config-env
+data:
+  DB_HOST: {{ if .Values.postgres.enabled }}{{ .Release.Name }}-postgres{{ else }}{{ .Values.externalDatabase.host }}{{ end }}
+  DB_PORT: "{{ if .Values.postgres.enabled }}5432{{ else }}{{ .Values.externalDatabase.port }}{{ end }}"
+  DB_NAME: {{ if .Values.postgres.enabled }}breadmind{{ else }}{{ .Values.externalDatabase.name }}{{ end }}
+  DB_USER: {{ if .Values.postgres.enabled }}breadmind{{ else }}{{ .Values.externalDatabase.user }}{{ end }}
