@@ -635,3 +635,55 @@ def test_datetime_uses_timezone_aware_utc_in_audit():
     from datetime import datetime as dt
     parsed = dt.fromisoformat(entry.timestamp)
     assert parsed.tzinfo is not None
+
+
+# --- Persona tests ---
+
+def test_set_system_prompt(agent):
+    """Test that set_system_prompt changes the agent's system prompt."""
+    original = agent._system_prompt
+    agent.set_system_prompt("New custom prompt")
+    assert agent._system_prompt == "New custom prompt"
+    assert agent._system_prompt != original
+
+
+def test_set_persona_builds_prompt(agent):
+    """Test that set_persona builds a correct prompt with language and specialties."""
+    persona = {
+        "name": "TestBot",
+        "preset": "friendly",
+        "system_prompt": "You are a friendly bot.",
+        "language": "ko",
+        "specialties": ["kubernetes", "proxmox"],
+    }
+    agent.set_persona(persona)
+    assert "You are a friendly bot." in agent._system_prompt
+    assert "Korean" in agent._system_prompt
+    assert "kubernetes, proxmox" in agent._system_prompt
+    assert "TestBot" in agent._system_prompt
+
+
+def test_set_persona_english_no_language_suffix(agent):
+    """Test that English language does not add a language instruction."""
+    persona = {
+        "name": "BreadMind",
+        "preset": "professional",
+        "system_prompt": "You are a professional bot.",
+        "language": "en",
+        "specialties": [],
+    }
+    agent.set_persona(persona)
+    assert "Always respond in" not in agent._system_prompt
+    assert "BreadMind" in agent._system_prompt
+
+
+def test_set_persona_no_specialties(agent):
+    """Test persona with empty specialties list."""
+    persona = {
+        "name": "BreadMind",
+        "system_prompt": "Base prompt.",
+        "language": "en",
+        "specialties": [],
+    }
+    agent.set_persona(persona)
+    assert "expertise areas" not in agent._system_prompt

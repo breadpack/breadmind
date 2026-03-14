@@ -428,3 +428,103 @@ def test_post_mcp_updates_config():
     assert resp.json()["status"] == "ok"
     assert config.mcp.auto_discover is False
     assert config.mcp.max_restart_attempts == 5
+
+
+# --- Persona endpoint tests ---
+
+def test_get_persona_returns_default():
+    """Test GET /api/config/persona returns default persona when none configured."""
+    from breadmind.config import AppConfig, DEFAULT_PERSONA
+    config = AppConfig()
+    app = WebApp(message_handler=lambda m, **kw: "ok", config=config)
+    client = TestClient(app.app)
+    resp = client.get("/api/config/persona")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "persona" in data
+    assert "presets" in data
+    assert data["persona"]["name"] == "BreadMind"
+    assert data["persona"]["preset"] == "professional"
+    assert "professional" in data["presets"]
+    assert "friendly" in data["presets"]
+
+
+def test_post_persona_updates_config():
+    """Test POST /api/config/persona updates persona in config."""
+    from breadmind.config import AppConfig
+    config = AppConfig()
+    app = WebApp(message_handler=lambda m, **kw: "ok", config=config)
+    client = TestClient(app.app)
+    resp = client.post("/api/config/persona", json={
+        "name": "MyBot",
+        "preset": "friendly",
+        "language": "en",
+        "specialties": ["kubernetes"],
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["persona"]["name"] == "MyBot"
+    assert data["persona"]["preset"] == "friendly"
+    assert data["persona"]["language"] == "en"
+    assert data["persona"]["specialties"] == ["kubernetes"]
+    # Config should be updated
+    assert config._persona["name"] == "MyBot"
+
+
+def test_post_persona_with_preset_change():
+    """Test POST /api/config/persona with preset change uses preset prompt."""
+    from breadmind.config import AppConfig, DEFAULT_PERSONA_PRESETS
+    config = AppConfig()
+    app = WebApp(message_handler=lambda m, **kw: "ok", config=config)
+    client = TestClient(app.app)
+    resp = client.post("/api/config/persona", json={
+        "name": "BreadMind",
+        "preset": "concise",
+        "language": "ko",
+        "specialties": [],
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["persona"]["system_prompt"] == DEFAULT_PERSONA_PRESETS["concise"]
+
+
+def test_post_persona_with_custom_prompt():
+    """Test POST /api/config/persona with custom system_prompt."""
+    from breadmind.config import AppConfig
+    config = AppConfig()
+    app = WebApp(message_handler=lambda m, **kw: "ok", config=config)
+    client = TestClient(app.app)
+    custom = "You are a custom agent with special instructions."
+    resp = client.post("/api/config/persona", json={
+        "name": "CustomBot",
+        "preset": "professional",
+        "language": "ja",
+        "specialties": ["openwrt"],
+        "system_prompt": custom,
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["persona"]["system_prompt"] == custom
+    assert data["persona"]["name"] == "CustomBot"
+    assert data["persona"]["language"] == "ja"
+
+
+def test_post_persona_applies_to_agent():
+    """Test POST /api/config/persona applies persona to the agent."""
+    from breadmind.config import AppConfig
+    config = AppConfig()
+    mock_agent = MagicMock()
+    mock_agent.set_persona = MagicMock()
+    app = WebApp(message_handler=lambda m, **kw: "ok", config=config, agent=mock_agent)
+    client = TestClient(app.app)
+    resp = client.post("/api/config/persona", json={
+        "name": "BreadMind",
+        "preset": "humorous",
+        "language": "ko",
+        "specialties": ["kubernetes"],
+    })
+    assert resp.status_code == 200
+    mock_agent.set_persona.assert_called_once()
+    call_args = mock_agent.set_persona.call_args[0][0]
+    assert call_args["preset"] == "humorous"

@@ -45,6 +45,13 @@ class CoreAgent:
         self._summarizer = summarizer
         self._pending_approvals: dict[str, dict] = {}
 
+    def set_system_prompt(self, prompt: str):
+        self._system_prompt = prompt
+
+    def set_persona(self, persona: dict):
+        from breadmind.config import build_system_prompt
+        self._system_prompt = build_system_prompt(persona)
+
     def get_usage(self) -> dict[str, int]:
         return dict(self._total_usage)
 

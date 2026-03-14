@@ -425,6 +425,53 @@ class WebApp:
 
             return {"status": "ok", "persisted": self._db is not None}
 
+        @app.get("/api/config/persona")
+        async def get_persona():
+            """Get current persona settings."""
+            from breadmind.config import DEFAULT_PERSONA, DEFAULT_PERSONA_PRESETS
+            if self._config and hasattr(self._config, '_persona') and self._config._persona:
+                persona = self._config._persona
+            else:
+                persona = DEFAULT_PERSONA
+            return {"persona": persona, "presets": list(DEFAULT_PERSONA_PRESETS.keys())}
+
+        @app.post("/api/config/persona")
+        async def update_persona(request: Request):
+            """Update persona settings."""
+            from breadmind.config import DEFAULT_PERSONA_PRESETS, DEFAULT_PERSONA, build_system_prompt
+            data = await request.json()
+
+            # Build persona from input
+            persona = {}
+            persona["name"] = data.get("name", "BreadMind").strip() or "BreadMind"
+            persona["preset"] = data.get("preset", "professional")
+            persona["language"] = data.get("language", "ko")
+            persona["specialties"] = data.get("specialties", ["kubernetes", "proxmox", "openwrt"])
+
+            # If preset changed, use preset prompt; otherwise use custom
+            custom_prompt = data.get("system_prompt", "")
+            if custom_prompt:
+                persona["system_prompt"] = custom_prompt
+            elif persona["preset"] in DEFAULT_PERSONA_PRESETS:
+                persona["system_prompt"] = DEFAULT_PERSONA_PRESETS[persona["preset"]]
+            else:
+                persona["system_prompt"] = DEFAULT_PERSONA_PRESETS["professional"]
+
+            # Apply to runtime
+            if self._config:
+                self._config._persona = persona
+            if self._agent and hasattr(self._agent, 'set_persona'):
+                self._agent.set_persona(persona)
+
+            # Persist to DB
+            if self._db:
+                try:
+                    await self._db.set_setting("persona", persona)
+                except Exception as e:
+                    logger.warning(f"Failed to persist persona to DB: {e}")
+
+            return {"status": "ok", "persona": persona}
+
         @app.get("/api/config/settings-status")
         async def get_settings_status():
             """Check if settings are DB-persisted."""

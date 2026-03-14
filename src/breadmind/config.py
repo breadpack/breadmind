@@ -68,6 +68,7 @@ class AppConfig:
     mcp: MCPConfig = field(default_factory=MCPConfig)
     web: WebConfig = field(default_factory=WebConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    _persona: dict = field(default=None)
 
     def validate(self) -> None:
         if self.llm.default_provider not in _VALID_PROVIDERS:
@@ -96,6 +97,42 @@ class AppConfig:
                 f"Invalid log level '{self.logging.level}', "
                 f"must be one of {list(_VALID_LOG_LEVELS)}"
             )
+
+
+DEFAULT_PERSONA_PRESETS = {
+    "professional": "You are BreadMind, a professional AI infrastructure agent. Respond precisely and technically. Focus on accuracy and best practices.",
+    "friendly": "You are BreadMind, a friendly AI infrastructure agent. Explain things in an approachable way. Use simple language when possible.",
+    "concise": "You are BreadMind, a concise AI infrastructure agent. Keep responses brief and to the point. Minimize explanations unless asked.",
+    "humorous": "You are BreadMind, a witty AI infrastructure agent. Include light humor while being helpful. Keep it professional but fun.",
+}
+
+DEFAULT_PERSONA = {
+    "name": "BreadMind",
+    "preset": "professional",
+    "system_prompt": DEFAULT_PERSONA_PRESETS["professional"],
+    "language": "ko",
+    "specialties": ["kubernetes", "proxmox", "openwrt"],
+}
+
+
+def build_system_prompt(persona: dict) -> str:
+    """Build full system prompt from persona config."""
+    parts = [persona.get("system_prompt", DEFAULT_PERSONA["system_prompt"])]
+
+    name = persona.get("name", "BreadMind")
+    lang = persona.get("language", "ko")
+    specialties = persona.get("specialties", [])
+
+    if lang != "en":
+        lang_names = {"ko": "Korean", "ja": "Japanese", "zh": "Chinese", "es": "Spanish", "de": "German", "fr": "French"}
+        parts.append(f"Always respond in {lang_names.get(lang, lang)}.")
+
+    if specialties:
+        parts.append(f"Your primary expertise areas: {', '.join(specialties)}.")
+
+    parts.append(f"Your name is {name}.")
+
+    return " ".join(parts)
 
 
 def load_config(config_dir: str = "config") -> AppConfig:
@@ -242,6 +279,13 @@ async def apply_db_settings(config: AppConfig, db) -> None:
                 config.mcp.auto_discover = mcp_settings["auto_discover"]
             if "max_restart_attempts" in mcp_settings:
                 config.mcp.max_restart_attempts = mcp_settings["max_restart_attempts"]
+
+        # Load persona
+        persona = await db.get_setting("persona")
+        if persona:
+            config._persona = persona
+        else:
+            config._persona = DEFAULT_PERSONA
 
         # Load encrypted API keys
         await load_api_keys_from_db(db)
