@@ -72,6 +72,21 @@ async def run():
 
     safety_cfg = load_safety_config()
 
+    # Connect to database and load persisted settings
+    db = None
+    try:
+        from breadmind.storage.database import Database
+        db_cfg = config.database
+        dsn = f"postgresql://{db_cfg.user}:{db_cfg.password}@{db_cfg.host}:{db_cfg.port}/{db_cfg.name}"
+        db = Database(dsn)
+        await db.connect()
+        from breadmind.config import apply_db_settings
+        await apply_db_settings(config, db)
+        print("  Database connected, settings loaded")
+    except Exception as e:
+        print(f"  Database not available ({e}), using file-based config")
+        db = None
+
     provider = create_provider(config)
     registry = ToolRegistry()
     guard = SafetyGuard(
@@ -206,6 +221,7 @@ async def run():
                 agent=agent,
                 audit_logger=audit_logger,
                 metrics_collector=metrics_collector,
+                database=db,
             )
             print(f"  Starting web server on {web_host}:{web_port}")
             server_config = uvicorn.Config(
@@ -231,6 +247,8 @@ async def run():
         await monitoring_engine.stop()
         await mcp_manager.stop_all()
         working_memory._sessions.clear()
+        if db:
+            await db.disconnect()
 
 
 def main():

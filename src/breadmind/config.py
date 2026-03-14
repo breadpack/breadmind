@@ -171,6 +171,30 @@ def save_env_var(key: str, value: str):
     os.environ[key] = value
 
 
+async def apply_db_settings(config: AppConfig, db) -> None:
+    """Load settings from DB and apply to config, overriding file-based defaults."""
+    try:
+        llm_settings = await db.get_setting("llm")
+        if llm_settings:
+            if "default_provider" in llm_settings:
+                config.llm.default_provider = llm_settings["default_provider"]
+            if "default_model" in llm_settings:
+                config.llm.default_model = llm_settings["default_model"]
+            if "tool_call_max_turns" in llm_settings:
+                config.llm.tool_call_max_turns = llm_settings["tool_call_max_turns"]
+            if "tool_call_timeout_seconds" in llm_settings:
+                config.llm.tool_call_timeout_seconds = llm_settings["tool_call_timeout_seconds"]
+
+        mcp_settings = await db.get_setting("mcp")
+        if mcp_settings:
+            if "auto_discover" in mcp_settings:
+                config.mcp.auto_discover = mcp_settings["auto_discover"]
+            if "max_restart_attempts" in mcp_settings:
+                config.mcp.max_restart_attempts = mcp_settings["max_restart_attempts"]
+    except Exception:
+        pass  # DB not available, use file-based config
+
+
 def load_safety_config(config_dir: str = "config") -> dict:
     safety_path = Path(config_dir) / "safety.yaml"
     if not safety_path.exists():

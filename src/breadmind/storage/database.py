@@ -69,6 +69,12 @@ class Database:
                     properties JSONB DEFAULT '{}'
                 );
 
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value JSONB NOT NULL,
+                    updated_at TIMESTAMPTZ DEFAULT NOW()
+                );
+
                 CREATE TABLE IF NOT EXISTS mcp_servers (
                     id SERIAL PRIMARY KEY,
                     name TEXT UNIQUE NOT NULL,
@@ -271,3 +277,41 @@ class Database:
             weight=row["weight"],
             created_at=row["created_at"],
         )
+
+    # --- Settings ---
+
+    async def get_setting(self, key: str) -> dict | None:
+        async with self.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT value FROM settings WHERE key = $1", key
+            )
+            if row:
+                val = row["value"]
+                return json.loads(val) if isinstance(val, str) else val
+            return None
+
+    async def set_setting(self, key: str, value: dict):
+        async with self.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO settings (key, value, updated_at)
+                VALUES ($1, $2::jsonb, NOW())
+                ON CONFLICT (key) DO UPDATE SET
+                    value = EXCLUDED.value,
+                    updated_at = NOW()
+            """, key, json.dumps(value))
+
+    async def get_all_settings(self) -> dict[str, dict]:
+        async with self.acquire() as conn:
+            rows = await conn.fetch("SELECT key, value FROM settings")
+            result = {}
+            for row in rows:
+                val = row["value"]
+                result[row["key"]] = json.loads(val) if isinstance(val, str) else val
+            return result
+
+    async def delete_setting(self, key: str) -> bool:
+        async with self.acquire() as conn:
+            result = await conn.execute(
+                "DELETE FROM settings WHERE key = $1", key
+            )
+            return result == "DELETE 1"

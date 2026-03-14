@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 class WebApp:
     def __init__(self, message_handler: Callable | None = None, tool_registry=None, mcp_manager=None,
                  config=None, monitoring_engine=None, safety_config=None,
-                 agent=None, audit_logger=None, metrics_collector=None):
+                 agent=None, audit_logger=None, metrics_collector=None, database=None):
         self.app = FastAPI(title="BreadMind", version="0.1.0")
         self._message_handler = message_handler
         self._tool_registry = tool_registry
@@ -25,6 +25,7 @@ class WebApp:
         self._agent = agent
         self._audit_logger = audit_logger
         self._metrics_collector = metrics_collector
+        self._db = database
         self._connections: list[WebSocket] = []
         self._events: list[dict] = []
         self._lock = asyncio.Lock()
@@ -300,7 +301,19 @@ class WebApp:
                 if self._config:
                     self._config.llm.tool_call_timeout_seconds = timeout
 
-            return {"status": "ok"}
+            # Persist to DB
+            if self._db and self._config:
+                try:
+                    await self._db.set_setting("llm", {
+                        "default_provider": self._config.llm.default_provider,
+                        "default_model": self._config.llm.default_model,
+                        "tool_call_max_turns": self._config.llm.tool_call_max_turns,
+                        "tool_call_timeout_seconds": self._config.llm.tool_call_timeout_seconds,
+                    })
+                except Exception as e:
+                    logger.warning(f"Failed to persist LLM settings to DB: {e}")
+
+            return {"status": "ok", "persisted": self._db is not None}
 
         @app.post("/api/config/mcp")
         async def update_mcp(request: Request):
@@ -324,7 +337,22 @@ class WebApp:
                         )
                     self._config.mcp.max_restart_attempts = max_restart
 
-            return {"status": "ok"}
+            # Persist to DB
+            if self._db and self._config:
+                try:
+                    await self._db.set_setting("mcp", {
+                        "auto_discover": self._config.mcp.auto_discover,
+                        "max_restart_attempts": self._config.mcp.max_restart_attempts,
+                    })
+                except Exception as e:
+                    logger.warning(f"Failed to persist MCP settings to DB: {e}")
+
+            return {"status": "ok", "persisted": self._db is not None}
+
+        @app.get("/api/config/settings-status")
+        async def get_settings_status():
+            """Check if settings are DB-persisted."""
+            return {"db_connected": self._db is not None}
 
         @app.websocket("/ws/chat")
         async def websocket_chat(websocket: WebSocket):
