@@ -60,8 +60,10 @@ class RegistrySearchEngine:
                 data = await resp.json()
                 return [
                     RegistrySearchResult(
-                        name=item.get("name", ""), slug=item.get("slug", ""),
-                        description=item.get("description", ""), source="clawhub",
+                        name=item.get("displayName", item.get("name", "")),
+                        slug=item.get("slug", ""),
+                        description=item.get("summary", item.get("description", "")),
+                        source="clawhub",
                         install_command=f"clawhub install {item.get('slug', '')}",
                     )
                     for item in data.get("results", [])
@@ -71,17 +73,27 @@ class RegistrySearchEngine:
         import aiohttp
         async with aiohttp.ClientSession() as session:
             async with session.get(
-                "https://registry.modelcontextprotocol.io/api/search",
+                "https://registry.modelcontextprotocol.io/v0.1/servers",
                 params={"q": query, "limit": limit},
             ) as resp:
                 if resp.status != 200:
                     return []
                 data = await resp.json()
-                return [
-                    RegistrySearchResult(
-                        name=item.get("name", ""), slug=item.get("slug", item.get("name", "")),
-                        description=item.get("description", ""), source="mcp_registry",
-                        install_command=None,
-                    )
-                    for item in data.get("results", data.get("servers", []))
-                ]
+                results = []
+                for item in data.get("servers", []):
+                    srv = item.get("server", item)
+                    name = srv.get("name", "")
+                    desc = srv.get("description", "")
+                    # Build install command from package info
+                    pkg = srv.get("packages", [{}])[0] if srv.get("packages") else {}
+                    install_cmd = pkg.get("registry_name", "")
+                    if not install_cmd and name:
+                        install_cmd = f"npx -y {name}"
+                    results.append(RegistrySearchResult(
+                        name=srv.get("title", name),
+                        slug=name,
+                        description=desc,
+                        source="mcp_registry",
+                        install_command=install_cmd,
+                    ))
+                return results

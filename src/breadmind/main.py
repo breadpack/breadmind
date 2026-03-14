@@ -157,6 +157,25 @@ async def run():
     for func in meta_tools.values():
         registry.register(func)
 
+    # Initialize MCP Store
+    mcp_store = None
+    try:
+        from breadmind.mcp.store import MCPStore
+        from breadmind.mcp.install_assistant import InstallAssistant
+        install_assistant = InstallAssistant(provider=provider)
+        mcp_store = MCPStore(
+            mcp_manager=mcp_manager,
+            registry_search=search_engine,
+            install_assistant=install_assistant,
+            db=db,
+            tool_registry=registry,
+        )
+        # Auto-restore previously running servers
+        await mcp_store.auto_restore_servers()
+        print(f"  MCP Store: ready")
+    except Exception as e:
+        print(f"  MCP Store: not available ({e})")
+
     # Initialize working memory
     working_memory = WorkingMemory()
 
@@ -242,6 +261,9 @@ async def run():
                 audit_logger=audit_logger,
                 metrics_collector=metrics_collector,
                 database=db,
+                mcp_store=mcp_store,
+                safety_guard=guard,
+                working_memory=working_memory,
             )
             print(f"  Starting web server on {web_host}:{web_port}")
             server_config = uvicorn.Config(
