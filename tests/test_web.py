@@ -859,3 +859,124 @@ def test_post_logging_with_config():
     resp = client.post("/api/config/logging", json={"level": "WARNING"})
     assert resp.status_code == 200
     assert config.logging.level == "WARNING"
+
+
+# --- Messenger Connection Settings endpoint tests ---
+
+def test_get_messenger_platforms_returns_three():
+    """Test GET /api/messenger/platforms returns all 3 platforms."""
+    app = WebApp(message_handler=lambda m, **kw: "ok")
+    client = TestClient(app.app)
+    resp = client.get("/api/messenger/platforms")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "platforms" in data
+    assert "slack" in data["platforms"]
+    assert "discord" in data["platforms"]
+    assert "telegram" in data["platforms"]
+    # Each platform should have name, icon, fields, configured, connected, allowed_users
+    for platform_key in ["slack", "discord", "telegram"]:
+        p = data["platforms"][platform_key]
+        assert "name" in p
+        assert "icon" in p
+        assert "fields" in p
+        assert "configured" in p
+        assert "connected" in p
+        assert "allowed_users" in p
+
+
+def test_get_messenger_platforms_with_router():
+    """Test GET /api/messenger/platforms uses router for status."""
+    from breadmind.messenger.router import MessageRouter
+    router = MessageRouter()
+    router.set_allowed_users("slack", ["user1", "user2"])
+    app = WebApp(message_handler=lambda m, **kw: "ok", message_router=router)
+    client = TestClient(app.app)
+    resp = client.get("/api/messenger/platforms")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["platforms"]["slack"]["allowed_users"] == ["user1", "user2"]
+
+
+def test_post_messenger_token_saves(monkeypatch):
+    """Test POST /api/messenger/slack/token saves tokens."""
+    import os
+    # Clean up before test
+    for k in ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"]:
+        os.environ.pop(k, None)
+    app = WebApp(message_handler=lambda m, **kw: "ok")
+    client = TestClient(app.app)
+    resp = client.post("/api/messenger/slack/token", json={
+        "bot_token": "xoxb-test-token-123",
+        "app_token": "xapp-test-token-456",
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert "bot_token" in data["saved"]
+    assert "app_token" in data["saved"]
+    assert data["platform"] == "slack"
+    assert os.environ.get("SLACK_BOT_TOKEN") == "xoxb-test-token-123"
+    assert os.environ.get("SLACK_APP_TOKEN") == "xapp-test-token-456"
+    # Clean up
+    os.environ.pop("SLACK_BOT_TOKEN", None)
+    os.environ.pop("SLACK_APP_TOKEN", None)
+
+
+def test_post_messenger_token_invalid_platform():
+    """Test POST /api/messenger/invalid/token returns 400."""
+    app = WebApp(message_handler=lambda m, **kw: "ok")
+    client = TestClient(app.app)
+    resp = client.post("/api/messenger/invalid/token", json={"bot_token": "test"})
+    assert resp.status_code == 400
+    assert "Invalid platform" in resp.json()["error"]
+
+
+def test_post_messenger_test_no_router():
+    """Test POST /api/messenger/slack/test returns 503 when no router."""
+    app = WebApp(message_handler=lambda m, **kw: "ok")
+    client = TestClient(app.app)
+    resp = client.post("/api/messenger/slack/test")
+    assert resp.status_code == 503
+
+
+def test_post_messenger_test_with_router_no_gateway():
+    """Test POST /api/messenger/slack/test returns not_connected when no gateway."""
+    from breadmind.messenger.router import MessageRouter
+    router = MessageRouter()
+    app = WebApp(message_handler=lambda m, **kw: "ok", message_router=router)
+    client = TestClient(app.app)
+    resp = client.post("/api/messenger/slack/test")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "not_connected"
+
+
+def test_post_messenger_test_with_gateway():
+    """Test POST /api/messenger/slack/test returns ok when gateway exists."""
+    from breadmind.messenger.router import MessageRouter, MessengerGateway
+
+    class FakeGateway(MessengerGateway):
+        async def start(self): pass
+        async def stop(self): pass
+        async def send(self, channel_id, text): pass
+        async def ask_approval(self, channel_id, action_name, params): return "id"
+
+    router = MessageRouter()
+    router.register_gateway("slack", FakeGateway())
+    app = WebApp(message_handler=lambda m, **kw: "ok", message_router=router)
+    client = TestClient(app.app)
+    resp = client.post("/api/messenger/slack/test")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+
+
+def test_post_messenger_test_invalid_platform():
+    """Test POST /api/messenger/invalid/test returns 400."""
+    from breadmind.messenger.router import MessageRouter
+    router = MessageRouter()
+    app = WebApp(message_handler=lambda m, **kw: "ok", message_router=router)
+    client = TestClient(app.app)
+    resp = client.post("/api/messenger/invalid/test")
+    assert resp.status_code == 400

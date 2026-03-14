@@ -240,6 +240,28 @@
 
         .loading, .empty { color:#64748b; text-align:center; padding:20px; }
 
+        /* Messenger Connection Cards */
+        .messenger-card { background:#0f1923; border:1px solid #1e293b; border-radius:10px; padding:16px; margin-bottom:12px; }
+        .messenger-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+        .messenger-name { font-size:15px; font-weight:600; color:#e2e8f0; }
+        .messenger-status { font-size:12px; padding:3px 10px; border-radius:4px; }
+        .messenger-status.configured { background:#064e3b; color:#34d399; }
+        .messenger-status.not-configured { background:#451a03; color:#fbbf24; }
+        .messenger-status.connected { background:#064e3b; color:#34d399; }
+        .messenger-field { margin-bottom:10px; }
+        .messenger-field label { display:block; color:#94a3b8; font-size:12px; margin-bottom:4px; }
+        .messenger-actions { display:flex; gap:8px; margin-top:12px; }
+        .btn-test { background:#6366f1; color:white; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:12px; }
+        .btn-test:hover { background:#4f46e5; }
+        .btn-test:disabled { background:#475569; cursor:not-allowed; }
+        .messenger-users { margin-top:10px; }
+        .messenger-users-label { color:#94a3b8; font-size:12px; margin-bottom:4px; }
+        .messenger-user-add { display:flex; gap:8px; margin-top:4px; }
+        .messenger-test-result { font-size:12px; margin-top:6px; padding:4px 8px; border-radius:4px; }
+        .messenger-test-result.ok { background:#064e3b; color:#34d399; }
+        .messenger-test-result.error { background:#450a0a; color:#fca5a5; }
+        .messenger-test-result.not-connected { background:#451a03; color:#fbbf24; }
+
         /* Category browsing */
         .cat-buttons { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }
         .cat-btn { background:#1a2332; border:1px solid #2d3748; color:#94a3b8; padding:6px 12px; border-radius:8px; cursor:pointer; font-size:12px; transition:0.2s; }
@@ -576,7 +598,8 @@
                 fetch('/api/config/monitoring/rules').then(r => r.json()).catch(() => ({rules:[],loop_protector:{}})),
                 fetch('/api/config/messenger').then(r => r.json()).catch(() => ({allowed_users:{slack:[],discord:[],telegram:[]}})),
                 fetch('/api/config/tool-security').then(r => r.json()).catch(() => ({security:{}})),
-            ]).then(([config, safety, monitoring, usage, audit, metrics, approvals, apiKeys, timeoutsData, memoryData, monRules, messengerData, toolSecData]) => {
+                fetch('/api/messenger/platforms').then(r => r.json()).catch(() => ({platforms:{}})),
+            ]).then(([config, safety, monitoring, usage, audit, metrics, approvals, apiKeys, timeoutsData, memoryData, monRules, messengerData, toolSecData, messengerPlatforms]) => {
                 const c = document.getElementById('settingsContent');
                 let html = '';
 
@@ -817,10 +840,9 @@
                 html += `<div class="section-footer"><button class="save-btn" id="btn-monitoring-rules" onclick="saveMonitoringRules()">Save</button></div>`;
                 html += `</div>`;
 
-                // Messenger
-                html += `<div class="settings-section"><h3>Messenger Allowed Users</h3>`;
-                html += `<div id="messenger-editor"></div>`;
-                html += `<div class="section-footer"><button class="save-btn" id="btn-messenger" onclick="saveMessenger()">Save</button></div>`;
+                // Messenger Connections
+                html += `<div class="settings-section"><h3>Messenger Connections</h3>`;
+                html += `<div id="messenger-platforms-container"><div class="no-data">Loading messenger platforms...</div></div>`;
                 html += `</div>`;
 
                 // Tool Security
@@ -869,7 +891,7 @@
                 c.innerHTML = html;
                 loadSafetyEditors(window._safetyData);
                 loadPersona();
-                loadNewSettingsData(timeoutsData, memoryData, monRules, messengerData, toolSecData);
+                loadNewSettingsData(timeoutsData, memoryData, monRules, messengerData, toolSecData, messengerPlatforms);
                 // Load model list for current provider
                 const curProvider = (config.llm || {}).default_provider || 'claude';
                 const curModel = (config.llm || {}).default_model || '';
@@ -1114,7 +1136,7 @@
         let _dangerousPatterns = [];
         let _sshHosts = [];
 
-        function loadNewSettingsData(timeoutsData, memoryData, monRules, messengerData, toolSecData) {
+        function loadNewSettingsData(timeoutsData, memoryData, monRules, messengerData, toolSecData, messengerPlatforms) {
             // Timeouts
             const t = timeoutsData.timeouts || {};
             const toolTimeoutEl = document.getElementById('timeout-tool');
@@ -1145,6 +1167,12 @@
             // Messenger
             _messengerData = messengerData.allowed_users || {slack:[], discord:[], telegram:[]};
             renderMessenger();
+            if (messengerPlatforms && messengerPlatforms.platforms) {
+                _messengerPlatformsData = messengerPlatforms.platforms;
+                renderMessengerPlatforms();
+            } else {
+                loadMessengerPlatforms();
+            }
 
             // Tool Security
             const sec = toolSecData.security || {};
@@ -1195,7 +1223,10 @@
         }
 
         function addMessengerUser(platform) {
-            const input = document.getElementById('messenger-new-' + platform);
+            // Try the new messenger card input first, then the old one
+            let input = document.getElementById('msg-user-' + platform);
+            if (!input) input = document.getElementById('messenger-new-' + platform);
+            if (!input) return;
             const val = input.value.trim();
             if (!val) return;
             if (!_messengerData[platform]) _messengerData[platform] = [];
@@ -1310,6 +1341,142 @@
                 if (resp.ok) { flashBtn(btn, true); showToast('Monitoring rules saved', 'success'); }
                 else { const d = await resp.json(); flashBtn(btn, false); showToast(d.error || 'Failed', 'error'); }
             } catch(e) { flashBtn(btn, false); showToast('Network error', 'error'); }
+        }
+
+        let _messengerPlatformsData = {};
+
+        async function loadMessengerPlatforms() {
+            try {
+                const resp = await fetch('/api/messenger/platforms');
+                const data = await resp.json();
+                _messengerPlatformsData = data.platforms || {};
+                renderMessengerPlatforms();
+            } catch(e) {
+                const container = document.getElementById('messenger-platforms-container');
+                if (container) container.innerHTML = '<div class="no-data">Failed to load messenger platforms.</div>';
+            }
+        }
+
+        function renderMessengerPlatforms() {
+            const container = document.getElementById('messenger-platforms-container');
+            if (!container) return;
+            const platforms = _messengerPlatformsData;
+            if (Object.keys(platforms).length === 0) {
+                container.innerHTML = '<div class="no-data">No messenger platforms available.</div>';
+                return;
+            }
+            let html = '';
+            for (const [key, p] of Object.entries(platforms)) {
+                const statusClass = p.connected ? 'connected' : (p.configured ? 'configured' : 'not-configured');
+                const statusText = p.connected ? 'Connected' : (p.configured ? 'Configured' : 'Not set');
+                html += `<div class="messenger-card">`;
+                html += `<div class="messenger-header">`;
+                html += `<span class="messenger-name">${p.icon || ''} ${escapeHtml(p.name || key)}</span>`;
+                html += `<span class="messenger-status ${statusClass}">${statusText}</span>`;
+                html += `</div>`;
+                // Token fields
+                (p.fields || []).forEach(function(f) {
+                    html += `<div class="messenger-field">`;
+                    html += `<label>${escapeHtml(f.label)}</label>`;
+                    html += `<div class="password-wrapper">`;
+                    html += `<input type="password" class="setting-input" id="msg-${key}-${f.name}" placeholder="${escapeHtml(f.placeholder || '')}" style="width:100%;">`;
+                    html += `<button class="toggle-pwd" onclick="togglePassword(this)">\u{1F441}</button>`;
+                    html += `</div>`;
+                    html += `</div>`;
+                });
+                // Allowed users
+                const users = _messengerData[key] || [];
+                html += `<div class="messenger-users">`;
+                html += `<span class="messenger-users-label">Allowed Users:</span>`;
+                html += `<div class="tag-list" style="margin-top:4px;">`;
+                users.forEach(function(u) {
+                    html += `<span class="tag info">${escapeHtml(u)} <span class="tag-remove" onclick="removeMessengerUser('${key}','${escapeHtml(u)}');renderMessengerPlatforms();">&times;</span></span>`;
+                });
+                html += `</div>`;
+                html += `<div class="messenger-user-add">`;
+                html += `<input type="text" id="msg-user-${key}" class="setting-input" placeholder="user ID" style="flex:1;">`;
+                html += `<button class="save-btn" onclick="addMessengerUser('${key}');renderMessengerPlatforms();" style="padding:6px 12px;">Add</button>`;
+                html += `</div>`;
+                html += `</div>`;
+                // Actions
+                html += `<div class="messenger-actions">`;
+                html += `<button class="save-btn" onclick="saveMessengerToken('${key}')">Save Tokens</button>`;
+                html += `<button class="btn-test" onclick="testMessenger('${key}')">Test Connection</button>`;
+                html += `<button class="save-btn" onclick="saveMessengerUsers('${key}')" style="background:#6366f1;">Save Users</button>`;
+                html += `</div>`;
+                html += `<div id="msg-test-result-${key}"></div>`;
+                html += `</div>`;
+            }
+            container.innerHTML = html;
+        }
+
+        async function saveMessengerToken(platform) {
+            const platformData = _messengerPlatformsData[platform];
+            if (!platformData) return;
+            const payload = {};
+            (platformData.fields || []).forEach(function(f) {
+                const input = document.getElementById('msg-' + platform + '-' + f.name);
+                if (input && input.value.trim()) {
+                    payload[f.name] = input.value.trim();
+                }
+            });
+            if (Object.keys(payload).length === 0) {
+                showToast('Please enter at least one token', 'error');
+                return;
+            }
+            try {
+                const resp = await fetch('/api/messenger/' + encodeURIComponent(platform) + '/token', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                const data = await resp.json();
+                if (resp.ok) {
+                    showToast(platform + ' tokens saved (' + data.saved.join(', ') + ')', 'success');
+                    // Clear inputs
+                    (platformData.fields || []).forEach(function(f) {
+                        const input = document.getElementById('msg-' + platform + '-' + f.name);
+                        if (input) input.value = '';
+                    });
+                    loadMessengerPlatforms();
+                } else {
+                    showToast(data.error || 'Failed to save tokens', 'error');
+                }
+            } catch(e) { showToast('Network error', 'error'); }
+        }
+
+        async function testMessenger(platform) {
+            const resultEl = document.getElementById('msg-test-result-' + platform);
+            if (resultEl) resultEl.innerHTML = '<div class="messenger-test-result" style="background:#1e293b;color:#94a3b8;">Testing...</div>';
+            try {
+                const resp = await fetch('/api/messenger/' + encodeURIComponent(platform) + '/test', { method: 'POST' });
+                const data = await resp.json();
+                if (!resultEl) return;
+                if (data.status === 'ok') {
+                    resultEl.innerHTML = '<div class="messenger-test-result ok">' + escapeHtml(data.message) + '</div>';
+                } else if (data.status === 'not_connected') {
+                    resultEl.innerHTML = '<div class="messenger-test-result not-connected">' + escapeHtml(data.message) + '</div>';
+                } else {
+                    resultEl.innerHTML = '<div class="messenger-test-result error">' + escapeHtml(data.message || data.error || 'Test failed') + '</div>';
+                }
+            } catch(e) {
+                if (resultEl) resultEl.innerHTML = '<div class="messenger-test-result error">Network error</div>';
+            }
+        }
+
+        async function saveMessengerUsers(platform) {
+            const users = _messengerData[platform] || [];
+            try {
+                const resp = await fetch('/api/config/messenger', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({allowed_users: {[platform]: users}})
+                });
+                if (resp.ok) {
+                    showToast(platform + ' users saved', 'success');
+                } else {
+                    const d = await resp.json();
+                    showToast(d.error || 'Failed', 'error');
+                }
+            } catch(e) { showToast('Network error', 'error'); }
         }
 
         async function saveMessenger() {

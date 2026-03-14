@@ -851,6 +851,90 @@ class WebApp:
                     pass
             return {"status": "ok"}
 
+        # --- Messenger Connection Settings ---
+        @app.get("/api/messenger/platforms")
+        async def messenger_platforms():
+            """Get all messenger platforms with their status and config fields."""
+            platforms = {}
+            configs = {
+                "slack": {"name": "Slack", "icon": "\U0001f4ac", "fields": [
+                    {"name": "bot_token", "label": "Bot Token", "placeholder": "xoxb-...", "secret": True},
+                    {"name": "app_token", "label": "App Token", "placeholder": "xapp-...", "secret": True},
+                ]},
+                "discord": {"name": "Discord", "icon": "\U0001f3ae", "fields": [
+                    {"name": "bot_token", "label": "Bot Token", "placeholder": "Bot token", "secret": True},
+                ]},
+                "telegram": {"name": "Telegram", "icon": "\u2708\ufe0f", "fields": [
+                    {"name": "bot_token", "label": "Bot Token", "placeholder": "From @BotFather", "secret": True},
+                ]},
+            }
+            token_keys = {
+                "slack": ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"],
+                "discord": ["DISCORD_BOT_TOKEN"],
+                "telegram": ["TELEGRAM_BOT_TOKEN"],
+            }
+            for platform, cfg in configs.items():
+                tokens_set = all(bool(os.environ.get(k, "")) for k in token_keys.get(platform, []))
+                connected = False
+                if self._message_router and hasattr(self._message_router, 'get_platform_status'):
+                    status = self._message_router.get_platform_status()
+                    connected = status.get(platform, {}).get("connected", False)
+                allowed = []
+                if self._message_router and hasattr(self._message_router, 'get_allowed_users'):
+                    allowed = self._message_router.get_allowed_users().get(platform, [])
+
+                platforms[platform] = {
+                    **cfg,
+                    "configured": tokens_set,
+                    "connected": connected,
+                    "allowed_users": allowed,
+                }
+            return {"platforms": platforms}
+
+        @app.post("/api/messenger/{platform}/token")
+        async def set_messenger_token(platform: str, request: Request):
+            """Save messenger platform tokens."""
+            data = await request.json()
+            valid_platforms = {"slack", "discord", "telegram"}
+            if platform not in valid_platforms:
+                return JSONResponse(status_code=400, content={"error": f"Invalid platform: {platform}"})
+
+            token_map = {
+                "slack": {"bot_token": "SLACK_BOT_TOKEN", "app_token": "SLACK_APP_TOKEN"},
+                "discord": {"bot_token": "DISCORD_BOT_TOKEN"},
+                "telegram": {"bot_token": "TELEGRAM_BOT_TOKEN"},
+            }
+
+            saved = {}
+            for field_name, env_key in token_map.get(platform, {}).items():
+                value = data.get(field_name, "")
+                if value:
+                    os.environ[env_key] = value
+                    if self._db:
+                        try:
+                            await self._db.set_setting(f"messenger_token:{env_key}", {"value": value})
+                        except Exception as e:
+                            logger.warning(f"Failed to save messenger token to DB: {e}")
+                    saved[field_name] = env_key
+
+            return {"status": "ok", "saved": list(saved.keys()), "platform": platform}
+
+        @app.post("/api/messenger/{platform}/test")
+        async def test_messenger(platform: str):
+            """Send a test message to verify connection."""
+            valid_platforms = {"slack", "discord", "telegram"}
+            if platform not in valid_platforms:
+                return JSONResponse(status_code=400, content={"error": f"Invalid platform: {platform}"})
+            if not self._message_router:
+                return JSONResponse(status_code=503, content={"error": "Message router not configured"})
+            gw = self._message_router._gateways.get(platform)
+            if not gw:
+                return {"status": "not_connected", "message": f"{platform} gateway not initialized. Save tokens and restart."}
+            try:
+                return {"status": "ok", "message": f"{platform} gateway is available"}
+            except Exception as e:
+                return {"status": "error", "message": str(e)}
+
         # --- Memory Config ---
         @app.get("/api/config/memory")
         async def get_memory_config():

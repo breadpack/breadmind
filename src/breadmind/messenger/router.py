@@ -114,6 +114,43 @@ class MessageRouter:
             if gw and channels and platform in channels:
                 await gw.send(channels[platform], text)
 
+    def get_platform_status(self) -> dict[str, dict]:
+        """Return status for all platforms."""
+        result = {}
+        for name, gw in self._gateways.items():
+            result[name] = {
+                "connected": getattr(gw, '_connected', False),
+                "enabled": getattr(gw, '_enabled', True),
+                "allowed_users": self._allowed_users.get(name, []),
+            }
+        # Always include all 3 platforms even if no gateway
+        for p in ["slack", "discord", "telegram"]:
+            if p not in result:
+                result[p] = {"connected": False, "enabled": False, "allowed_users": self._allowed_users.get(p, [])}
+        return result
+
+    def set_platform_enabled(self, platform: str, enabled: bool):
+        """Enable/disable a platform."""
+        gw = self._gateways.get(platform)
+        if gw:
+            gw._enabled = enabled
+
+    def get_platform_config(self, platform: str) -> dict:
+        """Get config needed for a platform (what tokens are required, etc)."""
+        configs = {
+            "slack": {"fields": [
+                {"name": "bot_token", "label": "Bot Token", "placeholder": "xoxb-...", "secret": True},
+                {"name": "app_token", "label": "App Token (Socket Mode)", "placeholder": "xapp-...", "secret": True},
+            ]},
+            "discord": {"fields": [
+                {"name": "bot_token", "label": "Bot Token", "placeholder": "Bot token from Discord Developer Portal", "secret": True},
+            ]},
+            "telegram": {"fields": [
+                {"name": "bot_token", "label": "Bot Token", "placeholder": "123456:ABC-DEF... from @BotFather", "secret": True},
+            ]},
+        }
+        return configs.get(platform, {"fields": []})
+
     async def start_all(self):
         for name, gw in self._gateways.items():
             try:
