@@ -164,6 +164,63 @@
         .toast.show { opacity: 1; }
         .toast.success { background: #10b981; }
         .toast.error { background: #ef4444; }
+
+        /* MCP Store */
+        .store-search { display:flex; gap:8px; margin-bottom:16px; }
+        .store-search input { flex:1; background:#1a2332; border:1px solid #2d3748; color:#e2e8f0; padding:10px 16px; border-radius:8px; font-size:14px; }
+        .store-search button { background:#3b82f6; color:white; border:none; padding:10px 20px; border-radius:8px; cursor:pointer; }
+
+        #tab-store { display:none; padding:20px; }
+        #tab-store.active { display:flex; flex-direction:column; height:calc(100vh - 80px); }
+
+        .store-content { display:flex; gap:16px; flex:1; overflow:hidden; }
+        .store-left { width:45%; overflow-y:auto; }
+        .store-right { width:55%; background:#0f1923; border:1px solid #1e293b; border-radius:12px; padding:16px; display:flex; flex-direction:column; overflow-y:auto; }
+
+        .store-toggle { display:flex; gap:4px; margin-bottom:12px; }
+        .store-toggle button { background:#1a2332; border:1px solid #2d3748; color:#94a3b8; padding:6px 16px; border-radius:6px; cursor:pointer; }
+        .store-toggle button.active { background:#3b82f6; color:white; border-color:#3b82f6; }
+
+        .server-card { background:#1a2332; border:1px solid #2d3748; border-radius:10px; padding:14px; margin-bottom:10px; }
+        .server-name { font-weight:600; color:#e2e8f0; font-size:14px; }
+        .server-desc { color:#94a3b8; font-size:12px; margin:6px 0; line-height:1.4; max-height:40px; overflow:hidden; }
+        .server-meta { display:flex; gap:8px; margin:8px 0; }
+        .server-source { background:#1e293b; color:#60a5fa; padding:2px 8px; border-radius:4px; font-size:11px; }
+        .server-status { padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; }
+        .server-status.running { background:#064e3b; color:#34d399; }
+        .server-status.stopped { background:#451a03; color:#fbbf24; }
+        .server-header { display:flex; justify-content:space-between; align-items:center; }
+        .server-actions { display:flex; gap:6px; margin-top:8px; }
+
+        .btn-install { background:#3b82f6; color:white; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:12px; margin-top:8px; }
+        .btn-install:hover { background:#2563eb; }
+        .btn-sm { padding:4px 10px; border-radius:4px; border:none; cursor:pointer; font-size:11px; color:white; }
+        .btn-start { background:#059669; }
+        .btn-stop { background:#d97706; }
+        .btn-remove { background:#dc2626; }
+        .btn-sm:disabled { opacity:0.4; cursor:not-allowed; }
+
+        /* Install Assistant */
+        .store-right h3 { color:#e2e8f0; margin:0 0 12px 0; font-size:15px; }
+        .install-welcome { color:#64748b; text-align:center; padding:40px 0; }
+        .install-msg { padding:8px 12px; border-radius:8px; margin-bottom:8px; font-size:13px; line-height:1.5; }
+        .install-msg.system { background:#1e293b; color:#94a3b8; }
+        .install-msg.assistant { background:#1e3a5f; color:#93c5fd; }
+        .install-msg.info { background:#1a2332; color:#60a5fa; font-family:monospace; font-size:12px; }
+        .install-msg.success { background:#064e3b; color:#34d399; }
+        .install-msg.error { background:#450a0a; color:#fca5a5; }
+
+        .env-form { margin-top:8px; }
+        .env-field { margin-bottom:12px; }
+        .env-field label { display:block; color:#e2e8f0; font-size:13px; font-weight:600; margin-bottom:2px; }
+        .env-field .env-desc { display:block; color:#64748b; font-size:11px; margin-bottom:4px; }
+        .env-field input { width:100%; background:#0f1923; border:1px solid #2d3748; color:#e2e8f0; padding:8px; border-radius:6px; box-sizing:border-box; }
+
+        .btn-install-execute { background:#059669; color:white; border:none; padding:8px 20px; border-radius:6px; cursor:pointer; margin-top:8px; }
+        .btn-fix { background:#d97706; color:white; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; margin-right:8px; }
+        .btn-retry { background:#3b82f6; color:white; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; }
+
+        .loading, .empty { color:#64748b; text-align:center; padding:20px; }
     </style>
 </head>
 <body>
@@ -179,6 +236,7 @@
     <div class="tabs">
         <div class="tab active" onclick="switchTab('chat')">Chat</div>
         <div class="tab" onclick="switchTab('monitoring')">Monitoring <span class="count" id="eventCount">0</span></div>
+        <div class="tab" onclick="switchTab('store')">MCP Store</div>
         <div class="tab" onclick="switchTab('settings')">Settings</div>
     </div>
     <div class="main">
@@ -222,6 +280,30 @@
                 </div>
             </div>
         </div>
+        <!-- MCP Store Tab -->
+        <div class="tab-content" id="tab-store">
+            <div class="store-search">
+                <input type="text" id="mcp-search-input" placeholder="Search MCP servers..." />
+                <button onclick="searchMCP()">Search</button>
+            </div>
+            <div class="store-content">
+                <div class="store-left">
+                    <div class="store-toggle">
+                        <button class="active" onclick="showStoreSection('results')">Search Results</button>
+                        <button onclick="showStoreSection('installed')">Installed</button>
+                    </div>
+                    <div id="store-results"></div>
+                    <div id="store-installed" style="display:none"></div>
+                </div>
+                <div class="store-right" id="install-panel">
+                    <h3>Install Assistant</h3>
+                    <div id="install-messages">
+                        <div class="install-welcome">Select a server to install</div>
+                    </div>
+                    <div id="install-actions" style="display:none"></div>
+                </div>
+            </div>
+        </div>
         <!-- Settings Tab -->
         <div class="tab-content" id="tab-settings">
             <div class="settings">
@@ -253,11 +335,12 @@
         }
 
         function switchTab(name) {
-            document.querySelectorAll('.tab').forEach((t, i) => { t.classList.toggle('active', ['chat','monitoring','settings'][i] === name); });
+            document.querySelectorAll('.tab').forEach((t, i) => { t.classList.toggle('active', ['chat','monitoring','store','settings'][i] === name); });
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
             document.getElementById('tab-' + name).classList.add('active');
             if (name === 'settings') loadSettings();
             if (name === 'monitoring') loadEvents();
+            if (name === 'store') loadInstalledServers();
         }
 
         function sendMessage() {
@@ -598,6 +681,203 @@
             else if (isEnabled === false) cls += ' disabled';
             return `<div class="setting-row"><span class="setting-label">${label}</span><span class="${cls}">${value}</span></div>`;
         }
+
+        // MCP Store
+        async function startInstall(slug, name, description, source, installCommand) {
+            const panel = document.getElementById('install-panel');
+            const messages = document.getElementById('install-messages');
+            const actions = document.getElementById('install-actions');
+
+            messages.innerHTML = '<div class="install-msg system">Analyzing server...</div>';
+            actions.style.display = 'none';
+
+            const resp = await fetch('/api/mcp/install/analyze', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({name, slug, description, source, install_command: installCommand})
+            });
+            const data = await resp.json();
+            const analysis = data.analysis;
+
+            messages.innerHTML += '<div class="install-msg assistant">' + escapeHtml(analysis.summary) + '</div>';
+
+            if (analysis.runtime) {
+                messages.innerHTML += '<div class="install-msg info">Runtime: ' + escapeHtml(analysis.runtime) + ' | Command: ' + escapeHtml(analysis.command) + ' ' + escapeHtml(analysis.args.join(' ')) + '</div>';
+            }
+
+            if (analysis.required_env && analysis.required_env.length > 0) {
+                messages.innerHTML += '<div class="install-msg assistant">Please enter the required environment variables:</div>';
+
+                let envHtml = '<div class="env-form">';
+                for (const env of analysis.required_env) {
+                    const inputType = env.secret ? 'password' : 'text';
+                    envHtml += '<div class="env-field">' +
+                        '<label>' + escapeHtml(env.name) + '</label>' +
+                        '<span class="env-desc">' + escapeHtml(env.description) + '</span>' +
+                        '<input type="' + inputType + '" id="env-' + env.name + '" placeholder="' + escapeHtml(env.name) + '" />' +
+                        '</div>';
+                }
+                envHtml += '<button class="btn-install-execute" onclick="executeInstall(\'' + escapeHtml(name) + '\', \'' + escapeHtml(slug) + '\', \'' + escapeHtml(source) + '\')">Install Now</button>';
+                envHtml += '</div>';
+
+                actions.innerHTML = envHtml;
+                actions.style.display = 'block';
+
+                window._currentInstall = {analysis, name, slug, source};
+            } else {
+                window._currentInstall = {analysis, name, slug, source};
+                executeInstall(name, slug, source);
+            }
+        }
+
+        async function executeInstall(name, slug, source) {
+            const install = window._currentInstall;
+            const analysis = install.analysis;
+            const messages = document.getElementById('install-messages');
+            const actions = document.getElementById('install-actions');
+
+            const env = {};
+            if (analysis.required_env) {
+                for (const e of analysis.required_env) {
+                    const input = document.getElementById('env-' + e.name);
+                    if (input && input.value) {
+                        env[e.name] = input.value;
+                    }
+                }
+            }
+
+            messages.innerHTML += '<div class="install-msg system">Installing...</div>';
+            actions.style.display = 'none';
+
+            const resp = await fetch('/api/mcp/install/execute', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    name, slug, source,
+                    command: analysis.command,
+                    args: analysis.args,
+                    env,
+                    runtime: analysis.runtime,
+                })
+            });
+            const result = await resp.json();
+
+            if (result.status === 'ok') {
+                messages.innerHTML += '<div class="install-msg success">' + escapeHtml(name) + ' installed successfully! (' + result.tool_count + ' tools)</div>';
+                messages.innerHTML += '<div class="install-msg info">Tools: ' + escapeHtml(result.tools.join(', ')) + '</div>';
+                loadInstalledServers();
+            } else {
+                messages.innerHTML += '<div class="install-msg error">Installation failed: ' + escapeHtml(result.error) + '</div>';
+
+                if (result.troubleshoot) {
+                    const fix = result.troubleshoot;
+                    messages.innerHTML += '<div class="install-msg assistant">Analysis: ' + escapeHtml(fix.analysis) + '</div>';
+                    messages.innerHTML += '<div class="install-msg assistant">Suggestion: ' + escapeHtml(fix.suggestion) + '</div>';
+                    if (fix.auto_fix_available) {
+                        actions.innerHTML = '<button class="btn-fix" onclick="autoFix(\'' + escapeHtml(name) + '\', \'' + escapeHtml(fix.fix_command) + '\')">Auto Fix</button>' +
+                            '<button class="btn-retry" onclick="startInstall(\'' + escapeHtml(slug) + '\', \'' + escapeHtml(name) + '\', \'\', \'' + escapeHtml(source) + '\', \'\')">Retry</button>';
+                        actions.style.display = 'block';
+                    }
+                }
+            }
+        }
+
+        async function autoFix(name, fixCommand) {
+            const messages = document.getElementById('install-messages');
+            messages.innerHTML += '<div class="install-msg system">Executing fix: ' + escapeHtml(fixCommand) + '</div>';
+            messages.innerHTML += '<div class="install-msg info">Please run manually: ' + escapeHtml(fixCommand) + '</div>';
+        }
+
+        async function searchMCP() {
+            const query = document.getElementById('mcp-search-input').value.trim();
+            if (!query) return;
+            const container = document.getElementById('store-results');
+            container.innerHTML = '<div class="loading">Searching...</div>';
+
+            const resp = await fetch('/api/mcp/search?q=' + encodeURIComponent(query) + '&limit=10');
+            const data = await resp.json();
+
+            if (data.results.length === 0) {
+                container.innerHTML = '<div class="empty">No servers found.</div>';
+                return;
+            }
+
+            container.innerHTML = data.results.map(function(r) {
+                const desc = (r.description || 'No description').replace(/'/g, "\\'");
+                const cmd = (r.install_command || '').replace(/'/g, "\\'");
+                return '<div class="server-card">' +
+                    '<div class="server-name">' + escapeHtml(r.name) + '</div>' +
+                    '<div class="server-desc">' + escapeHtml(r.description || 'No description') + '</div>' +
+                    '<div class="server-meta"><span class="server-source">' + escapeHtml(r.source) + '</span></div>' +
+                    '<button class="btn-install" onclick="startInstall(\'' + escapeHtml(r.slug) + '\', \'' + escapeHtml(r.name) + '\', \'' + desc + '\', \'' + escapeHtml(r.source) + '\', \'' + cmd + '\')">Install</button>' +
+                    '</div>';
+            }).join('');
+        }
+
+        async function loadInstalledServers() {
+            const container = document.getElementById('store-installed');
+            try {
+                const resp = await fetch('/api/mcp/installed');
+                const data = await resp.json();
+
+                if (data.servers.length === 0) {
+                    container.innerHTML = '<div class="empty">No servers installed.</div>';
+                    return;
+                }
+
+                container.innerHTML = data.servers.map(function(s) {
+                    return '<div class="server-card installed">' +
+                        '<div class="server-header">' +
+                            '<span class="server-name">' + escapeHtml(s.name) + '</span>' +
+                            '<span class="server-status ' + s.status + '">' + s.status + '</span>' +
+                        '</div>' +
+                        '<div class="server-meta"><span class="server-source">' + escapeHtml(s.source || '') + '</span> · ' + (s.tools || []).length + ' tools</div>' +
+                        '<div class="server-actions">' +
+                            '<button onclick="startMCPServer(\'' + escapeHtml(s.name) + '\')" class="btn-sm btn-start" ' + (s.status === 'running' ? 'disabled' : '') + '>Start</button>' +
+                            '<button onclick="stopMCPServer(\'' + escapeHtml(s.name) + '\')" class="btn-sm btn-stop" ' + (s.status !== 'running' ? 'disabled' : '') + '>Stop</button>' +
+                            '<button onclick="removeMCPServer(\'' + escapeHtml(s.name) + '\')" class="btn-sm btn-remove">Remove</button>' +
+                        '</div>' +
+                        '</div>';
+                }).join('');
+            } catch(e) {
+                container.innerHTML = '<div class="empty">Failed to load installed servers.</div>';
+            }
+        }
+
+        async function startMCPServer(name) {
+            const resp = await fetch('/api/mcp/servers/' + encodeURIComponent(name) + '/start', {method:'POST'});
+            const data = await resp.json();
+            if (data.status === 'ok') { showToast(name + ' started', 'success'); loadInstalledServers(); }
+            else { showToast(data.error || 'Failed', 'error'); }
+        }
+
+        async function stopMCPServer(name) {
+            const resp = await fetch('/api/mcp/servers/' + encodeURIComponent(name) + '/stop', {method:'POST'});
+            const data = await resp.json();
+            if (data.status === 'ok') { showToast(name + ' stopped', 'success'); loadInstalledServers(); }
+            else { showToast(data.error || 'Failed', 'error'); }
+        }
+
+        async function removeMCPServer(name) {
+            if (!confirm('Remove ' + name + '?')) return;
+            const resp = await fetch('/api/mcp/servers/' + encodeURIComponent(name), {method:'DELETE'});
+            const data = await resp.json();
+            if (data.status === 'ok') { showToast(name + ' removed', 'success'); loadInstalledServers(); }
+            else { showToast(data.error || 'Failed', 'error'); }
+        }
+
+        function showStoreSection(section) {
+            document.getElementById('store-results').style.display = section === 'results' ? '' : 'none';
+            document.getElementById('store-installed').style.display = section === 'installed' ? '' : 'none';
+            var btns = document.querySelectorAll('.store-toggle button');
+            btns.forEach(function(b) { b.classList.remove('active'); });
+            event.target.classList.add('active');
+            if (section === 'installed') loadInstalledServers();
+        }
+
+        document.getElementById('mcp-search-input').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') searchMCP();
+        });
 
         // Load initial data
         fetch('/api/tools').then(r => r.json()).then(data => {

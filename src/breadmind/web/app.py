@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 class WebApp:
     def __init__(self, message_handler: Callable | None = None, tool_registry=None, mcp_manager=None,
                  config=None, monitoring_engine=None, safety_config=None,
-                 agent=None, audit_logger=None, metrics_collector=None, database=None):
+                 agent=None, audit_logger=None, metrics_collector=None, database=None,
+                 mcp_store=None):
         self.app = FastAPI(title="BreadMind", version="0.1.0")
         self._message_handler = message_handler
         self._tool_registry = tool_registry
@@ -26,6 +27,7 @@ class WebApp:
         self._audit_logger = audit_logger
         self._metrics_collector = metrics_collector
         self._db = database
+        self._mcp_store = mcp_store
         self._connections: list[WebSocket] = []
         self._events: list[dict] = []
         self._lock = asyncio.Lock()
@@ -427,6 +429,90 @@ class WebApp:
         async def get_settings_status():
             """Check if settings are DB-persisted."""
             return {"db_connected": self._db is not None}
+
+        # --- MCP Store endpoints ---
+
+        @app.get("/api/mcp/search")
+        async def mcp_search(q: str = "", limit: int = 10):
+            if not self._mcp_store:
+                return {"results": []}
+            results = await self._mcp_store.search(q, limit=limit)
+            return {"results": results}
+
+        @app.post("/api/mcp/install/analyze")
+        async def mcp_install_analyze(request: Request):
+            if not self._mcp_store:
+                return JSONResponse(status_code=503, content={"error": "MCP Store not configured"})
+            data = await request.json()
+            analysis = await self._mcp_store.analyze_server(data)
+            return {"analysis": analysis}
+
+        @app.post("/api/mcp/install/execute")
+        async def mcp_install_execute(request: Request):
+            if not self._mcp_store:
+                return JSONResponse(status_code=503, content={"error": "MCP Store not configured"})
+            data = await request.json()
+            result = await self._mcp_store.install_server(
+                name=data.get("name", ""),
+                slug=data.get("slug", ""),
+                command=data.get("command", ""),
+                args=data.get("args", []),
+                env=data.get("env", {}),
+                source=data.get("source", ""),
+                runtime=data.get("runtime", ""),
+            )
+            # Broadcast install event to WebSocket clients
+            if result.get("status") == "ok":
+                await self.broadcast_event({"type": "mcp_installed", "server": result})
+            return result
+
+        @app.post("/api/mcp/install/troubleshoot")
+        async def mcp_install_troubleshoot(request: Request):
+            if not self._mcp_store:
+                return JSONResponse(status_code=503, content={"error": "MCP Store not configured"})
+            data = await request.json()
+            if not self._mcp_store._assistant:
+                return JSONResponse(status_code=503, content={"error": "LLM not available for troubleshooting"})
+            fix = await self._mcp_store._assistant.troubleshoot(
+                data.get("server_name", ""), data.get("command", ""),
+                data.get("args", []), data.get("error_log", ""),
+            )
+            return {"fix": fix}
+
+        @app.get("/api/mcp/installed")
+        async def mcp_installed():
+            if not self._mcp_store:
+                return {"servers": []}
+            servers = await self._mcp_store.list_installed()
+            return {"servers": servers}
+
+        @app.post("/api/mcp/servers/{name}/start")
+        async def mcp_server_start(name: str):
+            if not self._mcp_store:
+                return JSONResponse(status_code=503, content={"error": "MCP Store not configured"})
+            result = await self._mcp_store.start_server(name)
+            return result
+
+        @app.post("/api/mcp/servers/{name}/stop")
+        async def mcp_server_stop(name: str):
+            if not self._mcp_store:
+                return JSONResponse(status_code=503, content={"error": "MCP Store not configured"})
+            result = await self._mcp_store.stop_server(name)
+            return result
+
+        @app.delete("/api/mcp/servers/{name}")
+        async def mcp_server_remove(name: str):
+            if not self._mcp_store:
+                return JSONResponse(status_code=503, content={"error": "MCP Store not configured"})
+            result = await self._mcp_store.remove_server(name)
+            return result
+
+        @app.get("/api/mcp/servers/{name}/tools")
+        async def mcp_server_tools(name: str):
+            if not self._mcp_store:
+                return {"tools": []}
+            tools = await self._mcp_store.get_server_tools(name)
+            return {"tools": tools}
 
         @app.websocket("/ws/chat")
         async def websocket_chat(websocket: WebSocket):
