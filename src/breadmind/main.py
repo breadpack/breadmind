@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import logging
 import signal
 import sys
 from breadmind.config import load_config, load_safety_config
@@ -14,6 +15,22 @@ from breadmind.tools.builtin import shell_exec, web_search, file_read, file_writ
 from breadmind.tools.mcp_client import MCPClientManager
 from breadmind.tools.registry_search import RegistrySearchEngine, RegistryConfig
 from breadmind.tools.meta import create_meta_tools
+
+# Optional imports - may not be available yet
+try:
+    from breadmind.core.audit import AuditLogger
+except ImportError:
+    AuditLogger = None
+
+try:
+    from breadmind.core.metrics import MetricsCollector
+except ImportError:
+    MetricsCollector = None
+
+try:
+    from breadmind.core.context import ContextBuilder
+except ImportError:
+    ContextBuilder = None
 
 
 def create_provider(config):
@@ -34,8 +51,10 @@ def create_provider(config):
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="BreadMind AI Infrastructure Agent")
     parser.add_argument("--web", action="store_true", help="Start web UI mode with uvicorn")
-    parser.add_argument("--host", default="0.0.0.0", help="Web server host (default: 0.0.0.0)")
-    parser.add_argument("--port", type=int, default=8000, help="Web server port (default: 8000)")
+    parser.add_argument("--host", default=None, help="Web server host (default: from config or 0.0.0.0)")
+    parser.add_argument("--port", type=int, default=None, help="Web server port (default: from config or 8080)")
+    parser.add_argument("--log-level", default=None, choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+                        help="Logging level (default: from config or INFO)")
     return parser.parse_args()
 
 
@@ -43,6 +62,13 @@ async def run():
     args = _parse_args()
     config = load_config()
     config.validate()
+
+    # Configure logging
+    log_level = args.log_level or config.logging.level
+    logging.basicConfig(
+        level=getattr(logging, log_level, logging.INFO),
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    )
 
     safety_cfg = load_safety_config()
 
@@ -117,18 +143,53 @@ async def run():
         signal.signal(signal.SIGTERM, _signal_handler)
         signal.signal(signal.SIGINT, _signal_handler)
 
-    agent = CoreAgent(
+    # Initialize optional components
+    audit_logger = None
+    if AuditLogger is not None:
+        try:
+            audit_logger = AuditLogger()
+        except Exception:
+            pass
+
+    metrics_collector = None
+    if MetricsCollector is not None:
+        try:
+            metrics_collector = MetricsCollector()
+        except Exception:
+            pass
+
+    agent_kwargs = dict(
         provider=provider,
         tool_registry=registry,
         safety_guard=guard,
         max_turns=config.llm.tool_call_max_turns,
     )
+    if audit_logger is not None:
+        agent_kwargs["audit_logger"] = audit_logger
+
+    agent = CoreAgent(**agent_kwargs)
+
+    # Wire metrics_collector to registry if supported
+    if metrics_collector is not None and hasattr(registry, 'set_metrics_collector'):
+        registry.set_metrics_collector(metrics_collector)
+
+    # Wire ContextBuilder if available
+    context_builder = None
+    if ContextBuilder is not None:
+        try:
+            context_builder = ContextBuilder(agent=agent)
+        except Exception:
+            pass
 
     builtin_count = len([t for t in registry.get_all_definitions() if registry.get_tool_source(t.name) == "builtin"])
     print("BreadMind v0.1.0 - AI Infrastructure Agent")
     print(f"  Built-in tools: {builtin_count}")
     print(f"  Meta tools: {len(meta_tools)}")
     print(f"  MCP servers: {len(config.mcp.servers)}")
+
+    # Resolve host/port from CLI args or config
+    web_host = args.host or config.web.host
+    web_port = args.port or config.web.port
 
     try:
         if args.web:
@@ -142,10 +203,13 @@ async def run():
                 config=config,
                 monitoring_engine=monitoring_engine,
                 safety_config=safety_cfg,
+                agent=agent,
+                audit_logger=audit_logger,
+                metrics_collector=metrics_collector,
             )
-            print(f"  Starting web server on {args.host}:{args.port}")
+            print(f"  Starting web server on {web_host}:{web_port}")
             server_config = uvicorn.Config(
-                web_app.app, host=args.host, port=args.port, log_level="info",
+                web_app.app, host=web_host, port=web_port, log_level=log_level.lower(),
             )
             server = uvicorn.Server(server_config)
             await server.serve()

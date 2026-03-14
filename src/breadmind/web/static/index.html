@@ -97,6 +97,34 @@
         .tag { font-size: 11px; padding: 3px 8px; border-radius: 4px; background: #334155; color: #cbd5e1; }
         .tag.danger { background: #7f1d1d; color: #fca5a5; }
         .tag.approval { background: #713f12; color: #fde68a; }
+
+        /* Usage / Audit / Metrics / Approvals */
+        .usage-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+        .usage-card { background: #0f172a; border-radius: 6px; padding: 10px; text-align: center; }
+        .usage-card .label { font-size: 11px; color: #94a3b8; text-transform: uppercase; }
+        .usage-card .value { font-size: 20px; font-weight: 600; margin-top: 4px; color: #e2e8f0; }
+        .audit-list { max-height: 300px; overflow-y: auto; }
+        .audit-entry { padding: 6px 8px; border-bottom: 1px solid #334155; font-size: 12px; display: flex; justify-content: space-between; }
+        .audit-entry .audit-time { color: #64748b; font-size: 11px; }
+        .audit-entry .audit-action { color: #cbd5e1; }
+        .metrics-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .metrics-table th { text-align: left; color: #94a3b8; font-size: 11px; text-transform: uppercase; padding: 6px 8px; border-bottom: 1px solid #334155; }
+        .metrics-table td { padding: 6px 8px; border-bottom: 1px solid #1e293b; color: #cbd5e1; }
+        .metrics-table .success-rate { font-weight: 600; }
+        .metrics-table .success-rate.good { color: #86efac; }
+        .metrics-table .success-rate.warn { color: #fde68a; }
+        .metrics-table .success-rate.bad { color: #fca5a5; }
+        .approval-card { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 12px 16px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+        .approval-card .approval-info { flex: 1; }
+        .approval-card .approval-tool { font-weight: 600; color: #e2e8f0; font-size: 14px; }
+        .approval-card .approval-detail { font-size: 12px; color: #94a3b8; margin-top: 2px; }
+        .approval-actions { display: flex; gap: 8px; }
+        .approval-actions button { padding: 6px 14px; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; }
+        .btn-approve { background: #166534; color: #86efac; }
+        .btn-approve:hover { background: #15803d; }
+        .btn-deny { background: #7f1d1d; color: #fca5a5; }
+        .btn-deny:hover { background: #991b1b; }
+        .no-data { color: #64748b; font-size: 13px; padding: 12px 0; }
     </style>
 </head>
 <body>
@@ -266,9 +294,84 @@
                 fetch('/api/config').then(r => r.json()).catch(() => ({})),
                 fetch('/api/safety').then(r => r.json()).catch(() => ({blacklist:{},require_approval:[]})),
                 fetch('/api/monitoring/status').then(r => r.json()).catch(() => ({running:false,rules:0})),
-            ]).then(([config, safety, monitoring]) => {
+                fetch('/api/usage').then(r => r.json()).catch(() => ({usage:{}})),
+                fetch('/api/audit').then(r => r.json()).catch(() => ({entries:[]})),
+                fetch('/api/metrics').then(r => r.json()).catch(() => ({metrics:{}})),
+                fetch('/api/approvals').then(r => r.json()).catch(() => ({approvals:[]})),
+            ]).then(([config, safety, monitoring, usage, audit, metrics, approvals]) => {
                 const c = document.getElementById('settingsContent');
                 let html = '';
+
+                // Token Usage
+                html += `<div class="settings-section"><h3>Token Usage</h3>`;
+                const u = usage.usage || {};
+                if (Object.keys(u).length > 0) {
+                    html += `<div class="usage-grid">`;
+                    if (u.input_tokens !== undefined) html += `<div class="usage-card"><div class="label">Input Tokens</div><div class="value">${u.input_tokens.toLocaleString()}</div></div>`;
+                    if (u.output_tokens !== undefined) html += `<div class="usage-card"><div class="label">Output Tokens</div><div class="value">${u.output_tokens.toLocaleString()}</div></div>`;
+                    if (u.cache_tokens !== undefined) html += `<div class="usage-card"><div class="label">Cache Tokens</div><div class="value">${u.cache_tokens.toLocaleString()}</div></div>`;
+                    if (u.total_cost !== undefined) html += `<div class="usage-card"><div class="label">Total Cost</div><div class="value">$${u.total_cost.toFixed(4)}</div></div>`;
+                    html += `</div>`;
+                } else {
+                    html += `<div class="no-data">No usage data available.</div>`;
+                }
+                html += `</div>`;
+
+                // Audit Log
+                html += `<div class="settings-section"><h3>Recent Audit Log</h3>`;
+                const entries = (audit.entries || []).slice(0, 20);
+                if (entries.length > 0) {
+                    html += `<div class="audit-list">`;
+                    entries.forEach(e => {
+                        const time = e.timestamp ? new Date(e.timestamp).toLocaleString() : '';
+                        const action = e.action || e.tool_name || JSON.stringify(e);
+                        const user = e.user || '';
+                        html += `<div class="audit-entry"><span class="audit-action">${escapeHtml(String(action))}${user ? ' by ' + escapeHtml(user) : ''}</span><span class="audit-time">${time}</span></div>`;
+                    });
+                    html += `</div>`;
+                } else {
+                    html += `<div class="no-data">No audit log entries.</div>`;
+                }
+                html += `</div>`;
+
+                // Tool Metrics
+                html += `<div class="settings-section"><h3>Tool Metrics</h3>`;
+                const m = metrics.metrics || {};
+                const toolEntries = Object.entries(m);
+                if (toolEntries.length > 0) {
+                    const sorted = toolEntries.sort((a, b) => (b[1].call_count || 0) - (a[1].call_count || 0)).slice(0, 10);
+                    html += `<table class="metrics-table"><thead><tr><th>Tool</th><th>Calls</th><th>Success Rate</th><th>Avg Time</th></tr></thead><tbody>`;
+                    sorted.forEach(([name, data]) => {
+                        const rate = data.call_count > 0 ? ((data.success_count || 0) / data.call_count * 100) : 0;
+                        const rateClass = rate >= 90 ? 'good' : rate >= 70 ? 'warn' : 'bad';
+                        const avgTime = data.avg_duration_ms !== undefined ? data.avg_duration_ms.toFixed(0) + 'ms' : '-';
+                        html += `<tr><td>${escapeHtml(name)}</td><td>${data.call_count || 0}</td><td class="success-rate ${rateClass}">${rate.toFixed(0)}%</td><td>${avgTime}</td></tr>`;
+                    });
+                    html += `</tbody></table>`;
+                } else {
+                    html += `<div class="no-data">No tool metrics available.</div>`;
+                }
+                html += `</div>`;
+
+                // Pending Approvals
+                html += `<div class="settings-section"><h3>Pending Approvals</h3>`;
+                const apps = approvals.approvals || [];
+                if (apps.length > 0) {
+                    apps.forEach(a => {
+                        const toolName = a.tool_name || a.name || 'Unknown';
+                        const detail = a.arguments ? JSON.stringify(a.arguments) : (a.detail || '');
+                        html += `<div class="approval-card">
+                            <div class="approval-info"><div class="approval-tool">${escapeHtml(toolName)}</div><div class="approval-detail">${escapeHtml(detail)}</div></div>
+                            <div class="approval-actions">
+                                <button class="btn-approve" onclick="handleApproval('${a.id}', 'approve')">Approve</button>
+                                <button class="btn-deny" onclick="handleApproval('${a.id}', 'deny')">Deny</button>
+                            </div>
+                        </div>`;
+                    });
+                } else {
+                    html += `<div class="no-data">No pending approvals.</div>`;
+                }
+                html += `</div>`;
 
                 // LLM
                 html += `<div class="settings-section"><h3>LLM Provider</h3>`;
@@ -286,7 +389,7 @@
                     html += row('Auto Discover', config.mcp.auto_discover, config.mcp.auto_discover);
                     html += row('Max Restart Attempts', config.mcp.max_restart_attempts);
                     html += `<div class="setting-row"><span class="setting-label">Registries</span><div class="tag-list">`;
-                    (config.mcp.registries || []).forEach(r => { html += `<span class="tag">${r.name} (${r.type}) ${r.enabled ? '✓' : '✗'}</span>`; });
+                    (config.mcp.registries || []).forEach(r => { html += `<span class="tag">${r.name} (${r.type}) ${r.enabled ? '\u2713' : '\u2717'}</span>`; });
                     html += `</div></div>`;
                 }
                 html += `</div>`;
@@ -325,6 +428,13 @@
 
                 c.innerHTML = html;
             });
+        }
+
+        function handleApproval(id, action) {
+            fetch(`/api/approvals/${id}/${action}`, { method: 'POST' })
+                .then(r => r.json())
+                .then(() => { loadSettings(); })
+                .catch(err => { console.error('Approval action failed:', err); });
         }
 
         function row(label, value, isEnabled) {

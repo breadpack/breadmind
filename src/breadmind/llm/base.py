@@ -1,7 +1,12 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .token_counter import TokenCounter
 
 # 모델별 가격 정보 (USD per 1M tokens)
 _MODEL_PRICING: dict[str, dict[str, float]] = {
@@ -111,3 +116,96 @@ class LLMProvider(ABC):
     @abstractmethod
     async def health_check(self) -> bool:
         ...
+
+
+class FallbackProvider(LLMProvider):
+    """Wraps multiple providers with automatic failover."""
+
+    def __init__(self, providers: list[LLMProvider]):
+        self._providers = providers
+
+    async def chat(
+        self,
+        messages: list[LLMMessage],
+        tools: list[ToolDefinition] | None = None,
+        model: str | None = None,
+    ) -> LLMResponse:
+        last_error: Exception | None = None
+        for provider in self._providers:
+            try:
+                return await provider.chat(messages, tools, model)
+            except Exception as e:
+                last_error = e
+                continue  # try next provider
+        raise last_error  # type: ignore[misc]
+
+    async def health_check(self) -> bool:
+        for p in self._providers:
+            if await p.health_check():
+                return True
+        return False
+
+
+class ConversationSummarizer:
+    """Summarize conversation when context gets too long."""
+
+    def __init__(self, provider: LLMProvider, token_counter: TokenCounter):
+        self._provider = provider
+        self._token_counter = token_counter
+
+    async def summarize_if_needed(
+        self,
+        messages: list[LLMMessage],
+        model: str,
+        threshold_ratio: float = 0.7,
+    ) -> list[LLMMessage]:
+        """If messages exceed threshold_ratio of context window, summarize older messages.
+
+        Keep system prompt + last N messages, replace middle with summary.
+        """
+        total = self._token_counter.estimate_messages_tokens(messages)
+        limit = self._token_counter.get_model_limit(model)
+
+        if total < limit * threshold_ratio:
+            return messages  # no summarization needed
+
+        # Keep first system message and last 10 messages
+        keep_last = min(10, len(messages) - 1)
+
+        if len(messages) <= keep_last + 1:
+            return messages  # not enough messages to summarize
+
+        first_msg = messages[0] if messages[0].role == "system" else None
+        start_idx = 1 if first_msg else 0
+        to_summarize = messages[start_idx:-keep_last] if keep_last > 0 else messages[start_idx:]
+        tail = messages[-keep_last:] if keep_last > 0 else []
+
+        if not to_summarize:
+            return messages
+
+        # Build text from messages to summarize
+        summary_parts = []
+        for msg in to_summarize:
+            if msg.content:
+                summary_parts.append(f"{msg.role}: {msg.content}")
+
+        summary_text = "\n".join(summary_parts)
+        summary_prompt = (
+            "Summarize this conversation concisely, keeping key decisions and facts:\n"
+            + summary_text
+        )
+        summary_response = await self._provider.chat(
+            [LLMMessage(role="user", content=summary_prompt)]
+        )
+
+        result: list[LLMMessage] = []
+        if first_msg:
+            result.append(first_msg)
+        result.append(
+            LLMMessage(
+                role="system",
+                content=f"Previous conversation summary: {summary_response.content}",
+            )
+        )
+        result.extend(tail)
+        return result

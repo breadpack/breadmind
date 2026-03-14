@@ -1,10 +1,14 @@
 import asyncio
+import json
+import logging
 import pytest
+from datetime import timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from breadmind.core.agent import CoreAgent
 from breadmind.llm.base import LLMResponse, LLMMessage, ToolCall, TokenUsage
 from breadmind.tools.registry import ToolRegistry, ToolResult, tool
 from breadmind.core.safety import SafetyGuard
+from breadmind.core.audit import AuditLogger, AuditEntry
 from breadmind.memory.working import WorkingMemory
 
 @tool(description="Test tool")
@@ -60,6 +64,23 @@ def agent_with_memory(registry):
         tool_registry=registry,
         safety_guard=guard,
         working_memory=memory,
+    )
+
+
+@pytest.fixture
+def audit_logger():
+    return AuditLogger()
+
+
+@pytest.fixture
+def agent_with_audit(registry, audit_logger):
+    provider = AsyncMock()
+    guard = SafetyGuard()
+    return CoreAgent(
+        provider=provider,
+        tool_registry=registry,
+        safety_guard=guard,
+        audit_logger=audit_logger,
     )
 
 
@@ -310,3 +331,307 @@ async def test_blocked_tool_result_prefix(registry):
     second_call_messages = provider.chat.call_args.kwargs.get("messages") or provider.chat.call_args[0][0]
     tool_msgs = [m for m in second_call_messages if m.role == "tool"]
     assert any("[success=False]" in m.content for m in tool_msgs)
+
+
+# --- AuditLogger tests ---
+
+def test_audit_log_tool_call(audit_logger):
+    entry = audit_logger.log_tool_call(
+        user="alice", channel="ops", tool_name="kubectl",
+        arguments={"cmd": "get pods"}, result="pod list output",
+        success=True, duration_ms=150.5,
+    )
+    assert entry.event_type == "tool_call"
+    assert entry.result == "success"
+    assert entry.details["tool_name"] == "kubectl"
+    assert entry.details["duration_ms"] == 150.5
+    assert entry.user == "alice"
+
+
+def test_audit_log_safety_check(audit_logger):
+    entry = audit_logger.log_safety_check(
+        user="bob", channel="general", action="dangerous_action",
+        safety_result="DENIED", reason="blacklisted",
+    )
+    assert entry.event_type == "safety_check"
+    assert entry.result == "denied"
+    assert entry.details["action"] == "dangerous_action"
+    assert entry.details["reason"] == "blacklisted"
+
+
+def test_audit_log_llm_call(audit_logger):
+    entry = audit_logger.log_llm_call(
+        user="alice", channel="ops", model="claude-sonnet-4-6",
+        input_tokens=100, output_tokens=50, cache_hit=True,
+        duration_ms=500.0,
+    )
+    assert entry.event_type == "llm_call"
+    assert entry.result == "success"
+    assert entry.details["model"] == "claude-sonnet-4-6"
+    assert entry.details["input_tokens"] == 100
+    assert entry.details["cache_hit"] is True
+
+
+def test_audit_get_recent(audit_logger):
+    for i in range(10):
+        audit_logger.log_tool_call(
+            user="u", channel="c", tool_name=f"tool_{i}",
+            arguments={}, result="ok", success=True, duration_ms=10,
+        )
+    recent = audit_logger.get_recent(limit=5)
+    assert len(recent) == 5
+    # Should be the most recent 5
+    assert recent[0].details["tool_name"] == "tool_5"
+    assert recent[4].details["tool_name"] == "tool_9"
+
+
+def test_audit_get_recent_all(audit_logger):
+    for i in range(3):
+        audit_logger.log_tool_call(
+            user="u", channel="c", tool_name=f"tool_{i}",
+            arguments={}, result="ok", success=True, duration_ms=10,
+        )
+    recent = audit_logger.get_recent(limit=50)
+    assert len(recent) == 3
+
+
+def test_audit_entry_has_timezone_aware_timestamp(audit_logger):
+    entry = audit_logger.log_tool_call(
+        user="u", channel="c", tool_name="t",
+        arguments={}, result="ok", success=True, duration_ms=10,
+    )
+    # Timestamp should contain timezone info (ends with +00:00 or Z)
+    assert "+" in entry.timestamp or "Z" in entry.timestamp
+
+
+# --- Approval workflow tests ---
+
+@pytest.mark.asyncio
+async def test_approval_pending_created(registry):
+    provider = AsyncMock()
+    guard = SafetyGuard(require_approval=["test_tool"])
+    agent = CoreAgent(
+        provider=provider,
+        tool_registry=registry,
+        safety_guard=guard,
+    )
+
+    provider.chat = AsyncMock(side_effect=[
+        _make_response(
+            tool_calls=[ToolCall(id="tc1", name="test_tool", arguments={"input": "x"})],
+        ),
+        _make_response(content="Awaiting approval."),
+    ])
+    await agent.handle_message("run tool", user="alice", channel="ops")
+
+    pending = agent.get_pending_approvals()
+    assert len(pending) == 1
+    assert pending[0]["tool"] == "test_tool"
+    assert pending[0]["status"] == "pending"
+    assert pending[0]["user"] == "alice"
+
+
+@pytest.mark.asyncio
+async def test_approval_approve_executes_tool(registry):
+    provider = AsyncMock()
+    guard = SafetyGuard(require_approval=["test_tool"])
+    agent = CoreAgent(
+        provider=provider,
+        tool_registry=registry,
+        safety_guard=guard,
+    )
+
+    provider.chat = AsyncMock(side_effect=[
+        _make_response(
+            tool_calls=[ToolCall(id="tc1", name="test_tool", arguments={"input": "hello"})],
+        ),
+        _make_response(content="Awaiting approval."),
+    ])
+    await agent.handle_message("run tool", user="alice", channel="ops")
+
+    pending = agent.get_pending_approvals()
+    approval_id = pending[0]["approval_id"]
+
+    result = await agent.approve_tool(approval_id)
+    assert result.success is True
+    assert "result: hello" in result.output
+
+    # Should no longer be pending
+    assert len(agent.get_pending_approvals()) == 0
+
+
+@pytest.mark.asyncio
+async def test_approval_deny_removes_pending(registry):
+    provider = AsyncMock()
+    guard = SafetyGuard(require_approval=["test_tool"])
+    agent = CoreAgent(
+        provider=provider,
+        tool_registry=registry,
+        safety_guard=guard,
+    )
+
+    provider.chat = AsyncMock(side_effect=[
+        _make_response(
+            tool_calls=[ToolCall(id="tc1", name="test_tool", arguments={"input": "x"})],
+        ),
+        _make_response(content="Awaiting approval."),
+    ])
+    await agent.handle_message("run tool", user="alice", channel="ops")
+
+    pending = agent.get_pending_approvals()
+    approval_id = pending[0]["approval_id"]
+
+    agent.deny_tool(approval_id)
+    assert len(agent.get_pending_approvals()) == 0
+
+
+@pytest.mark.asyncio
+async def test_approval_message_contains_approval_id(registry):
+    provider = AsyncMock()
+    guard = SafetyGuard(require_approval=["test_tool"])
+    agent = CoreAgent(
+        provider=provider,
+        tool_registry=registry,
+        safety_guard=guard,
+    )
+
+    provider.chat = AsyncMock(side_effect=[
+        _make_response(
+            tool_calls=[ToolCall(id="tc1", name="test_tool", arguments={"input": "x"})],
+        ),
+        _make_response(content="Awaiting approval."),
+    ])
+    await agent.handle_message("run tool", user="alice", channel="ops")
+
+    # Check the tool message sent to LLM includes approval_required and ID
+    second_call_messages = provider.chat.call_args.kwargs.get("messages") or provider.chat.call_args[0][0]
+    tool_msgs = [m for m in second_call_messages if m.role == "tool"]
+    assert any("[approval_required]" in m.content for m in tool_msgs)
+    # The approval ID should be in the message
+    pending = agent.get_pending_approvals()
+    approval_id = pending[0]["approval_id"]
+    assert any(approval_id in m.content for m in tool_msgs)
+
+
+# --- Structured logging tests ---
+
+@pytest.mark.asyncio
+async def test_structured_logging_llm_call(agent, caplog):
+    agent._provider.chat = AsyncMock(return_value=_make_response(content="Hello!"))
+    with caplog.at_level(logging.INFO, logger="breadmind.agent"):
+        await agent.handle_message("hi", user="test", channel="test")
+
+    # Find the llm_call log entry
+    llm_call_logs = [
+        r for r in caplog.records
+        if r.name == "breadmind.agent" and "llm_call" in r.getMessage()
+    ]
+    assert len(llm_call_logs) >= 1
+    log_data = json.loads(llm_call_logs[0].getMessage())
+    assert log_data["event"] == "llm_call"
+    assert "tokens" in log_data
+    assert "duration_ms" in log_data
+
+
+@pytest.mark.asyncio
+async def test_structured_logging_session_events(agent, caplog):
+    agent._provider.chat = AsyncMock(return_value=_make_response(content="Hi"))
+    with caplog.at_level(logging.INFO, logger="breadmind.agent"):
+        await agent.handle_message("hi", user="test", channel="test")
+
+    messages = [r.getMessage() for r in caplog.records if r.name == "breadmind.agent"]
+    # Should have session_start and session_end
+    assert any("session_start" in m for m in messages)
+    assert any("session_end" in m for m in messages)
+
+
+@pytest.mark.asyncio
+async def test_structured_logging_tool_call(agent, caplog):
+    agent._provider.chat = AsyncMock(side_effect=[
+        _make_response(
+            tool_calls=[ToolCall(id="tc1", name="test_tool", arguments={"input": "x"})],
+        ),
+        _make_response(content="ok"),
+    ])
+    with caplog.at_level(logging.INFO, logger="breadmind.agent"):
+        await agent.handle_message("run", user="test", channel="test")
+
+    tool_call_logs = [
+        r for r in caplog.records
+        if r.name == "breadmind.agent" and "tool_call" in r.getMessage()
+    ]
+    assert len(tool_call_logs) >= 1
+    log_data = json.loads(tool_call_logs[0].getMessage())
+    assert log_data["event"] == "tool_call"
+    assert log_data["tool"] == "test_tool"
+    assert "duration_ms" in log_data
+
+
+# --- Audit integration in agent ---
+
+@pytest.mark.asyncio
+async def test_agent_audit_logs_llm_call(agent_with_audit):
+    agent = agent_with_audit
+    agent._provider.chat = AsyncMock(return_value=_make_response(content="Hi"))
+    await agent.handle_message("hi", user="test", channel="test")
+
+    entries = agent._audit_logger.get_recent()
+    llm_entries = [e for e in entries if e.event_type == "llm_call"]
+    assert len(llm_entries) >= 1
+
+
+@pytest.mark.asyncio
+async def test_agent_audit_logs_tool_call(agent_with_audit):
+    agent = agent_with_audit
+    agent._provider.chat = AsyncMock(side_effect=[
+        _make_response(
+            tool_calls=[ToolCall(id="tc1", name="test_tool", arguments={"input": "x"})],
+        ),
+        _make_response(content="ok"),
+    ])
+    await agent.handle_message("run", user="test", channel="test")
+
+    entries = agent._audit_logger.get_recent()
+    tool_entries = [e for e in entries if e.event_type == "tool_call"]
+    assert len(tool_entries) >= 1
+    assert tool_entries[0].details["tool_name"] == "test_tool"
+
+
+@pytest.mark.asyncio
+async def test_agent_audit_logs_safety_check(registry):
+    audit = AuditLogger()
+    provider = AsyncMock()
+    guard = SafetyGuard(blacklist={"test": ["test_tool"]})
+    agent = CoreAgent(
+        provider=provider,
+        tool_registry=registry,
+        safety_guard=guard,
+        audit_logger=audit,
+    )
+
+    provider.chat = AsyncMock(side_effect=[
+        _make_response(
+            tool_calls=[ToolCall(id="tc1", name="test_tool", arguments={"input": "x"})],
+        ),
+        _make_response(content="blocked"),
+    ])
+    await agent.handle_message("run", user="test", channel="test")
+
+    entries = audit.get_recent()
+    safety_entries = [e for e in entries if e.event_type == "safety_check"]
+    assert len(safety_entries) >= 1
+    assert safety_entries[0].details["safety_result"] == "DENIED"
+
+
+# --- Datetime uses timezone-aware UTC ---
+
+def test_datetime_uses_timezone_aware_utc_in_audit():
+    audit = AuditLogger()
+    entry = audit.log_tool_call(
+        user="u", channel="c", tool_name="t",
+        arguments={}, result="ok", success=True, duration_ms=10,
+    )
+    # Timestamp should be timezone-aware (ISO format with +00:00)
+    from datetime import datetime as dt
+    parsed = dt.fromisoformat(entry.timestamp)
+    assert parsed.tzinfo is not None

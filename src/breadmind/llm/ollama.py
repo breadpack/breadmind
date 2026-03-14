@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import aiohttp
 from .base import (
     LLMProvider,
@@ -7,6 +9,8 @@ from .base import (
     TokenUsage,
     ToolDefinition,
 )
+from .rate_limiter import RateLimiter
+from .token_counter import TokenCounter
 
 # 헬스체크 타임아웃 (초)
 _HEALTH_CHECK_TIMEOUT = 5
@@ -17,9 +21,11 @@ class OllamaProvider(LLMProvider):
         self,
         base_url: str = "http://localhost:11434",
         default_model: str = "llama3",
+        rate_limiter: RateLimiter | None = None,
     ):
         self._base_url = base_url.rstrip("/")
         self._default_model = default_model
+        self._rate_limiter = rate_limiter
 
     async def chat(
         self,
@@ -47,6 +53,13 @@ class OllamaProvider(LLMProvider):
                 for t in tools
             ]
 
+        # Rate limiter: estimate tokens and acquire before calling API
+        if self._rate_limiter:
+            estimated_tokens = TokenCounter.estimate_messages_tokens(messages)
+            if tools:
+                estimated_tokens += TokenCounter.estimate_tools_tokens(tools)
+            await self._rate_limiter.acquire(estimated_tokens)
+
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 f"{self._base_url}/api/chat", json=payload
@@ -63,7 +76,7 @@ class OllamaProvider(LLMProvider):
                 arguments=fn.get("arguments", {}),
             ))
 
-        return LLMResponse(
+        result = LLMResponse(
             content=msg.get("content"),
             tool_calls=tool_calls,
             usage=TokenUsage(
@@ -72,6 +85,11 @@ class OllamaProvider(LLMProvider):
             ),
             stop_reason="tool_use" if tool_calls else "end_turn",
         )
+
+        if self._rate_limiter:
+            await self._rate_limiter.record_usage(result.usage.total_tokens)
+
+        return result
 
     async def health_check(self) -> bool:
         """Ollama 서버 상태를 확인한다. 타임아웃을 설정하여 행(hang)을 방지한다."""

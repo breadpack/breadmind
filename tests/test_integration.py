@@ -389,3 +389,115 @@ def test_webapp_health_503_no_handler():
     assert data["status"] == "degraded"
     assert data["components"]["agent"] is False
     assert data["components"]["monitoring"] is False
+
+
+# --- Test: Config web/logging validation ---
+
+def test_config_web_port_validation():
+    from breadmind.config import AppConfig, WebConfig
+    config = AppConfig(web=WebConfig(port=0))
+    with pytest.raises(ValueError, match="Web port"):
+        config.validate()
+
+    config2 = AppConfig(web=WebConfig(port=70000))
+    with pytest.raises(ValueError, match="Web port"):
+        config2.validate()
+
+def test_config_web_port_valid():
+    from breadmind.config import AppConfig, WebConfig
+    config = AppConfig(web=WebConfig(port=8080))
+    config.validate()  # Should not raise
+
+def test_config_logging_level_validation():
+    from breadmind.config import AppConfig, LoggingConfig
+    config = AppConfig(logging=LoggingConfig(level="INVALID"))
+    with pytest.raises(ValueError, match="Invalid log level"):
+        config.validate()
+
+def test_config_logging_level_valid():
+    from breadmind.config import AppConfig, LoggingConfig
+    for level in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
+        config = AppConfig(logging=LoggingConfig(level=level))
+        config.validate()  # Should not raise
+
+
+# --- Test: main.py --web --port flags ---
+
+def test_main_parse_args_defaults():
+    from breadmind.main import _parse_args
+    import sys
+    original_argv = sys.argv
+    try:
+        sys.argv = ["breadmind"]
+        args = _parse_args()
+        assert args.web is False
+        assert args.port is None
+        assert args.host is None
+        assert args.log_level is None
+    finally:
+        sys.argv = original_argv
+
+def test_main_parse_args_web_with_port():
+    from breadmind.main import _parse_args
+    import sys
+    original_argv = sys.argv
+    try:
+        sys.argv = ["breadmind", "--web", "--port", "9090", "--host", "127.0.0.1", "--log-level", "DEBUG"]
+        args = _parse_args()
+        assert args.web is True
+        assert args.port == 9090
+        assert args.host == "127.0.0.1"
+        assert args.log_level == "DEBUG"
+    finally:
+        sys.argv = original_argv
+
+
+# --- Test: WebApp with new components wired ---
+
+def test_webapp_new_components_wired():
+    mock_agent = MagicMock()
+    mock_agent.get_usage.return_value = {"input_tokens": 100}
+    mock_agent.get_pending_approvals.return_value = []
+
+    mock_audit = MagicMock()
+    mock_audit.get_recent.return_value = []
+
+    mock_metrics = MagicMock()
+    mock_metrics.get_summary.return_value = {}
+
+    mock_engine = MagicMock()
+    mock_engine.get_status.return_value = {"running": True, "rules_count": 1, "tasks_count": 1}
+
+    webapp = WebApp(
+        message_handler=lambda m, **kw: "ok",
+        agent=mock_agent,
+        audit_logger=mock_audit,
+        metrics_collector=mock_metrics,
+        monitoring_engine=mock_engine,
+    )
+    client = TestClient(webapp.app)
+
+    # Usage endpoint
+    resp = client.get("/api/usage")
+    assert resp.status_code == 200
+    assert resp.json()["usage"]["input_tokens"] == 100
+
+    # Audit endpoint
+    resp = client.get("/api/audit")
+    assert resp.status_code == 200
+    assert resp.json()["entries"] == []
+
+    # Metrics endpoint
+    resp = client.get("/api/metrics")
+    assert resp.status_code == 200
+    assert resp.json()["metrics"] == {}
+
+    # Approvals endpoint
+    resp = client.get("/api/approvals")
+    assert resp.status_code == 200
+    assert resp.json()["approvals"] == []
+
+    # Health should show monitoring as running via get_status
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    assert resp.json()["components"]["monitoring"] is True

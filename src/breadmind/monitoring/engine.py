@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -13,7 +13,7 @@ class MonitoringEvent:
     severity: str        # "critical" | "warning" | "info"
     condition: str       # e.g., "CrashLoopBackOff", "NotReady", "memory_high"
     details: dict = field(default_factory=dict)
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 @dataclass
 class MonitoringRule:
@@ -33,7 +33,7 @@ class LoopProtector:
 
     async def can_act(self, target: str, action: str) -> bool:
         key = f"{target}:{action}"
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         async with self._lock:
             # Check cooldown
@@ -56,7 +56,7 @@ class LoopProtector:
     def can_act_sync(self, target: str, action: str) -> bool:
         """Synchronous version for backward compatibility."""
         key = f"{target}:{action}"
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         last = self._cooldowns.get(key)
         if last and (now - last).total_seconds() < self._cooldown_minutes * 60:
@@ -74,7 +74,7 @@ class LoopProtector:
 
     async def record_action(self, target: str, action: str):
         key = f"{target}:{action}"
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         async with self._lock:
             self._cooldowns[key] = now
             if key not in self._action_history:
@@ -84,7 +84,7 @@ class LoopProtector:
     def record_action_sync(self, target: str, action: str):
         """Synchronous version for backward compatibility."""
         key = f"{target}:{action}"
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         self._cooldowns[key] = now
         if key not in self._action_history:
             self._action_history[key] = []
@@ -103,6 +103,14 @@ class MonitoringEngine:
         self._running = False
         self._tasks: list[asyncio.Task] = []
         self._lock = asyncio.Lock()
+
+    def get_status(self) -> dict:
+        """Return monitoring engine status as a dict."""
+        return {
+            "running": self._running,
+            "rules_count": len(self._rules),
+            "tasks_count": len(self._tasks),
+        }
 
     async def add_rule(self, rule: MonitoringRule):
         async with self._lock:

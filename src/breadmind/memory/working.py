@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from breadmind.llm.base import LLMMessage
 
 @dataclass
@@ -8,8 +8,8 @@ class ConversationSession:
     user: str
     channel: str
     messages: list[LLMMessage] = field(default_factory=list)
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    last_active: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    last_active: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     metadata: dict = field(default_factory=dict)
 
 class WorkingMemory:
@@ -27,7 +27,7 @@ class WorkingMemory:
     def get_or_create_session(self, session_id: str, user: str = "", channel: str = "") -> ConversationSession:
         session = self._sessions.get(session_id)
         if session is not None:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             elapsed = (now - session.last_active).total_seconds()
             if elapsed >= self._session_timeout_minutes * 60:
                 # Session expired — clear and recreate
@@ -40,14 +40,14 @@ class WorkingMemory:
             )
             self._sessions[session_id] = session
 
-        session.last_active = datetime.utcnow()
+        session.last_active = datetime.now(timezone.utc)
         return session
 
     def add_message(self, session_id: str, message: LLMMessage):
         session = self._sessions.get(session_id)
         if session:
             session.messages.append(message)
-            session.last_active = datetime.utcnow()
+            session.last_active = datetime.now(timezone.utc)
             if len(session.messages) > self._max_messages:
                 session.messages = session.messages[-self._max_messages:]
 
@@ -63,7 +63,7 @@ class WorkingMemory:
 
     def cleanup_expired(self) -> list[str]:
         """Remove all expired sessions. Returns list of removed session IDs."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         expired = []
         for sid, session in list(self._sessions.items()):
             elapsed = (now - session.last_active).total_seconds()

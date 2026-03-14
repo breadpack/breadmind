@@ -1,10 +1,13 @@
 import asyncio
 import fnmatch
+import logging
 import os
 import shlex
 import sys
 from pathlib import Path
 from breadmind.tools.registry import tool
+
+logger = logging.getLogger(__name__)
 
 DANGEROUS_PATTERNS: list[str] = [
     "rm -rf /",
@@ -65,7 +68,9 @@ def _validate_path(path: str) -> Path:
 
 
 @tool(description="Execute a shell command locally or via SSH. Use host='localhost' for local commands.")
-async def shell_exec(command: str, host: str = "localhost", timeout: int = 30) -> str:
+async def shell_exec(command: str, host: str = "localhost", timeout: int = 30,
+                     port: int = 22, username: str = None,
+                     key_file: str = None) -> str:
     # Check for dangerous commands
     if _is_dangerous_command(command):
         return f"Error: Command blocked - matches dangerous pattern: {command}"
@@ -111,7 +116,20 @@ async def shell_exec(command: str, host: str = "localhost", timeout: int = 30) -
         except ImportError:
             return "Error: asyncssh not installed. Install with: pip install asyncssh"
         try:
-            async with asyncssh.connect(host) as conn:
+            logger.warning(
+                "SSH connection to %s:%d with known_hosts=None — "
+                "host key verification is disabled", host, port,
+            )
+            connect_kwargs: dict = {
+                "host": host,
+                "port": port,
+                "known_hosts": None,
+            }
+            if username is not None:
+                connect_kwargs["username"] = username
+            if key_file is not None:
+                connect_kwargs["client_keys"] = [key_file]
+            async with asyncssh.connect(**connect_kwargs) as conn:
                 result = await asyncio.wait_for(conn.run(command), timeout=timeout)
                 output = result.stdout or ""
                 if result.stderr:

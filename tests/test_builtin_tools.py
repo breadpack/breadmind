@@ -3,7 +3,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, patch, MagicMock
 from breadmind.tools.builtin import (
     shell_exec, web_search, file_read, file_write,
     _is_dangerous_command, _validate_path,
@@ -230,3 +230,93 @@ def test_tools_have_definitions():
     assert hasattr(web_search, "_tool_definition")
     assert hasattr(file_read, "_tool_definition")
     assert hasattr(file_write, "_tool_definition")
+
+
+# --- SSH parameter tests ---
+
+def test_shell_exec_has_port_username_key_file_params():
+    """Verify shell_exec accepts port, username, key_file parameters."""
+    defn = shell_exec._tool_definition
+    props = defn.parameters.get("properties", {})
+    assert "port" in props
+    assert "username" in props
+    assert "key_file" in props
+
+
+@pytest.mark.asyncio
+async def test_shell_exec_ssh_with_port_username_key_file():
+    """Test SSH connect is called with port, username, key_file."""
+    original = builtin_module.ALLOWED_SSH_HOSTS
+    try:
+        builtin_module.ALLOWED_SSH_HOSTS = []  # allow all
+
+        mock_conn = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.stdout = "success"
+        mock_result.stderr = ""
+        mock_conn.run = AsyncMock(return_value=mock_result)
+
+        mock_connect = MagicMock()
+        mock_connect.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_connect.__aexit__ = AsyncMock(return_value=False)
+
+        mock_asyncssh = MagicMock()
+        mock_asyncssh.connect = MagicMock(return_value=mock_connect)
+
+        with patch.dict("sys.modules", {"asyncssh": mock_asyncssh}):
+            result = await shell_exec(
+                command="uptime",
+                host="myserver.example.com",
+                timeout=10,
+                port=2222,
+                username="admin",
+                key_file="/home/user/.ssh/id_rsa",
+            )
+
+            mock_asyncssh.connect.assert_called_once_with(
+                host="myserver.example.com",
+                port=2222,
+                known_hosts=None,
+                username="admin",
+                client_keys=["/home/user/.ssh/id_rsa"],
+            )
+            assert "success" in result
+    finally:
+        builtin_module.ALLOWED_SSH_HOSTS = original
+
+
+@pytest.mark.asyncio
+async def test_shell_exec_ssh_default_port_no_username_no_key():
+    """Test SSH connect with defaults: port=22, no username, no key_file."""
+    original = builtin_module.ALLOWED_SSH_HOSTS
+    try:
+        builtin_module.ALLOWED_SSH_HOSTS = []
+
+        mock_conn = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.stdout = "ok"
+        mock_result.stderr = ""
+        mock_conn.run = AsyncMock(return_value=mock_result)
+
+        mock_connect = MagicMock()
+        mock_connect.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_connect.__aexit__ = AsyncMock(return_value=False)
+
+        mock_asyncssh = MagicMock()
+        mock_asyncssh.connect = MagicMock(return_value=mock_connect)
+
+        with patch.dict("sys.modules", {"asyncssh": mock_asyncssh}):
+            result = await shell_exec(
+                command="hostname",
+                host="server.example.com",
+                timeout=10,
+            )
+
+            mock_asyncssh.connect.assert_called_once_with(
+                host="server.example.com",
+                port=22,
+                known_hosts=None,
+            )
+            assert "ok" in result
+    finally:
+        builtin_module.ALLOWED_SSH_HOSTS = original

@@ -1,5 +1,5 @@
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 from breadmind.core.safety import SafetyGuard, SafetyResult
 from breadmind.memory.working import WorkingMemory, ConversationSession
@@ -45,6 +45,65 @@ def test_cooldown_expires():
     assert guard.check_cooldown("t", "a", cooldown_minutes=0) is True
 
 
+# --- User permissions tests ---
+
+def test_user_permissions_allowed_user():
+    guard = SafetyGuard(
+        user_permissions={"alice": ["tool_a", "tool_b"]},
+    )
+    result = guard.check("tool_a", {}, user="alice", channel="test")
+    assert result == SafetyResult.ALLOW
+
+def test_user_permissions_disallowed_user():
+    guard = SafetyGuard(
+        user_permissions={"alice": ["tool_a"]},
+    )
+    result = guard.check("tool_a", {}, user="bob", channel="test")
+    assert result == SafetyResult.DENY
+
+def test_user_permissions_user_tool_not_in_list():
+    guard = SafetyGuard(
+        user_permissions={"alice": ["tool_a"]},
+    )
+    result = guard.check("tool_b", {}, user="alice", channel="test")
+    assert result == SafetyResult.DENY
+
+def test_user_permissions_admin_bypasses_all():
+    guard = SafetyGuard(
+        user_permissions={"alice": ["tool_a"]},
+        admin_users=["superadmin"],
+    )
+    # superadmin is not in user_permissions but should bypass
+    result = guard.check("tool_a", {}, user="superadmin", channel="test")
+    assert result == SafetyResult.ALLOW
+
+def test_user_permissions_admin_bypasses_blacklist():
+    guard = SafetyGuard(
+        blacklist={"test": ["dangerous_action"]},
+        admin_users=["superadmin"],
+    )
+    result = guard.check("dangerous_action", {}, user="superadmin", channel="test")
+    assert result == SafetyResult.ALLOW
+
+def test_user_permissions_empty_dict_no_restriction():
+    guard = SafetyGuard(
+        user_permissions={},
+    )
+    result = guard.check("any_tool", {}, user="anyone", channel="test")
+    assert result == SafetyResult.ALLOW
+
+
+# --- Datetime timezone-aware tests ---
+
+def test_cooldown_uses_timezone_aware_utc():
+    guard = SafetyGuard()
+    guard.check_cooldown("t", "a")
+    key = "t:a"
+    stored = guard._cooldowns[key]
+    assert stored.tzinfo is not None
+    assert stored.tzinfo == timezone.utc
+
+
 # --- Session timeout tests ---
 
 def test_session_timeout_creates_fresh():
@@ -54,7 +113,7 @@ def test_session_timeout_creates_fresh():
     assert len(memory.get_messages("s1")) == 1
 
     # Simulate expiration by backdating last_active
-    session.last_active = datetime.utcnow() - timedelta(minutes=2)
+    session.last_active = datetime.now(timezone.utc) - timedelta(minutes=2)
 
     # Should get a fresh session
     new_session = memory.get_or_create_session("s1", user="u", channel="c")
@@ -77,7 +136,7 @@ def test_cleanup_expired():
     s2 = memory.get_or_create_session("s2")
 
     # Expire s1 only
-    s1.last_active = datetime.utcnow() - timedelta(minutes=2)
+    s1.last_active = datetime.now(timezone.utc) - timedelta(minutes=2)
 
     removed = memory.cleanup_expired()
     assert "s1" in removed

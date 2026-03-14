@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from dataclasses import asdict
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -11,7 +12,8 @@ logger = logging.getLogger(__name__)
 
 class WebApp:
     def __init__(self, message_handler: Callable | None = None, tool_registry=None, mcp_manager=None,
-                 config=None, monitoring_engine=None, safety_config=None):
+                 config=None, monitoring_engine=None, safety_config=None,
+                 agent=None, audit_logger=None, metrics_collector=None):
         self.app = FastAPI(title="BreadMind", version="0.1.0")
         self._message_handler = message_handler
         self._tool_registry = tool_registry
@@ -19,6 +21,9 @@ class WebApp:
         self._config = config
         self._monitoring_engine = monitoring_engine
         self._safety_config = safety_config
+        self._agent = agent
+        self._audit_logger = audit_logger
+        self._metrics_collector = metrics_collector
         self._connections: list[WebSocket] = []
         self._events: list[dict] = []
         self._lock = asyncio.Lock()
@@ -59,7 +64,8 @@ class WebApp:
         async def health():
             agent_ok = self._message_handler is not None
             monitoring_ok = (
-                self._monitoring_engine is not None and self._monitoring_engine._running
+                self._monitoring_engine is not None
+                and self._monitoring_engine.get_status()["running"]
             ) if self._monitoring_engine is not None else False
 
             components = {
@@ -143,12 +149,73 @@ class WebApp:
         @app.get("/api/monitoring/status")
         async def get_monitoring_status():
             if self._monitoring_engine:
+                status = self._monitoring_engine.get_status()
                 return {
-                    "running": self._monitoring_engine._running,
-                    "rules": len(self._monitoring_engine._rules),
+                    "running": status["running"],
+                    "rules": status["rules_count"],
                     "events_total": len(self._events),
                 }
             return {"running": False, "rules": 0, "events_total": 0}
+
+        @app.get("/api/usage")
+        async def get_usage():
+            """Return token usage and cost stats from agent."""
+            if self._agent and hasattr(self._agent, 'get_usage'):
+                usage = self._agent.get_usage()
+                return {"usage": usage}
+            return {"usage": {}}
+
+        @app.get("/api/audit")
+        async def get_audit():
+            """Return recent audit log entries."""
+            if self._audit_logger and hasattr(self._audit_logger, 'get_recent'):
+                entries = self._audit_logger.get_recent(50)
+                serialized = []
+                for e in entries:
+                    if hasattr(e, '__dataclass_fields__'):
+                        serialized.append(asdict(e))
+                    elif isinstance(e, dict):
+                        serialized.append(e)
+                    else:
+                        serialized.append(str(e))
+                return {"entries": serialized}
+            return {"entries": []}
+
+        @app.get("/api/metrics")
+        async def get_metrics():
+            """Return tool execution metrics."""
+            if self._metrics_collector and hasattr(self._metrics_collector, 'get_summary'):
+                return {"metrics": self._metrics_collector.get_summary()}
+            return {"metrics": {}}
+
+        @app.get("/api/approvals")
+        async def get_approvals():
+            """Return pending approval requests."""
+            if self._agent and hasattr(self._agent, 'get_pending_approvals'):
+                return {"approvals": self._agent.get_pending_approvals()}
+            return {"approvals": []}
+
+        @app.post("/api/approvals/{approval_id}/approve")
+        async def approve_tool(approval_id: str):
+            """Approve a pending tool execution."""
+            if self._agent and hasattr(self._agent, 'approve_tool'):
+                result = self._agent.approve_tool(approval_id)
+                return {"status": "approved", "approval_id": approval_id, "result": result}
+            return JSONResponse(
+                status_code=404,
+                content={"error": "Approval not found or agent not configured"},
+            )
+
+        @app.post("/api/approvals/{approval_id}/deny")
+        async def deny_tool(approval_id: str):
+            """Deny a pending tool execution."""
+            if self._agent and hasattr(self._agent, 'deny_tool'):
+                result = self._agent.deny_tool(approval_id)
+                return {"status": "denied", "approval_id": approval_id, "result": result}
+            return JSONResponse(
+                status_code=404,
+                content={"error": "Approval not found or agent not configured"},
+            )
 
         @app.websocket("/ws/chat")
         async def websocket_chat(websocket: WebSocket):

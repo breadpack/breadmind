@@ -2,11 +2,22 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from breadmind.llm.claude import ClaudeProvider
 from breadmind.llm.base import LLMMessage, ToolDefinition
+from breadmind.llm.rate_limiter import RateLimiter
 
 
 @pytest.fixture
 def claude_provider():
     return ClaudeProvider(api_key="test-key", default_model="claude-sonnet-4-6")
+
+
+@pytest.fixture
+def claude_provider_with_limiter():
+    limiter = RateLimiter(max_requests_per_minute=60, max_tokens_per_minute=100_000)
+    return ClaudeProvider(
+        api_key="test-key",
+        default_model="claude-sonnet-4-6",
+        rate_limiter=limiter,
+    )
 
 
 @pytest.mark.asyncio
@@ -189,3 +200,76 @@ async def test_claude_health_check_no_key():
     provider = ClaudeProvider(api_key="")
     result = await provider.health_check()
     assert result is False
+
+
+@pytest.mark.asyncio
+async def test_claude_with_rate_limiter(claude_provider_with_limiter):
+    """rate_limiter가 설정된 ClaudeProvider가 정상 동작하는지 확인한다."""
+    mock_response = MagicMock()
+    mock_response.content = [MagicMock(type="text", text="response")]
+    mock_response.stop_reason = "end_turn"
+    mock_response.usage = MagicMock(
+        input_tokens=10,
+        output_tokens=5,
+        cache_creation_input_tokens=0,
+        cache_read_input_tokens=0,
+    )
+
+    with patch.object(
+        claude_provider_with_limiter._client.messages,
+        "create",
+        new_callable=AsyncMock,
+        return_value=mock_response,
+    ):
+        result = await claude_provider_with_limiter.chat(
+            messages=[LLMMessage(role="user", content="hello")],
+        )
+
+    assert result.content == "response"
+    stats = claude_provider_with_limiter._rate_limiter.get_usage_stats()
+    assert stats["requests_per_minute"] >= 1
+    assert stats["tokens_per_minute"] > 0
+
+
+@pytest.mark.asyncio
+async def test_claude_retry_on_rate_limit(claude_provider):
+    """429 RateLimitError 시 재시도하는지 확인한다."""
+    import anthropic
+
+    mock_response = MagicMock()
+    mock_response.content = [MagicMock(type="text", text="retry success")]
+    mock_response.stop_reason = "end_turn"
+    mock_response.usage = MagicMock(
+        input_tokens=10,
+        output_tokens=5,
+        cache_creation_input_tokens=0,
+        cache_read_input_tokens=0,
+    )
+
+    rate_limit_error = anthropic.RateLimitError(
+        message="rate limited",
+        response=MagicMock(status_code=429, headers={}, json=MagicMock(return_value={})),
+        body=None,
+    )
+
+    call_count = 0
+
+    async def side_effect(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count < 3:
+            raise rate_limit_error
+        return mock_response
+
+    with patch.object(
+        claude_provider._client.messages,
+        "create",
+        new_callable=AsyncMock,
+        side_effect=side_effect,
+    ), patch("breadmind.llm.claude.asyncio.sleep", new_callable=AsyncMock):
+        result = await claude_provider.chat(
+            messages=[LLMMessage(role="user", content="hi")],
+        )
+
+    assert result.content == "retry success"
+    assert call_count == 3

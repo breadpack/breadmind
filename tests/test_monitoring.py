@@ -106,3 +106,34 @@ async def test_engine_start_idempotent():
     assert engine._running is True
     assert len(engine._tasks) == 1
     await engine.stop()
+
+
+# --- get_status() tests ---
+
+def test_engine_get_status_initial():
+    engine = MonitoringEngine()
+    status = engine.get_status()
+    assert status == {"running": False, "rules_count": 0, "tasks_count": 0}
+
+def test_engine_get_status_with_rules():
+    engine = MonitoringEngine()
+    engine.add_rule_sync(MonitoringRule(name="r1", source="test", condition_fn=lambda s, p: []))
+    engine.add_rule_sync(MonitoringRule(name="r2", source="test", condition_fn=lambda s, p: []))
+    status = engine.get_status()
+    assert status["running"] is False
+    assert status["rules_count"] == 2
+    assert status["tasks_count"] == 0
+
+@pytest.mark.asyncio
+async def test_engine_get_status_running():
+    engine = MonitoringEngine()
+    engine.add_rule_sync(MonitoringRule(name="r1", source="test", condition_fn=lambda s, p: [], interval_seconds=1))
+    await engine.start()
+    status = engine.get_status()
+    assert status["running"] is True
+    assert status["rules_count"] == 1
+    assert status["tasks_count"] == 1
+    await engine.stop()
+    status = engine.get_status()
+    assert status["running"] is False
+    assert status["tasks_count"] == 0

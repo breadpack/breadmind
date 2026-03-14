@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+import asyncio
+import logging
 from collections.abc import AsyncGenerator
 
 import anthropic
@@ -9,12 +13,24 @@ from .base import (
     TokenUsage,
     ToolDefinition,
 )
+from .rate_limiter import RateLimiter
+from .token_counter import TokenCounter
+
+logger = logging.getLogger(__name__)
+
+_MAX_RETRIES = 3
 
 
 class ClaudeProvider(LLMProvider):
-    def __init__(self, api_key: str, default_model: str = "claude-sonnet-4-6"):
+    def __init__(
+        self,
+        api_key: str,
+        default_model: str = "claude-sonnet-4-6",
+        rate_limiter: RateLimiter | None = None,
+    ):
         self._client = anthropic.AsyncAnthropic(api_key=api_key)
         self._default_model = default_model
+        self._rate_limiter = rate_limiter
 
     async def chat(
         self,
@@ -46,8 +62,38 @@ class ClaudeProvider(LLMProvider):
                 converted_tools[-1]["cache_control"] = {"type": "ephemeral"}
             kwargs["tools"] = converted_tools
 
-        response = await self._client.messages.create(**kwargs)
-        return self._parse_response(response)
+        # Rate limiter: estimate tokens and acquire before calling API
+        estimated_tokens = 0
+        if self._rate_limiter:
+            estimated_tokens = TokenCounter.estimate_messages_tokens(messages)
+            if tools:
+                estimated_tokens += TokenCounter.estimate_tools_tokens(tools)
+            await self._rate_limiter.acquire(estimated_tokens)
+
+        # Retry with exponential backoff on 429 RateLimitError
+        last_error: Exception | None = None
+        for attempt in range(_MAX_RETRIES):
+            try:
+                response = await self._client.messages.create(**kwargs)
+                result = self._parse_response(response)
+
+                # Record actual usage
+                if self._rate_limiter:
+                    await self._rate_limiter.record_usage(result.usage.total_tokens)
+
+                return result
+            except anthropic.RateLimitError as e:
+                last_error = e
+                backoff = 2**attempt
+                logger.warning(
+                    "Rate limited (attempt %d/%d), retrying in %ds",
+                    attempt + 1,
+                    _MAX_RETRIES,
+                    backoff,
+                )
+                await asyncio.sleep(backoff)
+
+        raise last_error  # type: ignore[misc]
 
     async def chat_stream(
         self,

@@ -4,6 +4,9 @@ import threading
 from breadmind.tools.mcp_protocol import (
     create_initialize_request, create_tools_list_request,
     create_tools_call_request, create_initialized_notification,
+    create_resources_list_request, create_resources_read_request,
+    create_prompts_list_request, create_prompts_get_request,
+    create_logging_set_level_request,
     parse_response, MCPError, encode_message, _next_id,
 )
 
@@ -80,3 +83,69 @@ def test_request_ids_monotonically_increase():
     id2 = _next_id()
     id3 = _next_id()
     assert id1 < id2 < id3
+
+
+# --- MCP Resources protocol tests ---
+
+def test_create_resources_list_request():
+    msg = create_resources_list_request()
+    assert msg["jsonrpc"] == "2.0"
+    assert msg["method"] == "resources/list"
+    assert "id" in msg
+
+
+def test_create_resources_read_request():
+    msg = create_resources_read_request("file:///tmp/test.txt")
+    assert msg["jsonrpc"] == "2.0"
+    assert msg["method"] == "resources/read"
+    assert msg["params"]["uri"] == "file:///tmp/test.txt"
+    assert "id" in msg
+
+
+# --- MCP Prompts protocol tests ---
+
+def test_create_prompts_list_request():
+    msg = create_prompts_list_request()
+    assert msg["jsonrpc"] == "2.0"
+    assert msg["method"] == "prompts/list"
+    assert "id" in msg
+
+
+def test_create_prompts_get_request_without_arguments():
+    msg = create_prompts_get_request("my_prompt")
+    assert msg["jsonrpc"] == "2.0"
+    assert msg["method"] == "prompts/get"
+    assert msg["params"]["name"] == "my_prompt"
+    assert "arguments" not in msg["params"]
+    assert "id" in msg
+
+
+def test_create_prompts_get_request_with_arguments():
+    msg = create_prompts_get_request("my_prompt", {"topic": "AI"})
+    assert msg["params"]["name"] == "my_prompt"
+    assert msg["params"]["arguments"] == {"topic": "AI"}
+
+
+# --- MCP Logging protocol tests ---
+
+def test_create_logging_set_level_request():
+    msg = create_logging_set_level_request("debug")
+    assert msg["jsonrpc"] == "2.0"
+    assert msg["method"] == "logging/setLevel"
+    assert msg["params"]["level"] == "debug"
+    assert "id" in msg
+
+
+# --- Capability negotiation tests ---
+
+def test_capability_negotiation_includes_all_capabilities():
+    msg = create_initialize_request()
+    caps = msg["params"]["capabilities"]
+    assert "tools" in caps
+    assert caps["tools"]["listChanged"] is True
+    assert "resources" in caps
+    assert caps["resources"]["subscribe"] is False
+    assert caps["resources"]["listChanged"] is True
+    assert "prompts" in caps
+    assert caps["prompts"]["listChanged"] is True
+    assert "logging" in caps

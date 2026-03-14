@@ -1,5 +1,8 @@
 import inspect
 import asyncio
+import hashlib
+import json
+import time
 from dataclasses import dataclass
 from typing import Any, Callable
 from breadmind.llm.base import ToolDefinition
@@ -120,12 +123,46 @@ def _truncate_output(output: str) -> str:
     return output
 
 
+class ToolResultCache:
+    """TTL-based cache for tool results."""
+
+    def __init__(self, ttl_seconds: int = 300, max_size: int = 100):
+        self._cache: dict[str, tuple[float, ToolResult]] = {}
+        self._ttl = ttl_seconds
+        self._max_size = max_size
+
+    def get(self, tool_name: str, arguments: dict) -> ToolResult | None:
+        key = self._make_key(tool_name, arguments)
+        if key in self._cache:
+            ts, result = self._cache[key]
+            if time.monotonic() - ts < self._ttl:
+                return result
+            del self._cache[key]
+        return None
+
+    def set(self, tool_name: str, arguments: dict, result: ToolResult):
+        if len(self._cache) >= self._max_size:
+            # Evict oldest entry
+            oldest_key = min(self._cache, key=lambda k: self._cache[k][0])
+            del self._cache[oldest_key]
+        key = self._make_key(tool_name, arguments)
+        self._cache[key] = (time.monotonic(), result)
+
+    def _make_key(self, tool_name: str, arguments: dict) -> str:
+        return hashlib.sha256(
+            json.dumps({"t": tool_name, "a": arguments}, sort_keys=True).encode()
+        ).hexdigest()
+
+
 class ToolRegistry:
-    def __init__(self):
+    def __init__(self, cache: ToolResultCache | None = None,
+                 cacheable_tools: set[str] | None = None):
         self._tools: dict[str, Callable] = {}
         self._definitions: dict[str, ToolDefinition] = {}
         self._mcp_tools: dict[str, str] = {}  # tool_name -> server_name
         self._mcp_callback: Callable | None = None
+        self.cache = cache
+        self.cacheable_tools: set[str] = cacheable_tools or set()
 
     def register(self, func: Callable):
         defn = getattr(func, "_tool_definition", None)
@@ -168,6 +205,12 @@ class ToolRegistry:
         return "unknown"
 
     async def execute(self, name: str, arguments: dict[str, Any]) -> ToolResult:
+        # Check cache for cacheable tools
+        if self.cache and name in self.cacheable_tools:
+            cached = self.cache.get(name, arguments)
+            if cached is not None:
+                return cached
+
         # Check builtin first
         func = self._tools.get(name)
         if func is not None:
@@ -189,7 +232,13 @@ class ToolRegistry:
                 else:
                     output = func(**arguments)
                 output_str = _truncate_output(str(output))
-                return ToolResult(success=True, output=output_str)
+                result = ToolResult(success=True, output=output_str)
+
+                # Cache successful result if cacheable
+                if self.cache and name in self.cacheable_tools and result.success:
+                    self.cache.set(name, arguments, result)
+
+                return result
             except ValueError as e:
                 return ToolResult(success=False, output=f"Validation error: {e}")
             except Exception as e:
@@ -199,6 +248,12 @@ class ToolRegistry:
         server_name = self._mcp_tools.get(name)
         if server_name is not None and self._mcp_callback:
             original_name = name.split("__", 1)[1] if "__" in name else name
-            return await self._mcp_callback(server_name, original_name, arguments)
+            result = await self._mcp_callback(server_name, original_name, arguments)
+
+            # Cache successful MCP result if cacheable
+            if self.cache and name in self.cacheable_tools and result.success:
+                self.cache.set(name, arguments, result)
+
+            return result
 
         return ToolResult(success=False, output=f"Tool not found: {name}")

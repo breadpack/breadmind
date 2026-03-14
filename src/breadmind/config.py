@@ -4,6 +4,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 _VALID_PROVIDERS = ("claude", "ollama", "cli")
+_VALID_LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+
+@dataclass
+class WebConfig:
+    port: int = 8080
+    host: str = "0.0.0.0"
+
+
+@dataclass
+class LoggingConfig:
+    level: str = "INFO"
+    format: str = "json"
 
 
 @dataclass
@@ -53,6 +66,8 @@ class AppConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
     mcp: MCPConfig = field(default_factory=MCPConfig)
+    web: WebConfig = field(default_factory=WebConfig)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
 
     def validate(self) -> None:
         if self.llm.default_provider not in _VALID_PROVIDERS:
@@ -71,6 +86,15 @@ class AppConfig:
         if not (1 <= self.database.port <= 65535):
             raise ValueError(
                 f"Database port must be between 1 and 65535, got {self.database.port}"
+            )
+        if not (1 <= self.web.port <= 65535):
+            raise ValueError(
+                f"Web port must be between 1 and 65535, got {self.web.port}"
+            )
+        if self.logging.level not in _VALID_LOG_LEVELS:
+            raise ValueError(
+                f"Invalid log level '{self.logging.level}', "
+                f"must be one of {list(_VALID_LOG_LEVELS)}"
             )
 
 
@@ -99,10 +123,15 @@ def load_config(config_dir: str = "config") -> AppConfig:
                 RegistryConfigItem(**r) for r in mcp_raw["registries"]
             ]
 
+    web_raw = raw.get("web", {})
+    logging_raw = raw.get("logging", {})
+
     return AppConfig(
         llm=LLMConfig(**{k: v for k, v in llm_raw.items() if k in LLMConfig.__dataclass_fields__}),
         database=DatabaseConfig(**{k: v for k, v in db_raw.items() if k in DatabaseConfig.__dataclass_fields__}),
         mcp=mcp_config,
+        web=WebConfig(**{k: v for k, v in web_raw.items() if k in WebConfig.__dataclass_fields__}),
+        logging=LoggingConfig(**{k: v for k, v in logging_raw.items() if k in LoggingConfig.__dataclass_fields__}),
     )
 
 
