@@ -441,6 +441,83 @@ class WebApp:
 
             return {"status": "ok", "persisted": self._db is not None}
 
+        @app.get("/api/config/models/{provider}")
+        async def list_provider_models(provider: str):
+            """Fetch available models from a provider's API."""
+            import aiohttp
+            models = []
+            try:
+                if provider == "claude":
+                    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+                    if api_key:
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(
+                                "https://api.anthropic.com/v1/models",
+                                headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"},
+                                timeout=aiohttp.ClientTimeout(total=10),
+                            ) as resp:
+                                if resp.status == 200:
+                                    data = await resp.json()
+                                    models = [m["id"] for m in data.get("data", [])]
+                    if not models:
+                        models = ["claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-6",
+                                  "claude-sonnet-4-5-20250514", "claude-3-5-haiku-20241022"]
+
+                elif provider == "gemini":
+                    api_key = os.environ.get("GEMINI_API_KEY", "")
+                    if api_key:
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(
+                                f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}",
+                                timeout=aiohttp.ClientTimeout(total=10),
+                            ) as resp:
+                                if resp.status == 200:
+                                    data = await resp.json()
+                                    models = [m["name"].replace("models/", "") for m in data.get("models", [])
+                                              if "generateContent" in m.get("supportedGenerationMethods", [])]
+                    if not models:
+                        models = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash",
+                                  "gemini-1.5-flash", "gemini-1.5-pro"]
+
+                elif provider == "openai":
+                    api_key = os.environ.get("OPENAI_API_KEY", "")
+                    if api_key:
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(
+                                "https://api.openai.com/v1/models",
+                                headers={"Authorization": f"Bearer {api_key}"},
+                                timeout=aiohttp.ClientTimeout(total=10),
+                            ) as resp:
+                                if resp.status == 200:
+                                    data = await resp.json()
+                                    models = sorted([m["id"] for m in data.get("data", [])
+                                                     if "gpt" in m["id"] or "o1" in m["id"] or "o3" in m["id"]])
+                    if not models:
+                        models = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o3-mini"]
+
+                elif provider == "ollama":
+                    try:
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(
+                                "http://localhost:11434/api/tags",
+                                timeout=aiohttp.ClientTimeout(total=5),
+                            ) as resp:
+                                if resp.status == 200:
+                                    data = await resp.json()
+                                    models = [m["name"] for m in data.get("models", [])]
+                    except Exception:
+                        pass
+                    if not models:
+                        models = ["llama3.1", "mistral", "codellama", "qwen2.5"]
+
+                elif provider == "cli":
+                    models = ["claude -p", "gemini", "codex"]
+
+            except Exception as e:
+                logger.warning(f"Failed to fetch models for {provider}: {e}")
+
+            return {"provider": provider, "models": models}
+
         @app.post("/api/config/mcp")
         async def update_mcp(request: Request):
             """Update MCP configuration."""

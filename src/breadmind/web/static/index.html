@@ -464,6 +464,38 @@
             } catch(e) { flashBtn(btn, false); showToast('Network error', 'error'); }
         }
 
+        async function loadModelsForProvider(provider, currentModel) {
+            const select = document.getElementById('input-model');
+            const loading = document.getElementById('model-loading');
+            if (!select) return;
+            loading.textContent = 'Loading models...';
+            try {
+                const resp = await fetch('/api/config/models/' + encodeURIComponent(provider));
+                const data = await resp.json();
+                select.innerHTML = '';
+                (data.models || []).forEach(function(m) {
+                    const opt = document.createElement('option');
+                    opt.value = m; opt.textContent = m;
+                    if (m === currentModel) opt.selected = true;
+                    select.appendChild(opt);
+                });
+                if (data.models && data.models.length > 0 && !data.models.includes(currentModel)) {
+                    // Add current model as first option if not in list
+                    if (currentModel) {
+                        const opt = document.createElement('option');
+                        opt.value = currentModel; opt.textContent = currentModel + ' (current)';
+                        opt.selected = true;
+                        select.insertBefore(opt, select.firstChild);
+                    }
+                }
+                loading.textContent = data.models.length + ' models';
+                setTimeout(function() { loading.textContent = ''; }, 2000);
+            } catch(e) {
+                loading.textContent = 'Failed to load';
+                setTimeout(function() { loading.textContent = ''; }, 2000);
+            }
+        }
+
         async function saveProvider() {
             const btn = document.getElementById('btn-provider');
             btn.disabled = true; btn.textContent = '...';
@@ -646,13 +678,14 @@
                 const llm = config.llm || {};
                 const providers = ['claude', 'gemini', 'ollama', 'cli'];
                 html += `<div class="setting-row"><span class="setting-label">Provider</span>
-                    <select class="setting-select" id="input-provider">`;
+                    <select class="setting-select" id="input-provider" onchange="loadModelsForProvider(this.value, '')">`;
                 providers.forEach(p => {
                     html += `<option value="${p}" ${p === llm.default_provider ? 'selected' : ''}>${p}</option>`;
                 });
                 html += `</select></div>`;
                 html += `<div class="setting-row"><span class="setting-label">Model</span>
-                    <input type="text" class="setting-input" id="input-model" value="${escapeHtml(llm.default_model || '')}"></div>`;
+                    <select class="setting-select" id="input-model"><option value="${escapeHtml(llm.default_model || '')}">${escapeHtml(llm.default_model || '')}</option></select>
+                    <span id="model-loading" style="color:#64748b;font-size:11px;margin-left:8px;"></span></div>`;
                 html += `<div class="setting-row"><span class="setting-label">Max Tool Turns</span>
                     <input type="number" class="setting-input" id="input-max-turns" value="${llm.tool_call_max_turns || 10}" min="1"></div>`;
                 html += `<div class="setting-row"><span class="setting-label">Timeout (sec)</span>
@@ -808,6 +841,10 @@
                 loadSafetyEditors(window._safetyData);
                 loadPersona();
                 loadNewSettingsData(timeoutsData, memoryData, monRules, messengerData, toolSecData);
+                // Load model list for current provider
+                const curProvider = (config.llm || {}).default_provider || 'claude';
+                const curModel = (config.llm || {}).default_model || '';
+                loadModelsForProvider(curProvider, curModel);
             });
         }
 
