@@ -1,0 +1,27 @@
+import pytest
+from breadmind.storage.models import AuditEntry, EpisodicNote
+from datetime import datetime
+
+
+def test_audit_entry_creation():
+    entry = AuditEntry(
+        action="k8s_list_pods",
+        params={"namespace": "default"},
+        result="ALLOWED",
+        reason="auto-allow",
+        channel="slack",
+        user="U12345",
+    )
+    assert entry.action == "k8s_list_pods"
+    assert entry.result == "ALLOWED"
+
+
+def test_episodic_note_creation():
+    note = EpisodicNote(
+        content="User prefers snapshots before VM changes",
+        keywords=["snapshot", "vm", "preference"],
+        tags=["user_preference", "proxmox"],
+        context_description="Learned from conversation about VM management",
+    )
+    assert "snapshot" in note.keywords
+    assert note.embedding is None  # not yet computed
