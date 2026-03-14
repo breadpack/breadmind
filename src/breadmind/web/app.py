@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from typing import Callable, Any
@@ -21,6 +21,7 @@ class WebApp:
         self._safety_config = safety_config
         self._connections: list[WebSocket] = []
         self._events: list[dict] = []
+        self._lock = asyncio.Lock()
         self._setup_routes()
 
     async def on_monitoring_event(self, event):
@@ -41,18 +42,39 @@ class WebApp:
         await self.broadcast_event(event_dict)
 
     async def broadcast_event(self, event_dict):
-        for ws in self._connections[:]:
+        async with self._lock:
+            connections = self._connections[:]
+        for ws in connections:
             try:
                 await ws.send_text(json.dumps({"type": "monitoring_event", "event": event_dict}))
             except Exception:
-                self._connections.remove(ws)
+                async with self._lock:
+                    if ws in self._connections:
+                        self._connections.remove(ws)
 
     def _setup_routes(self):
         app = self.app
 
         @app.get("/health")
         async def health():
-            return {"status": "ok", "version": "0.1.0"}
+            agent_ok = self._message_handler is not None
+            monitoring_ok = (
+                self._monitoring_engine is not None and self._monitoring_engine._running
+            ) if self._monitoring_engine is not None else False
+
+            components = {
+                "agent": agent_ok,
+                "monitoring": monitoring_ok,
+            }
+
+            # Agent is critical - if not configured, return 503
+            if not agent_ok:
+                return JSONResponse(
+                    status_code=503,
+                    content={"status": "degraded", "components": components},
+                )
+
+            return {"status": "ok", "components": components}
 
         @app.get("/api/tools")
         async def list_tools():
@@ -131,7 +153,8 @@ class WebApp:
         @app.websocket("/ws/chat")
         async def websocket_chat(websocket: WebSocket):
             await websocket.accept()
-            self._connections.append(websocket)
+            async with self._lock:
+                self._connections.append(websocket)
             try:
                 while True:
                     data = await websocket.receive_text()
@@ -148,15 +171,22 @@ class WebApp:
 
                     await websocket.send_text(json.dumps({"type": "response", "message": response}))
             except WebSocketDisconnect:
-                self._connections.remove(websocket)
+                async with self._lock:
+                    if websocket in self._connections:
+                        self._connections.remove(websocket)
             except Exception as e:
                 logger.error(f"WebSocket error: {e}")
-                if websocket in self._connections:
-                    self._connections.remove(websocket)
+                async with self._lock:
+                    if websocket in self._connections:
+                        self._connections.remove(websocket)
 
     async def broadcast(self, message: str):
-        for ws in self._connections[:]:
+        async with self._lock:
+            connections = self._connections[:]
+        for ws in connections:
             try:
                 await ws.send_text(json.dumps({"type": "notification", "message": message}))
             except Exception:
-                self._connections.remove(ws)
+                async with self._lock:
+                    if ws in self._connections:
+                        self._connections.remove(ws)

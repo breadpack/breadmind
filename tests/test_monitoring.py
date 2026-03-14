@@ -8,17 +8,17 @@ from breadmind.monitoring.rules import (
 # LoopProtector tests
 def test_loop_protector_allows_first_action():
     lp = LoopProtector(cooldown_minutes=10, max_auto_actions=3)
-    assert lp.can_act("pod:nginx", "restart") is True
+    assert lp.can_act_sync("pod:nginx", "restart") is True
 
 def test_loop_protector_cooldown():
     lp = LoopProtector(cooldown_minutes=10, max_auto_actions=3)
-    lp.record_action("pod:nginx", "restart")
-    assert lp.can_act("pod:nginx", "restart") is False  # in cooldown
+    lp.record_action_sync("pod:nginx", "restart")
+    assert lp.can_act_sync("pod:nginx", "restart") is False  # in cooldown
 
 def test_loop_protector_different_targets():
     lp = LoopProtector(cooldown_minutes=10, max_auto_actions=3)
-    lp.record_action("pod:nginx", "restart")
-    assert lp.can_act("pod:redis", "restart") is True  # different target
+    lp.record_action_sync("pod:nginx", "restart")
+    assert lp.can_act_sync("pod:redis", "restart") is True  # different target
 
 # Rule tests
 def test_check_pod_crash():
@@ -77,7 +77,7 @@ async def test_engine_check_once():
     def dummy_rule(state, prev):
         return [MonitoringEvent(source="test", target="test:1", severity="info", condition="test_event")]
     engine = MonitoringEngine()
-    engine.add_rule(MonitoringRule(name="test", source="test", condition_fn=dummy_rule))
+    engine.add_rule_sync(MonitoringRule(name="test", source="test", condition_fn=dummy_rule))
     events = await engine.check_once()
     assert len(events) == 1
     assert events[0].condition == "test_event"
@@ -85,8 +85,24 @@ async def test_engine_check_once():
 @pytest.mark.asyncio
 async def test_engine_start_stop():
     engine = MonitoringEngine()
-    engine.add_rule(MonitoringRule(name="test", source="test", condition_fn=lambda s, p: [], interval_seconds=1))
+    engine.add_rule_sync(MonitoringRule(name="test", source="test", condition_fn=lambda s, p: [], interval_seconds=1))
     await engine.start()
     assert engine._running is True
     await engine.stop()
     assert engine._running is False
+
+@pytest.mark.asyncio
+async def test_engine_stop_idempotent():
+    engine = MonitoringEngine()
+    await engine.stop()  # Should not raise
+    assert engine._running is False
+
+@pytest.mark.asyncio
+async def test_engine_start_idempotent():
+    engine = MonitoringEngine()
+    engine.add_rule_sync(MonitoringRule(name="test", source="test", condition_fn=lambda s, p: [], interval_seconds=1))
+    await engine.start()
+    await engine.start()  # Should not create duplicate tasks
+    assert engine._running is True
+    assert len(engine._tasks) == 1
+    await engine.stop()

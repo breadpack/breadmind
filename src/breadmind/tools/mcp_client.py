@@ -1,5 +1,7 @@
 import asyncio
 import json
+import re
+import sys
 from dataclasses import dataclass, field
 from typing import Any
 from breadmind.llm.base import ToolDefinition
@@ -9,6 +11,9 @@ from breadmind.tools.mcp_protocol import (
     create_tools_list_request, create_tools_call_request,
     encode_message, parse_response, MCPError,
 )
+
+_MAX_MESSAGE_SIZE = 10 * 1024 * 1024  # 10 MB
+_CONTENT_LENGTH_RE = re.compile(r"Content-Length:\s*(\d+)", re.IGNORECASE)
 
 
 @dataclass
@@ -20,13 +25,23 @@ class MCPServerInfo:
     source: str = "config"
 
 
+@dataclass
+class _StdioServerConfig:
+    command: str
+    args: list[str]
+    env: dict[str, str] | None
+    source: str
+
+
 class MCPClientManager:
-    def __init__(self, max_restart_attempts: int = 3):
+    def __init__(self, max_restart_attempts: int = 3, call_timeout: int = 30):
         self._servers: dict[str, MCPServerInfo] = {}
         self._processes: dict[str, asyncio.subprocess.Process] = {}
         self._sse_sessions: dict[str, dict] = {}
         self._max_restarts = max_restart_attempts
         self._restart_counts: dict[str, int] = {}
+        self._call_timeout = call_timeout
+        self._server_configs: dict[str, _StdioServerConfig] = {}
 
     def list_servers_sync(self) -> list[MCPServerInfo]:
         return list(self._servers.values())
@@ -46,10 +61,15 @@ class MCPClientManager:
             env=env,
         )
         self._processes[name] = proc
+        self._server_configs[name] = _StdioServerConfig(
+            command=command, args=args, env=env, source=source,
+        )
 
         init_req = create_initialize_request()
         await self._send_stdio(proc, init_req)
-        init_resp = await self._read_stdio(proc)
+        init_resp = await asyncio.wait_for(
+            self._read_stdio(proc), timeout=self._call_timeout,
+        )
         parse_response(init_resp)
 
         notif = create_initialized_notification()
@@ -57,7 +77,9 @@ class MCPClientManager:
 
         tools_req = create_tools_list_request()
         await self._send_stdio(proc, tools_req)
-        tools_resp = await self._read_stdio(proc)
+        tools_resp = await asyncio.wait_for(
+            self._read_stdio(proc), timeout=self._call_timeout,
+        )
         tools_result = parse_response(tools_resp)
 
         tool_names = []
@@ -115,12 +137,39 @@ class MCPClientManager:
         return definitions
 
     async def stop_server(self, name: str) -> None:
-        proc = self._processes.get(name)
-        if proc:
+        proc = self._processes.pop(name, None)
+        if proc and proc.returncode is None:
             proc.terminate()
-            await proc.wait()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+        self._sse_sessions.pop(name, None)
+        self._server_configs.pop(name, None)
         if name in self._servers:
             self._servers[name].status = "stopped"
+
+    async def _try_restart_server(self, server_name: str) -> bool:
+        cfg = self._server_configs.get(server_name)
+        if cfg is None:
+            return False
+        count = self._restart_counts.get(server_name, 0)
+        if count >= self._max_restarts:
+            return False
+        self._restart_counts[server_name] = count + 1
+        try:
+            # Clean up old process
+            old_proc = self._processes.pop(server_name, None)
+            if old_proc and old_proc.returncode is None:
+                old_proc.kill()
+                await old_proc.wait()
+            await self.start_stdio_server(
+                server_name, cfg.command, cfg.args, env=cfg.env, source=cfg.source,
+            )
+            return True
+        except Exception:
+            return False
 
     async def call_tool(
         self, server_name: str, tool_name: str, arguments: dict[str, Any],
@@ -130,15 +179,24 @@ class MCPClientManager:
 
         proc = self._processes.get(server_name)
         if proc is None or proc.returncode is not None:
-            return ToolResult(success=False, output=f"MCP server '{server_name}' is not running")
+            # Attempt auto-restart
+            if await self._try_restart_server(server_name):
+                proc = self._processes.get(server_name)
+            else:
+                return ToolResult(success=False, output=f"MCP server '{server_name}' is not running")
+
         try:
             req = create_tools_call_request(tool_name, arguments)
             await self._send_stdio(proc, req)
-            resp = await self._read_stdio(proc)
+            resp = await asyncio.wait_for(
+                self._read_stdio(proc), timeout=self._call_timeout,
+            )
             result = parse_response(resp)
             content_parts = result.get("content", [])
             text_parts = [p.get("text", "") for p in content_parts if p.get("type") == "text"]
             return ToolResult(success=True, output="\n".join(text_parts) or str(result))
+        except asyncio.TimeoutError:
+            return ToolResult(success=False, output="MCP server timeout")
         except MCPError as e:
             return ToolResult(success=False, output=f"MCP error: {e}")
         except Exception as e:
@@ -153,12 +211,15 @@ class MCPClientManager:
         req = create_tools_call_request(tool_name, arguments)
         try:
             async with aiohttp.ClientSession(headers=session_info.get("headers")) as session:
-                async with session.post(f"{url}/message", json=req) as resp:
-                    result_raw = await resp.json()
-                    result = parse_response(result_raw)
+                async with asyncio.timeout(self._call_timeout):
+                    async with session.post(f"{url}/message", json=req) as resp:
+                        result_raw = await resp.json()
+                        result = parse_response(result_raw)
             content_parts = result.get("content", [])
             text_parts = [p.get("text", "") for p in content_parts if p.get("type") == "text"]
             return ToolResult(success=True, output="\n".join(text_parts) or str(result))
+        except asyncio.TimeoutError:
+            return ToolResult(success=False, output="MCP server timeout")
         except Exception as e:
             return ToolResult(success=False, output=f"SSE call failed: {e}")
 
@@ -166,23 +227,53 @@ class MCPClientManager:
         proc = self._processes.get(name)
         return proc is not None and proc.returncode is None
 
+    async def detailed_health_check(self, name: str) -> dict:
+        result: dict[str, Any] = {"alive": False, "responsive": False, "tools_count": 0}
+        proc = self._processes.get(name)
+        if proc is None or proc.returncode is not None:
+            return result
+        result["alive"] = True
+        try:
+            req = create_tools_list_request()
+            await self._send_stdio(proc, req)
+            resp = await asyncio.wait_for(self._read_stdio(proc), timeout=5.0)
+            tools_result = parse_response(resp)
+            result["responsive"] = True
+            result["tools_count"] = len(tools_result.get("tools", []))
+        except Exception:
+            pass
+        return result
+
     async def stop_all(self) -> None:
         for name in list(self._servers.keys()):
             await self.stop_server(name)
 
-    async def _send_stdio(self, proc, msg: dict) -> None:
+    async def _send_stdio(self, proc: asyncio.subprocess.Process, msg: dict) -> None:
         data = encode_message(msg)
         proc.stdin.write(data)
         await proc.stdin.drain()
 
-    async def _read_stdio(self, proc) -> dict:
-        header = b""
-        while b"\r\n\r\n" not in header:
-            chunk = await proc.stdout.read(1)
-            if not chunk:
+    async def _read_stdio(self, proc: asyncio.subprocess.Process) -> dict:
+        # Read headers using readline for efficiency
+        header_data = b""
+        while True:
+            line = await proc.stdout.readline()
+            if not line:
                 raise ConnectionError("MCP server closed connection")
-            header += chunk
-        header_str = header.decode("utf-8")
-        length = int(header_str.split("Content-Length:")[1].split("\r\n")[0].strip())
+            header_data += line
+            if header_data.endswith(b"\r\n\r\n"):
+                break
+
+        header_str = header_data.decode("utf-8")
+        match = _CONTENT_LENGTH_RE.search(header_str)
+        if not match:
+            raise ValueError(f"Missing Content-Length header in: {header_str!r}")
+        length = int(match.group(1))
+
+        if length > _MAX_MESSAGE_SIZE:
+            raise ValueError(
+                f"MCP message too large: {length} bytes (max {_MAX_MESSAGE_SIZE})"
+            )
+
         body = await proc.stdout.readexactly(length)
         return json.loads(body.decode("utf-8"))

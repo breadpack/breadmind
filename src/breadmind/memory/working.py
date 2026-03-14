@@ -9,26 +9,45 @@ class ConversationSession:
     channel: str
     messages: list[LLMMessage] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.utcnow)
+    last_active: datetime = field(default_factory=datetime.utcnow)
     metadata: dict = field(default_factory=dict)
 
 class WorkingMemory:
     """Layer 1: In-memory working memory for active conversations."""
 
-    def __init__(self, max_messages_per_session: int = 50):
+    def __init__(
+        self,
+        max_messages_per_session: int = 50,
+        session_timeout_minutes: int = 30,
+    ):
         self._sessions: dict[str, ConversationSession] = {}
         self._max_messages = max_messages_per_session
+        self._session_timeout_minutes = session_timeout_minutes
 
     def get_or_create_session(self, session_id: str, user: str = "", channel: str = "") -> ConversationSession:
-        if session_id not in self._sessions:
-            self._sessions[session_id] = ConversationSession(
+        session = self._sessions.get(session_id)
+        if session is not None:
+            now = datetime.utcnow()
+            elapsed = (now - session.last_active).total_seconds()
+            if elapsed >= self._session_timeout_minutes * 60:
+                # Session expired — clear and recreate
+                self._sessions.pop(session_id)
+                session = None
+
+        if session is None:
+            session = ConversationSession(
                 session_id=session_id, user=user, channel=channel,
             )
-        return self._sessions[session_id]
+            self._sessions[session_id] = session
+
+        session.last_active = datetime.utcnow()
+        return session
 
     def add_message(self, session_id: str, message: LLMMessage):
         session = self._sessions.get(session_id)
         if session:
             session.messages.append(message)
+            session.last_active = datetime.utcnow()
             if len(session.messages) > self._max_messages:
                 session.messages = session.messages[-self._max_messages:]
 
@@ -42,6 +61,17 @@ class WorkingMemory:
     def list_sessions(self) -> list[str]:
         return list(self._sessions.keys())
 
+    def cleanup_expired(self) -> list[str]:
+        """Remove all expired sessions. Returns list of removed session IDs."""
+        now = datetime.utcnow()
+        expired = []
+        for sid, session in list(self._sessions.items()):
+            elapsed = (now - session.last_active).total_seconds()
+            if elapsed >= self._session_timeout_minutes * 60:
+                expired.append(sid)
+                self._sessions.pop(sid)
+        return expired
+
     def get_session_summary(self, session_id: str) -> dict:
         session = self._sessions.get(session_id)
         if not session:
@@ -52,4 +82,5 @@ class WorkingMemory:
             "channel": session.channel,
             "message_count": len(session.messages),
             "created_at": session.created_at.isoformat(),
+            "last_active": session.last_active.isoformat(),
         }

@@ -12,19 +12,43 @@ def web_app():
     mock_mcp = MagicMock()
     mock_mcp.list_servers = AsyncMock(return_value=[])
 
-    app = WebApp(tool_registry=mock_registry, mcp_manager=mock_mcp)
+    app = WebApp(
+        message_handler=AsyncMock(return_value="test response"),
+        tool_registry=mock_registry,
+        mcp_manager=mock_mcp,
+    )
     return app
 
 @pytest.fixture
 def client(web_app):
     return TestClient(web_app.app)
 
-def test_health_endpoint(client):
+def test_health_endpoint_ok(client):
     resp = client.get("/health")
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "ok"
-    assert "version" in data
+    assert "components" in data
+    assert data["components"]["agent"] is True
+
+def test_health_endpoint_no_handler():
+    app = WebApp()
+    client = TestClient(app.app)
+    resp = client.get("/health")
+    assert resp.status_code == 503
+    data = resp.json()
+    assert data["status"] == "degraded"
+    assert data["components"]["agent"] is False
+
+def test_health_endpoint_monitoring_status():
+    mock_engine = MagicMock()
+    mock_engine._running = True
+    app = WebApp(message_handler=lambda m, **kw: "ok", monitoring_engine=mock_engine)
+    client = TestClient(app.app)
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["components"]["monitoring"] is True
 
 def test_tools_endpoint(client):
     resp = client.get("/api/tools")
@@ -48,7 +72,7 @@ def test_tools_with_data():
         ToolDefinition(name="shell_exec", description="Execute shell", parameters={}),
     ]
     mock_registry.get_tool_source.return_value = "builtin"
-    app = WebApp(tool_registry=mock_registry)
+    app = WebApp(message_handler=lambda m, **kw: "ok", tool_registry=mock_registry)
     client = TestClient(app.app)
     resp = client.get("/api/tools")
     tools = resp.json()["tools"]
@@ -58,7 +82,7 @@ def test_tools_with_data():
 def test_config_endpoint():
     from breadmind.config import AppConfig
     config = AppConfig()
-    app = WebApp(config=config)
+    app = WebApp(message_handler=lambda m, **kw: "ok", config=config)
     client = TestClient(app.app)
     resp = client.get("/api/config")
     assert resp.status_code == 200
@@ -68,21 +92,21 @@ def test_config_endpoint():
 
 def test_safety_endpoint():
     safety = {"blacklist": {"k8s": ["delete_ns"]}, "require_approval": ["shell_exec"]}
-    app = WebApp(safety_config=safety)
+    app = WebApp(message_handler=lambda m, **kw: "ok", safety_config=safety)
     client = TestClient(app.app)
     resp = client.get("/api/safety")
     assert resp.status_code == 200
     assert "blacklist" in resp.json()
 
 def test_monitoring_events_endpoint():
-    app = WebApp()
+    app = WebApp(message_handler=lambda m, **kw: "ok")
     client = TestClient(app.app)
     resp = client.get("/api/monitoring/events")
     assert resp.status_code == 200
     assert "events" in resp.json()
 
 def test_monitoring_status_endpoint():
-    app = WebApp()
+    app = WebApp(message_handler=lambda m, **kw: "ok")
     client = TestClient(app.app)
     resp = client.get("/api/monitoring/status")
     assert resp.status_code == 200

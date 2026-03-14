@@ -3,6 +3,9 @@ import yaml
 from dataclasses import dataclass, field
 from pathlib import Path
 
+_VALID_PROVIDERS = ("claude", "ollama", "cli")
+
+
 @dataclass
 class LLMConfig:
     default_provider: str = "claude"
@@ -10,6 +13,7 @@ class LLMConfig:
     fallback_chain: list[str] = field(default_factory=lambda: ["claude", "ollama"])
     tool_call_max_turns: int = 10
     tool_call_timeout_seconds: int = 30
+
 
 @dataclass
 class DatabaseConfig:
@@ -23,12 +27,14 @@ class DatabaseConfig:
     def dsn(self) -> str:
         return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.name}"
 
+
 @dataclass
 class RegistryConfigItem:
     name: str
     type: str
     enabled: bool = True
     url: str | None = None
+
 
 @dataclass
 class MCPConfig:
@@ -41,11 +47,32 @@ class MCPConfig:
                            url="https://registry.modelcontextprotocol.io"),
     ])
 
+
 @dataclass
 class AppConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
     mcp: MCPConfig = field(default_factory=MCPConfig)
+
+    def validate(self) -> None:
+        if self.llm.default_provider not in _VALID_PROVIDERS:
+            raise ValueError(
+                f"Invalid default_provider '{self.llm.default_provider}', "
+                f"must be one of {list(_VALID_PROVIDERS)}"
+            )
+        if self.llm.tool_call_max_turns < 1:
+            raise ValueError(
+                f"tool_call_max_turns must be >= 1, got {self.llm.tool_call_max_turns}"
+            )
+        if self.llm.tool_call_timeout_seconds < 1:
+            raise ValueError(
+                f"tool_call_timeout_seconds must be >= 1, got {self.llm.tool_call_timeout_seconds}"
+            )
+        if not (1 <= self.database.port <= 65535):
+            raise ValueError(
+                f"Database port must be between 1 and 65535, got {self.database.port}"
+            )
+
 
 def load_config(config_dir: str = "config") -> AppConfig:
     config_path = Path(config_dir) / "config.yaml"
@@ -78,6 +105,7 @@ def load_config(config_dir: str = "config") -> AppConfig:
         mcp=mcp_config,
     )
 
+
 def _expand_env(obj):
     if isinstance(obj, str) and obj.startswith("${") and obj.endswith("}"):
         var = obj[2:-1]
@@ -90,6 +118,7 @@ def _expand_env(obj):
     if isinstance(obj, list):
         return [_expand_env(v) for v in obj]
     return obj
+
 
 def load_safety_config(config_dir: str = "config") -> dict:
     safety_path = Path(config_dir) / "safety.yaml"

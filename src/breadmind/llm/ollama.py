@@ -8,6 +8,9 @@ from .base import (
     ToolDefinition,
 )
 
+# 헬스체크 타임아웃 (초)
+_HEALTH_CHECK_TIMEOUT = 5
+
 
 class OllamaProvider(LLMProvider):
     def __init__(
@@ -71,8 +74,10 @@ class OllamaProvider(LLMProvider):
         )
 
     async def health_check(self) -> bool:
+        """Ollama 서버 상태를 확인한다. 타임아웃을 설정하여 행(hang)을 방지한다."""
         try:
-            async with aiohttp.ClientSession() as session:
+            timeout = aiohttp.ClientTimeout(total=_HEALTH_CHECK_TIMEOUT)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(f"{self._base_url}/api/tags") as resp:
                     return resp.status == 200
         except Exception:
