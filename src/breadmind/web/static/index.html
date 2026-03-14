@@ -354,7 +354,7 @@
             const btn = document.getElementById('btn-' + keyName);
             const value = input.value.trim();
             if (!value) { showToast('API key cannot be empty', 'error'); return; }
-            btn.disabled = true; btn.textContent = '...';
+            btn.disabled = true; btn.textContent = 'Validating...';
             try {
                 const resp = await fetch('/api/config/api-keys', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},

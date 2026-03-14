@@ -231,6 +231,57 @@ class WebApp:
                     keys[key_name] = {"set": False, "masked": ""}
             return {"keys": keys}
 
+        async def _validate_api_key(key_name: str, value: str) -> dict:
+            """Validate an API key by making a lightweight request to the provider."""
+            import aiohttp
+            try:
+                if key_name == "ANTHROPIC_API_KEY":
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(
+                            "https://api.anthropic.com/v1/models",
+                            headers={"x-api-key": value, "anthropic-version": "2023-06-01"},
+                            timeout=aiohttp.ClientTimeout(total=10),
+                        ) as resp:
+                            if resp.status == 200:
+                                return {"valid": True, "reason": ""}
+                            elif resp.status == 401:
+                                return {"valid": False, "reason": "Invalid API key (401 Unauthorized)"}
+                            else:
+                                return {"valid": False, "reason": f"Unexpected response: HTTP {resp.status}"}
+
+                elif key_name == "GEMINI_API_KEY":
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(
+                            f"https://generativelanguage.googleapis.com/v1beta/models?key={value}",
+                            timeout=aiohttp.ClientTimeout(total=10),
+                        ) as resp:
+                            if resp.status == 200:
+                                return {"valid": True, "reason": ""}
+                            elif resp.status == 400 or resp.status == 403:
+                                return {"valid": False, "reason": "Invalid API key"}
+                            else:
+                                return {"valid": False, "reason": f"Unexpected response: HTTP {resp.status}"}
+
+                elif key_name == "OPENAI_API_KEY":
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(
+                            "https://api.openai.com/v1/models",
+                            headers={"Authorization": f"Bearer {value}"},
+                            timeout=aiohttp.ClientTimeout(total=10),
+                        ) as resp:
+                            if resp.status == 200:
+                                return {"valid": True, "reason": ""}
+                            elif resp.status == 401:
+                                return {"valid": False, "reason": "Invalid API key (401 Unauthorized)"}
+                            else:
+                                return {"valid": False, "reason": f"Unexpected response: HTTP {resp.status}"}
+
+                return {"valid": True, "reason": ""}  # Unknown key type, skip validation
+            except aiohttp.ClientError as e:
+                return {"valid": False, "reason": f"Connection error: {e}"}
+            except asyncio.TimeoutError:
+                return {"valid": False, "reason": "Validation request timed out"}
+
         @app.post("/api/config/api-keys")
         async def update_api_key(request: Request):
             """Update an API key — encrypted in DB, or fallback to .env."""
@@ -247,6 +298,14 @@ class WebApp:
                 return JSONResponse(
                     status_code=400,
                     content={"error": "API key value cannot be empty"},
+                )
+
+            # Validate key by making a lightweight API call
+            validation = await _validate_api_key(key_name, value)
+            if not validation["valid"]:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": f"API key validation failed: {validation['reason']}"},
                 )
 
             persisted_to = "memory"

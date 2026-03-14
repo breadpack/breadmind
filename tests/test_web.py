@@ -288,7 +288,7 @@ def test_get_api_keys_status_with_key():
 
 
 def test_post_api_key_saves(tmp_path, monkeypatch):
-    """Test POST /api/config/api-keys saves the key."""
+    """Test POST /api/config/api-keys saves the key after validation."""
     import os as _os
     import breadmind.config as config_module
     # Mock save_env_var to avoid writing to real .env
@@ -297,6 +297,18 @@ def test_post_api_key_saves(tmp_path, monkeypatch):
         saved[k] = v
         _os.environ[k] = v
     monkeypatch.setattr(config_module, "save_env_var", mock_save)
+    # Mock aiohttp to skip real API validation
+    import aiohttp
+    from unittest.mock import AsyncMock, MagicMock, patch
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=mock_resp)
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(aiohttp, "ClientSession", lambda: mock_session)
     app = WebApp(message_handler=lambda m, **kw: "ok")
     client = TestClient(app.app)
     resp = client.post("/api/config/api-keys", json={
@@ -310,6 +322,30 @@ def test_post_api_key_saves(tmp_path, monkeypatch):
     assert saved["ANTHROPIC_API_KEY"] == "sk-ant-api03-abcdefgh12345678"
     # Clean up
     _os.environ.pop("ANTHROPIC_API_KEY", None)
+
+
+def test_post_api_key_validation_failure(monkeypatch):
+    """Test POST /api/config/api-keys rejects invalid keys after validation."""
+    import aiohttp
+    from unittest.mock import AsyncMock, MagicMock
+    mock_resp = MagicMock()
+    mock_resp.status = 401
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=mock_resp)
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(aiohttp, "ClientSession", lambda: mock_session)
+
+    app = WebApp(message_handler=lambda m, **kw: "ok")
+    client = TestClient(app.app)
+    resp = client.post("/api/config/api-keys", json={
+        "key_name": "ANTHROPIC_API_KEY",
+        "value": "invalid-key-12345678"
+    })
+    assert resp.status_code == 400
+    assert "validation failed" in resp.json()["error"].lower()
 
 
 def test_post_api_key_invalid_name():
