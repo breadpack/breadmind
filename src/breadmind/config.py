@@ -152,6 +152,34 @@ def _expand_env(obj):
 _VALID_API_KEY_NAMES = ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY")
 
 
+def _get_or_create_master_key() -> bytes:
+    """Get master encryption key from env, or generate and save one."""
+    key_str = os.environ.get("BREADMIND_MASTER_KEY", "")
+    if key_str:
+        return key_str.encode()
+    # Auto-generate and save to .env
+    from cryptography.fernet import Fernet
+    new_key = Fernet.generate_key()
+    save_env_var("BREADMIND_MASTER_KEY", new_key.decode())
+    return new_key
+
+
+def encrypt_value(plaintext: str) -> str:
+    """Encrypt a string using Fernet symmetric encryption."""
+    from cryptography.fernet import Fernet
+    key = _get_or_create_master_key()
+    f = Fernet(key)
+    return f.encrypt(plaintext.encode()).decode()
+
+
+def decrypt_value(ciphertext: str) -> str:
+    """Decrypt a Fernet-encrypted string."""
+    from cryptography.fernet import Fernet
+    key = _get_or_create_master_key()
+    f = Fernet(key)
+    return f.decrypt(ciphertext.encode()).decode()
+
+
 def save_env_var(key: str, value: str):
     """Save/update an environment variable to .env file."""
     env_path = Path(__file__).parent.parent.parent / ".env"
@@ -169,6 +197,29 @@ def save_env_var(key: str, value: str):
     env_path.write_text("\n".join(lines) + "\n")
     # Also set in current process
     os.environ[key] = value
+
+
+async def save_api_key_to_db(db, key_name: str, plaintext_value: str):
+    """Encrypt and save an API key to the database."""
+    encrypted = encrypt_value(plaintext_value)
+    await db.set_setting(f"apikey:{key_name}", {
+        "encrypted": encrypted,
+        "key_name": key_name,
+    })
+    # Also set in runtime environment
+    os.environ[key_name] = plaintext_value
+
+
+async def load_api_keys_from_db(db):
+    """Load all encrypted API keys from DB and set in environment."""
+    for key_name in _VALID_API_KEY_NAMES:
+        try:
+            data = await db.get_setting(f"apikey:{key_name}")
+            if data and "encrypted" in data:
+                plaintext = decrypt_value(data["encrypted"])
+                os.environ[key_name] = plaintext
+        except Exception:
+            pass  # Key not found or decryption failed
 
 
 async def apply_db_settings(config: AppConfig, db) -> None:
@@ -191,6 +242,9 @@ async def apply_db_settings(config: AppConfig, db) -> None:
                 config.mcp.auto_discover = mcp_settings["auto_discover"]
             if "max_restart_attempts" in mcp_settings:
                 config.mcp.max_restart_attempts = mcp_settings["max_restart_attempts"]
+
+        # Load encrypted API keys
+        await load_api_keys_from_db(db)
     except Exception:
         pass  # DB not available, use file-based config
 

@@ -233,8 +233,8 @@ class WebApp:
 
         @app.post("/api/config/api-keys")
         async def update_api_key(request: Request):
-            """Update an API key."""
-            from breadmind.config import save_env_var, _VALID_API_KEY_NAMES
+            """Update an API key — encrypted in DB, or fallback to .env."""
+            from breadmind.config import _VALID_API_KEY_NAMES, save_api_key_to_db
             data = await request.json()
             key_name = data.get("key_name", "")
             value = data.get("value", "")
@@ -248,9 +248,24 @@ class WebApp:
                     status_code=400,
                     content={"error": "API key value cannot be empty"},
                 )
-            save_env_var(key_name, value)
+
+            persisted_to = "memory"
+            if self._db:
+                try:
+                    await save_api_key_to_db(self._db, key_name, value)
+                    persisted_to = "db_encrypted"
+                except Exception as e:
+                    logger.warning(f"Failed to save API key to DB: {e}")
+                    # Fallback: set in runtime only
+                    os.environ[key_name] = value
+            else:
+                # No DB — save to .env as fallback
+                from breadmind.config import save_env_var
+                save_env_var(key_name, value)
+                persisted_to = "env_file"
+
             masked = value[:8] + "***" if len(value) > 8 else "***"
-            return {"status": "ok", "masked": masked}
+            return {"status": "ok", "masked": masked, "storage": persisted_to}
 
         @app.post("/api/config/provider")
         async def update_provider(request: Request):
