@@ -5,6 +5,7 @@
 
 param(
     [switch]$ExternalDB,
+    [string]$LocalPath = "",
     [switch]$Help
 )
 
@@ -189,14 +190,27 @@ function Install-BreadMind {
     Write-Info "Installing BreadMind..."
     $installed = $false
 
+    # If local path provided, install from there
+    if ($LocalPath -and (Test-Path $LocalPath)) {
+        try {
+            & $script:PythonCmd @($script:PythonArgs + @("-m", "pip", "install", $LocalPath))
+            if ($LASTEXITCODE -eq 0) {
+                Write-Ok "BreadMind installed from local path: $LocalPath"
+                $installed = $true
+            }
+        } catch {}
+    }
+
     # Try PyPI first, fall back to git
-    try {
-        & $script:PythonCmd @($script:PythonArgs + @("-m", "pip", "install", "breadmind")) 2>$null
-        if ($LASTEXITCODE -eq 0) {
-            Write-Ok "BreadMind installed from PyPI."
-            $installed = $true
-        }
-    } catch {}
+    if (-not $installed) {
+        try {
+            & $script:PythonCmd @($script:PythonArgs + @("-m", "pip", "install", "breadmind")) 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Ok "BreadMind installed from PyPI."
+                $installed = $true
+            }
+        } catch {}
+    }
 
     if (-not $installed) {
         try {
