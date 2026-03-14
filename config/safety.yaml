@@ -1,0 +1,19 @@
+blacklist:
+  kubernetes:
+    - k8s_delete_namespace
+    - k8s_drain_node
+    - k8s_delete_pv
+  proxmox:
+    - pve_delete_vm
+    - pve_delete_storage
+    - pve_format_disk
+  openwrt:
+    - owrt_factory_reset
+    - owrt_firmware_upgrade
+
+require_approval:
+  - mcp_install
+  - mcp_uninstall
+  - pve_create_vm
+  - k8s_apply_manifest
+  - shell_exec

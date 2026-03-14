@@ -1,0 +1,30 @@
+llm:
+  default_provider: claude
+  default_model: claude-sonnet-4-6
+  fallback_chain: [claude, ollama]
+  tool_call_max_turns: 10
+  tool_call_timeout_seconds: 30
+
+providers:
+  claude:
+    type: api
+    api_key: ${ANTHROPIC_API_KEY}
+  ollama:
+    type: ollama
+    base_url: http://localhost:11434
+
+auth:
+  messenger:
+    slack:
+      allowed_users: []
+    discord:
+      allowed_users: []
+    telegram:
+      allowed_users: []
+
+database:
+  host: ${DB_HOST:-localhost}
+  port: ${DB_PORT:-5432}
+  name: ${DB_NAME:-breadmind}
+  user: ${DB_USER:-breadmind}
+  password: ${DB_PASSWORD:-breadmind_dev}
