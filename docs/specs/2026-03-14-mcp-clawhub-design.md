@@ -2,8 +2,9 @@
 
 **Date:** 2026-03-14
 **Status:** Approved
-**Sub-project:** 2/5 — MCP Client + ClawHub Integration
+**Sub-project:** 2/5 — Tool Manager (MCP Client + ClawHub + Built-in Tools)
 **Depends on:** Sub-project 1 (Core Agent) — completed
+**MCP Protocol Version:** 2024-11-05
 
 ## 1. Overview
 
@@ -25,6 +26,13 @@ BreadMind의 Tool Manager를 구축한다. MCP 프로토콜 클라이언트로 C
 | MCP 서버 관리 | 하이브리드: ClawHub=subprocess(stdio), 외부=SSE/HTTP |
 | 탐색 소스 | 설정 가능한 레지스트리 목록 (기본: ClawHub + MCP Registry) |
 | 보안 정책 | 설치/제거만 승인, 도구 실행은 기존 Safety Guard 규칙 |
+| 도구 이름 충돌 | MCP 도구는 `{server_name}__{tool_name}` 네임스페이스로 등록. 빌트인이 항상 우선 |
+
+### Scope 제한 (명시적 비목표)
+
+- MCP resources, prompts는 이 서브프로젝트 범위 밖 (tools만 지원)
+- SSH 키 관리/known_hosts는 시스템 기본값 사용 (별도 관리 UI 없음)
+- ClawHub API 변경 시 어댑터만 수정하면 됨 (API 세부사항은 구현 시 확정)
 
 ## 2. Architecture
 
@@ -89,10 +97,24 @@ class MCPClientManager:
 
 ### 3.3 MCP 프로토콜 메시지
 
-JSON-RPC 2.0 기반:
-- `initialize` — 핸드셰이크, 프로토콜 버전 협상
+JSON-RPC 2.0 기반 (MCP spec version 2024-11-05):
+- `initialize` — 핸드셰이크, 프로토콜 버전 및 capabilities 협상
+- `notifications/initialized` — 초기화 완료 알림 (initialize 응답 후 클라이언트가 전송)
 - `tools/list` — 서버가 제공하는 도구 목록 조회
 - `tools/call` — 도구 실행 요청
+
+### 3.3.1 MCP → ToolDefinition 매핑
+
+MCP `tools/list` 응답의 각 도구를 기존 `ToolDefinition`으로 변환:
+
+```python
+def mcp_tool_to_definition(server_name: str, mcp_tool: dict) -> ToolDefinition:
+    return ToolDefinition(
+        name=f"{server_name}__{mcp_tool['name']}",  # 네임스페이스
+        description=mcp_tool.get("description", ""),
+        parameters=mcp_tool.get("inputSchema", {"type": "object", "properties": {}}),
+    )
+```
 
 ### 3.4 생명주기 관리
 
@@ -116,6 +138,8 @@ mcp:
       env:
         API_KEY: ${CUSTOM_API_KEY}
 
+  # auto_discover: LLM이 적절한 도구를 찾지 못했을 때
+  # system prompt에서 mcp_search 사용을 안내하여 레지스트리 자동 탐색 유도
   auto_discover: true
   max_restart_attempts: 3
 
@@ -163,11 +187,23 @@ class RegistrySearchEngine:
 | 도구 | 설명 | 승인 필요 |
 |------|------|----------|
 | `mcp_search` | 레지스트리에서 MCP 스킬 검색 | No |
+| `mcp_recommend` | 검색 결과를 요약하여 사용자에게 추천 | No |
 | `mcp_install` | MCP 스킬 설치 + 시작 | **Yes (항상)** |
 | `mcp_uninstall` | MCP 스킬 제거 | **Yes (항상)** |
 | `mcp_list` | 설치/연결된 MCP 서버 목록 | No |
 | `mcp_start` | 중지된 MCP 서버 시작 | No |
 | `mcp_stop` | 실행 중인 MCP 서버 중지 | No |
+
+### 5.0.1 ClawHub 스킬 설치 메커니즘
+
+`mcp_install` 실행 시:
+1. `clawhub install <slug>` CLI 실행 → `./skills/<slug>/` 디렉토리에 다운로드
+2. 스킬의 SKILL.md 프론트매터에서 실행 정보 파싱 (command, args, env 요구사항)
+3. `mcp_servers` DB 테이블에 설치 정보 기록
+4. `MCPClientManager.start_stdio_server()`로 subprocess 시작
+5. `discover_tools()` → ToolRegistry에 도구 등록
+
+ClawHub CLI가 설치되어 있지 않으면, fallback으로 ClawHub HTTP API에서 직접 패키지를 다운로드.
 
 ### 5.1 자동 탐색 흐름
 
@@ -217,7 +253,7 @@ async def shell_exec(command: str, host: str = "localhost",
 async def web_search(query: str, limit: int = 5) -> str:
     """DuckDuckGo API 또는 SearXNG 인스턴스 사용."""
 ```
-- 기본: DuckDuckGo Instant Answer API (무료, API 키 불필요)
+- 기본: `duckduckgo-search` 라이브러리 (실제 웹 검색 결과 반환, API 키 불필요)
 - 선택: SearXNG 자체 호스팅 인스턴스 설정 가능
 
 ### 6.3 file_read / file_write
@@ -284,10 +320,10 @@ src/breadmind/
 │   ├── builtin.py        # 신규: shell_exec, web_search, file_read, file_write
 │   ├── mcp_client.py     # 신규: MCPClientManager (stdio + SSE)
 │   ├── mcp_protocol.py   # 신규: JSON-RPC 메시지 처리
-│   └── registry_search.py # 신규: RegistrySearchEngine (ClawHub + MCP Registry)
-├── tools/meta.py          # 신규: mcp_search, mcp_install 등 메타 도구
-├── config.py              # 수정: MCP 설정 추가
-└── main.py                # 수정: MCP 초기화 추가
+│   ├── registry_search.py # 신규: RegistrySearchEngine (ClawHub + MCP Registry)
+│   └── meta.py            # 신규: mcp_search, mcp_install 등 메타 도구
+├── config.py              # 수정: MCPConfig 데이터클래스 + load_mcp_config() 추가
+└── main.py                # 수정: MCP 초기화 + 빌트인 도구 등록 추가
 ```
 
 ## 11. Error Handling
@@ -304,7 +340,8 @@ src/breadmind/
 
 | 영역 | 기술 |
 |------|------|
-| MCP Protocol | JSON-RPC 2.0 over stdio/SSE |
+| MCP Protocol | JSON-RPC 2.0 over stdio/SSE (spec 2024-11-05) |
 | HTTP Client | aiohttp (기존 의존성) |
 | SSH | asyncssh (shell_exec remote) |
-| Web Search | DuckDuckGo API / SearXNG |
+| Web Search | duckduckgo-search 라이브러리 / SearXNG |
+| ClawHub CLI | clawhub (선택, 없으면 HTTP API fallback) |
