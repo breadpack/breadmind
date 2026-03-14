@@ -24,9 +24,28 @@ class DatabaseConfig:
         return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.name}"
 
 @dataclass
+class RegistryConfigItem:
+    name: str
+    type: str
+    enabled: bool = True
+    url: str | None = None
+
+@dataclass
+class MCPConfig:
+    auto_discover: bool = True
+    max_restart_attempts: int = 3
+    servers: dict = field(default_factory=dict)
+    registries: list[RegistryConfigItem] = field(default_factory=lambda: [
+        RegistryConfigItem(name="clawhub", type="clawhub", enabled=True),
+        RegistryConfigItem(name="mcp-registry", type="mcp_registry", enabled=True,
+                           url="https://registry.modelcontextprotocol.io"),
+    ])
+
+@dataclass
 class AppConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
+    mcp: MCPConfig = field(default_factory=MCPConfig)
 
 def load_config(config_dir: str = "config") -> AppConfig:
     config_path = Path(config_dir) / "config.yaml"
@@ -42,9 +61,21 @@ def load_config(config_dir: str = "config") -> AppConfig:
     llm_raw = raw.get("llm", {})
     db_raw = raw.get("database", {})
 
+    mcp_raw = raw.get("mcp", {})
+    mcp_config = MCPConfig()
+    if mcp_raw:
+        mcp_config.auto_discover = mcp_raw.get("auto_discover", True)
+        mcp_config.max_restart_attempts = mcp_raw.get("max_restart_attempts", 3)
+        mcp_config.servers = mcp_raw.get("servers", {})
+        if "registries" in mcp_raw:
+            mcp_config.registries = [
+                RegistryConfigItem(**r) for r in mcp_raw["registries"]
+            ]
+
     return AppConfig(
         llm=LLMConfig(**{k: v for k, v in llm_raw.items() if k in LLMConfig.__dataclass_fields__}),
         database=DatabaseConfig(**{k: v for k, v in db_raw.items() if k in DatabaseConfig.__dataclass_fields__}),
+        mcp=mcp_config,
     )
 
 def _expand_env(obj):
