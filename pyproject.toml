@@ -17,6 +17,8 @@ dependencies = [
     "aiohttp>=3.11.0",
     "fastapi>=0.115.0",
     "uvicorn>=0.32.0",
+    "duckduckgo-search>=7.0.0",
+    "asyncssh>=2.17.0",
 ]
 
 [project.optional-dependencies]
