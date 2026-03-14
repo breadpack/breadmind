@@ -637,6 +637,51 @@ class WebApp:
             # Only return categories that have results
             return {"categories": [c for c in filled if c.get("servers")]}
 
+        @app.get("/api/mcp/server-detail")
+        async def mcp_detail(source: str = "", slug: str = ""):
+            """Get detailed info for an MCP server."""
+            import aiohttp
+            detail = {"slug": slug, "source": source, "name": slug, "description": "", "version": "", "website": "", "repository": "", "install_command": ""}
+            try:
+                if source == "clawhub":
+                    detail["website"] = f"https://clawhub.ai/skills/{slug}"
+                    detail["install_command"] = f"clawhub install {slug}"
+                    # Fetch basic info from search
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(
+                            "https://clawhub.ai/api/search",
+                            params={"q": slug, "limit": 1},
+                            timeout=aiohttp.ClientTimeout(total=10),
+                        ) as resp:
+                            if resp.status == 200:
+                                data = await resp.json()
+                                for r in data.get("results", []):
+                                    if r.get("slug") == slug:
+                                        detail["name"] = r.get("displayName", slug)
+                                        detail["description"] = r.get("summary", "")
+                                        detail["version"] = r.get("version") or ""
+                                        break
+
+                elif source == "mcp_registry":
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(
+                            f"https://registry.modelcontextprotocol.io/v0.1/servers/{slug}/versions/latest",
+                            timeout=aiohttp.ClientTimeout(total=10),
+                        ) as resp:
+                            if resp.status == 200:
+                                data = await resp.json()
+                                srv = data.get("server", data)
+                                detail["name"] = srv.get("title", srv.get("name", slug))
+                                detail["description"] = srv.get("description", "")
+                                detail["version"] = srv.get("version", "")
+                                detail["website"] = srv.get("websiteUrl", "")
+                                repo = srv.get("repository", {})
+                                detail["repository"] = repo.get("url", "") if isinstance(repo, dict) else ""
+                                detail["install_command"] = f"npx -y {slug}"
+            except Exception as e:
+                logger.warning(f"Failed to fetch detail for {source}/{slug}: {e}")
+            return {"detail": detail}
+
         @app.post("/api/mcp/install/analyze")
         async def mcp_install_analyze(request: Request):
             if not self._mcp_store:

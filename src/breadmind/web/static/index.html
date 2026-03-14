@@ -207,6 +207,17 @@
         /* Install Assistant */
         .store-right h3 { color:#e2e8f0; margin:0 0 12px 0; font-size:15px; }
         .install-welcome { color:#64748b; text-align:center; padding:40px 0; }
+        .detail-panel { margin-bottom:16px; }
+        .detail-name { font-size:18px; font-weight:700; color:#e2e8f0; margin-bottom:4px; }
+        .detail-meta { display:flex; gap:8px; margin:8px 0; flex-wrap:wrap; }
+        .detail-badge { background:#1e293b; color:#60a5fa; padding:3px 10px; border-radius:4px; font-size:11px; }
+        .detail-desc { color:#94a3b8; font-size:13px; line-height:1.6; margin:12px 0; }
+        .detail-links { display:flex; gap:8px; margin:12px 0; }
+        .detail-link { color:#60a5fa; font-size:12px; text-decoration:none; }
+        .detail-link:hover { text-decoration:underline; }
+        .detail-cmd { background:#0f1923; border:1px solid #2d3748; border-radius:6px; padding:8px 12px; font-family:monospace; font-size:12px; color:#94a3b8; margin:8px 0; word-break:break-all; }
+        .detail-actions { display:flex; gap:8px; margin-top:12px; }
+        .detail-divider { border:none; border-top:1px solid #1e293b; margin:16px 0; }
         .install-msg { padding:8px 12px; border-radius:8px; margin-bottom:8px; font-size:13px; line-height:1.5; }
         .install-msg.system { background:#1e293b; color:#94a3b8; }
         .install-msg.assistant { background:#1e3a5f; color:#93c5fd; }
@@ -1344,6 +1355,37 @@
         }
 
         // MCP Store
+        async function showDetail(slug, name, source) {
+            const messages = document.getElementById('install-messages');
+            const actions = document.getElementById('install-actions');
+            messages.innerHTML = '<div class="install-msg system">Loading details...</div>';
+            actions.style.display = 'none';
+            try {
+                const resp = await fetch('/api/mcp/server-detail?source=' + encodeURIComponent(source) + '&slug=' + encodeURIComponent(slug));
+                const data = await resp.json();
+                const d = data.detail || {};
+                let html = '<div class="detail-panel">';
+                html += '<div class="detail-name">' + escapeHtml(d.name || slug) + '</div>';
+                html += '<div class="detail-meta">';
+                html += '<span class="detail-badge">' + escapeHtml(d.source) + '</span>';
+                if (d.version) html += '<span class="detail-badge">v' + escapeHtml(d.version) + '</span>';
+                html += '</div>';
+                html += '<div class="detail-desc">' + escapeHtml(d.description || 'No description available.') + '</div>';
+                html += '<div class="detail-links">';
+                if (d.website) html += '<a class="detail-link" href="' + escapeHtml(d.website) + '" target="_blank">Website</a>';
+                if (d.repository) html += '<a class="detail-link" href="' + escapeHtml(d.repository) + '" target="_blank">Repository</a>';
+                html += '</div>';
+                if (d.install_command) html += '<div class="detail-cmd">' + escapeHtml(d.install_command) + '</div>';
+                html += '<div class="detail-actions">';
+                html += '<button class="btn-install" onclick="startInstall(\'' + escapeHtml(slug) + '\', \'' + escapeHtml(d.name || slug) + '\', \'' + escapeHtml((d.description||'').replace(/'/g,"\\'").substring(0,100)) + '\', \'' + escapeHtml(source) + '\', \'' + escapeHtml((d.install_command||'').replace(/'/g,"\\'")) + '\')">Install</button>';
+                html += '</div>';
+                html += '</div><hr class="detail-divider">';
+                messages.innerHTML = html;
+            } catch(e) {
+                messages.innerHTML = '<div class="install-msg error">Failed to load details.</div>';
+            }
+        }
+
         async function startInstall(slug, name, description, source, installCommand) {
             const panel = document.getElementById('install-panel');
             const messages = document.getElementById('install-messages');
@@ -1474,11 +1516,10 @@
                     (c.servers || []).forEach(function(r) {
                         var desc = (r.description || 'No description').replace(/'/g, "\\'");
                         var cmd = (r.install_command || '').replace(/'/g, "\\'");
-                        html += '<div class="server-card">' +
+                        html += '<div class="server-card" style="cursor:pointer;" onclick="showDetail(\'' + escapeHtml(r.slug) + '\', \'' + escapeHtml(r.name) + '\', \'' + escapeHtml(r.source) + '\')">' +
                             '<div class="server-name">' + escapeHtml(r.name) + '</div>' +
                             '<div class="server-desc">' + escapeHtml(r.description || '').substring(0, 100) + '</div>' +
                             '<div class="server-meta"><span class="server-source">' + escapeHtml(r.source) + '</span></div>' +
-                            '<button class="btn-install" onclick="startInstall(\'' + escapeHtml(r.slug) + '\', \'' + escapeHtml(r.name) + '\', \'' + desc.substring(0,100) + '\', \'' + escapeHtml(r.source) + '\', \'' + cmd + '\')">Install</button>' +
                             '</div>';
                     });
                     html += '</div>';
@@ -1523,13 +1564,10 @@
             }
 
             container.innerHTML = data.results.map(function(r) {
-                const desc = (r.description || 'No description').replace(/'/g, "\\'");
-                const cmd = (r.install_command || '').replace(/'/g, "\\'");
-                return '<div class="server-card">' +
+                return '<div class="server-card" style="cursor:pointer;" onclick="showDetail(\'' + escapeHtml(r.slug) + '\', \'' + escapeHtml(r.name) + '\', \'' + escapeHtml(r.source) + '\')">' +
                     '<div class="server-name">' + escapeHtml(r.name) + '</div>' +
                     '<div class="server-desc">' + escapeHtml(r.description || 'No description') + '</div>' +
                     '<div class="server-meta"><span class="server-source">' + escapeHtml(r.source) + '</span></div>' +
-                    '<button class="btn-install" onclick="startInstall(\'' + escapeHtml(r.slug) + '\', \'' + escapeHtml(r.name) + '\', \'' + desc + '\', \'' + escapeHtml(r.source) + '\', \'' + cmd + '\')">Install</button>' +
                     '</div>';
             }).join('');
         }
