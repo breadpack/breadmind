@@ -641,16 +641,17 @@ class WebApp:
         async def mcp_detail(source: str = "", slug: str = ""):
             """Get detailed info for an MCP server."""
             import aiohttp
-            detail = {"slug": slug, "source": source, "name": slug, "description": "", "version": "", "website": "", "repository": "", "install_command": ""}
+            detail = {"slug": slug, "source": source, "name": slug, "description": "", "version": "",
+                      "website": "", "repository": "", "install_command": "",
+                      "trust": {"level": "community", "verified": False, "official": False, "owner": "", "has_repo": False, "updated_at": ""}}
             try:
                 if source == "clawhub":
                     detail["website"] = f"https://clawhub.ai/skills/{slug}"
                     detail["install_command"] = f"clawhub install {slug}"
-                    # Fetch basic info from search
                     async with aiohttp.ClientSession() as session:
                         async with session.get(
                             "https://clawhub.ai/api/search",
-                            params={"q": slug, "limit": 1},
+                            params={"q": slug, "limit": 5},
                             timeout=aiohttp.ClientTimeout(total=10),
                         ) as resp:
                             if resp.status == 200:
@@ -660,7 +661,25 @@ class WebApp:
                                         detail["name"] = r.get("displayName", slug)
                                         detail["description"] = r.get("summary", "")
                                         detail["version"] = r.get("version") or ""
+                                        # Trust info from ClawHub
+                                        updated = r.get("updatedAt")
+                                        if updated:
+                                            from datetime import datetime, timezone
+                                            try:
+                                                dt = datetime.fromtimestamp(updated / 1000, tz=timezone.utc)
+                                                detail["trust"]["updated_at"] = dt.strftime("%Y-%m-%d")
+                                            except Exception:
+                                                pass
                                         break
+                        # Check owner via page URL pattern
+                        detail["trust"]["owner"] = "clawhub"
+                        # Official ClawHub skills are under @skills owner
+                        if slug.startswith("openclaw") or slug in ("docker-essentials", "git-essentials", "kubernetes-devops"):
+                            detail["trust"]["official"] = True
+                            detail["trust"]["verified"] = True
+                            detail["trust"]["level"] = "official"
+                        else:
+                            detail["trust"]["level"] = "community"
 
                 elif source == "mcp_registry":
                     async with aiohttp.ClientSession() as session:
@@ -678,6 +697,18 @@ class WebApp:
                                 repo = srv.get("repository", {})
                                 detail["repository"] = repo.get("url", "") if isinstance(repo, dict) else ""
                                 detail["install_command"] = f"npx -y {slug}"
+                                # Trust info from MCP Registry _meta
+                                meta = data.get("_meta", {})
+                                official_meta = meta.get("io.modelcontextprotocol.registry/official", {})
+                                if official_meta.get("status") == "active":
+                                    detail["trust"]["verified"] = True
+                                    detail["trust"]["official"] = True
+                                    detail["trust"]["level"] = "verified"
+                                detail["trust"]["has_repo"] = bool(detail["repository"])
+                                detail["trust"]["owner"] = repo.get("source", "") if isinstance(repo, dict) else ""
+                                updated = official_meta.get("updatedAt", "")
+                                if updated:
+                                    detail["trust"]["updated_at"] = updated[:10]
             except Exception as e:
                 logger.warning(f"Failed to fetch detail for {source}/{slug}: {e}")
             return {"detail": detail}
