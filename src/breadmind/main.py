@@ -30,7 +30,7 @@ except ImportError:
     MetricsCollector = None
 
 try:
-    from breadmind.core.context import ContextBuilder
+    from breadmind.memory.context_builder import ContextBuilder
 except ImportError:
     ContextBuilder = None
 
@@ -274,12 +274,26 @@ async def run():
         except Exception:
             pass
 
+    # Wire ContextBuilder if available (must be before agent creation)
+    context_builder = None
+    if ContextBuilder is not None:
+        try:
+            context_builder = ContextBuilder(
+                working_memory=working_memory,
+                episodic_memory=episodic_memory,
+                semantic_memory=semantic_memory,
+                max_context_tokens=4000,
+            )
+        except Exception:
+            pass
+
     agent_kwargs = dict(
         provider=provider,
         tool_registry=registry,
         safety_guard=guard,
         max_turns=config.llm.tool_call_max_turns,
         tool_gap_detector=tool_gap_detector,
+        context_builder=context_builder,
     )
     if audit_logger is not None:
         agent_kwargs["audit_logger"] = audit_logger
@@ -289,14 +303,6 @@ async def run():
     # Wire metrics_collector to registry if supported
     if metrics_collector is not None and hasattr(registry, 'set_metrics_collector'):
         registry.set_metrics_collector(metrics_collector)
-
-    # Wire ContextBuilder if available
-    context_builder = None
-    if ContextBuilder is not None:
-        try:
-            context_builder = ContextBuilder(agent=agent)
-        except Exception:
-            pass
 
     builtin_count = len([t for t in registry.get_all_definitions() if registry.get_tool_source(t.name) == "builtin"])
     print("BreadMind v0.1.0 - AI Infrastructure Agent")

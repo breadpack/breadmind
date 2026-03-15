@@ -765,3 +765,45 @@ async def test_agent_triggers_tool_gap_detector_on_not_found():
         safety_guard=guard, tool_gap_detector=gap_detector)
     await agent.handle_message("do something", "user", "ch")
     gap_detector.check_and_resolve.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_agent_uses_context_builder():
+    from unittest.mock import AsyncMock, MagicMock
+    from breadmind.core.agent import CoreAgent
+    from breadmind.tools.registry import ToolRegistry
+    from breadmind.core.safety import SafetyGuard, SafetyResult
+    from breadmind.llm.base import LLMResponse, LLMMessage, TokenUsage
+
+    registry = MagicMock(spec=ToolRegistry)
+    registry.get_all_definitions.return_value = []
+
+    provider = AsyncMock()
+    provider.chat = AsyncMock(return_value=LLMResponse(
+        content="Hello!", tool_calls=[],
+        usage=TokenUsage(input_tokens=10, output_tokens=5),
+        stop_reason="end_turn"))
+
+    guard = MagicMock(spec=SafetyGuard)
+
+    context_builder = AsyncMock()
+    context_builder.build_context = AsyncMock(return_value=[
+        LLMMessage(role="system", content="User prefers Korean responses"),
+        LLMMessage(role="system", content="Known infra: k8s cluster at 192.168.1.10"),
+    ])
+
+    agent = CoreAgent(provider=provider, tool_registry=registry,
+                      safety_guard=guard, context_builder=context_builder)
+    result = await agent.handle_message("hi", "user1", "ch1")
+
+    # Verify context_builder was called
+    context_builder.build_context.assert_called_once()
+
+    # Verify enrichment was included in LLM call
+    call_args = provider.chat.call_args
+    messages = call_args.kwargs.get("messages") or call_args[1].get("messages") if len(call_args) > 1 else call_args.kwargs.get("messages")
+    if messages is None:
+        messages = call_args[0][0] if call_args[0] else []
+    # Should have system + enrichment + user message
+    system_msgs = [m for m in messages if m.role == "system"]
+    assert len(system_msgs) >= 2  # Original system + at least 1 enrichment
