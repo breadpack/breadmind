@@ -4,6 +4,8 @@ import logging
 import os
 import signal
 import sys
+
+logger = logging.getLogger(__name__)
 from breadmind.config import load_config, load_safety_config, get_default_config_dir, set_env_file_path, load_env_file
 from breadmind.core.agent import CoreAgent
 from breadmind.core.safety import SafetyGuard
@@ -169,6 +171,33 @@ async def run():
     for func in meta_tools.values():
         registry.register(func)
 
+    # Self-expansion components
+    from breadmind.core.performance import PerformanceTracker
+    from breadmind.core.skill_store import SkillStore
+    from breadmind.core.tool_gap import ToolGapDetector
+    from breadmind.core.team_builder import TeamBuilder
+    from breadmind.tools.meta import create_expansion_tools
+
+    performance_tracker = PerformanceTracker(db=db)
+    await performance_tracker.load_from_db()
+
+    skill_store = SkillStore(db=db, tracker=performance_tracker)
+    await skill_store.load_from_db()
+
+    tool_gap_detector = ToolGapDetector(
+        tool_registry=registry,
+        mcp_manager=mcp_manager,
+        search_engine=search_engine,
+    )
+
+    # Register expansion meta tools
+    expansion_tools = create_expansion_tools(
+        skill_store=skill_store,
+        tracker=performance_tracker,
+    )
+    for func in expansion_tools.values():
+        registry.register(func)
+
     # Initialize MCP Store
     mcp_store = None
     try:
@@ -229,6 +258,7 @@ async def run():
         tool_registry=registry,
         safety_guard=guard,
         max_turns=config.llm.tool_call_max_turns,
+        tool_gap_detector=tool_gap_detector,
     )
     if audit_logger is not None:
         agent_kwargs["audit_logger"] = audit_logger
@@ -302,6 +332,35 @@ async def run():
             from breadmind.tools.builtin import set_swarm_manager
             set_swarm_manager(swarm_manager, db)
 
+            # Wire self-expansion components into swarm manager
+            swarm_manager.set_tracker(performance_tracker)
+            swarm_manager.set_skill_store(skill_store)
+            team_builder = TeamBuilder(swarm_manager, performance_tracker, skill_store, agent.handle_message)
+            swarm_manager.set_team_builder(team_builder)
+
+            # Periodic flush of expansion data
+            async def _flush_expansion_data():
+                while True:
+                    await asyncio.sleep(300)  # 5 minutes
+                    try:
+                        await performance_tracker.flush_to_db()
+                        await skill_store.flush_to_db()
+                        # Auto-cleanup underperforming auto-created roles
+                        if swarm_manager and performance_tracker:
+                            for role_info in swarm_manager.get_available_roles():
+                                name = role_info["role"]
+                                member = swarm_manager._roles.get(name)
+                                if not member or getattr(member, 'source', 'manual') != "auto":
+                                    continue
+                                stats = performance_tracker.get_role_stats(name)
+                                if stats and stats.total_runs > 0 and stats.success_rate < 0.2:
+                                    swarm_manager.remove_role(name)
+                                    logger.info(f"Auto-removed underperforming role '{name}' (success={stats.success_rate:.0%})")
+                    except Exception as e:
+                        logger.error(f"Expansion data flush error: {e}")
+
+            asyncio.create_task(_flush_expansion_data())
+
             web_app = WebApp(
                 message_handler=agent.handle_message,
                 tool_registry=registry,
@@ -317,6 +376,8 @@ async def run():
                 safety_guard=guard,
                 working_memory=working_memory,
                 swarm_manager=swarm_manager,
+                skill_store=skill_store,
+                performance_tracker=performance_tracker,
             )
             print(f"  Starting web server on {web_host}:{web_port}")
             server_config = uvicorn.Config(
