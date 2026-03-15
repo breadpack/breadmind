@@ -53,6 +53,7 @@ class CoreAgent:
         self._behavior_prompt = behavior_prompt
         self._notifications: list[str] = []
         self._behavior_tracker: object | None = None
+        self._progress_callback: object | None = None
 
         # If behavior_prompt provided, rebuild system_prompt with it
         if behavior_prompt is not None:
@@ -114,6 +115,17 @@ class CoreAgent:
 
     def set_behavior_tracker(self, tracker):
         self._behavior_tracker = tracker
+
+    def set_progress_callback(self, callback):
+        """Set async callback for progress updates: callback(status, detail)."""
+        self._progress_callback = callback
+
+    async def _notify_progress(self, status: str, detail: str = ""):
+        if self._progress_callback:
+            try:
+                await self._progress_callback(status, detail)
+            except Exception:
+                pass
 
     def get_usage(self) -> dict[str, int]:
         return dict(self._total_usage)
@@ -201,7 +213,10 @@ class CoreAgent:
         # Enrich context with episodic/semantic memory if available
         if self._context_builder:
             try:
-                enrichment = await self._context_builder.build_context(session_id, message)
+                enrichment = await asyncio.wait_for(
+                    self._context_builder.build_context(session_id, message),
+                    timeout=10,
+                )
                 # Extract only the enrichment system messages (not conversation history)
                 context_msgs = [m for m in enrichment if m.role == "system" and m.content and m.content != self._system_prompt]
                 if context_msgs:
@@ -221,6 +236,8 @@ class CoreAgent:
                 except Exception:
                     logger.exception("Summarizer error, using original messages")
                     chat_messages = messages
+
+            await self._notify_progress("thinking", "")
 
             t0 = time.monotonic()
             try:
@@ -331,23 +348,27 @@ class CoreAgent:
                         self._audit_logger.log_approval_request(user, channel, tc.name, "pending")
                     continue
 
-                # Check cooldown
-                cooldown_target = f"{user}:{channel}"
-                if not self._guard.check_cooldown(cooldown_target, tc.name):
-                    tool_msg = LLMMessage(
-                        role="tool",
-                        content=f"[success=False] COOLDOWN: {tc.name} is in cooldown. Please wait before retrying.",
-                        tool_call_id=tc.id, name=tc.name,
-                    )
-                    messages.append(tool_msg)
-                    if self._working_memory is not None:
-                        self._working_memory.add_message(session_id, tool_msg)
-                    continue
+                # Check cooldown (only for automated/monitoring channels)
+                if channel.startswith("system:") or channel.startswith("monitoring:"):
+                    cooldown_target = f"{user}:{channel}"
+                    if not self._guard.check_cooldown(cooldown_target, tc.name):
+                        tool_msg = LLMMessage(
+                            role="tool",
+                            content=f"[success=False] COOLDOWN: {tc.name} is in cooldown. Please wait before retrying.",
+                            tool_call_id=tc.id, name=tc.name,
+                        )
+                        messages.append(tool_msg)
+                        if self._working_memory is not None:
+                            self._working_memory.add_message(session_id, tool_msg)
+                        continue
 
                 executable_calls.append(tc)
 
             # Execute allowed tool calls in parallel
             if executable_calls:
+                tool_names = ", ".join(tc.name for tc in executable_calls)
+                await self._notify_progress("tool_call", tool_names)
+
                 async def _execute_one(tc: ToolCall) -> tuple[ToolCall, str, float]:
                     t_start = time.monotonic()
                     try:

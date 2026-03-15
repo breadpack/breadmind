@@ -1,0 +1,15 @@
+{
+  "apikey:GEMINI_API_KEY": {
+    "encrypted": "gAAAAABptlrYJx_E5GF4-kSL1Wxh7xD0hrUufAn00MSb8ah8sBFcfhMm2FZy76hELIfoBtHTqVyVdwALrpUCsWvsxsq2GKf5ZI0FxOYosZUsOVxrUKFQcWDU8y4MieD3jBN8Y23cfgxI",
+    "key_name": "GEMINI_API_KEY"
+  },
+  "llm": {
+    "default_provider": "gemini",
+    "default_model": "gemini-3.1-flash-lite-preview",
+    "tool_call_max_turns": 10,
+    "tool_call_timeout_seconds": 30
+  },
+  "setup_completed": {
+    "completed": true
+  }
+}

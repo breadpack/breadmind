@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import TYPE_CHECKING
 
@@ -51,12 +52,14 @@ class ContextBuilder:
         semantic_memory: SemanticMemory | None = None,
         profiler: UserProfiler | None = None,
         max_context_tokens: int = 4000,
+        skill_store=None,
     ):
         self._working = working_memory
         self._episodic = episodic_memory
         self._semantic = semantic_memory
         self._profiler = profiler
         self._max_context_tokens = max_context_tokens
+        self._skill_store = skill_store
 
     async def build_context(
         self, session_id: str, current_message: str
@@ -78,25 +81,52 @@ class ContextBuilder:
         if self._episodic:
             keywords = self._extract_keywords(current_message)
             if keywords:
-                episodes = await self._episodic.search_by_keywords(keywords, limit=5)
-                if episodes:
-                    context_text = "Relevant past experiences:\n" + "\n".join(
-                        e.content for e in episodes
+                try:
+                    episodes = await asyncio.wait_for(
+                        self._episodic.search_by_keywords(keywords, limit=5),
+                        timeout=5,
                     )
-                    messages.append(LLMMessage(role="system", content=context_text))
+                    if episodes:
+                        context_text = "Relevant past experiences:\n" + "\n".join(
+                            e.content for e in episodes
+                        )
+                        messages.append(LLMMessage(role="system", content=context_text))
+                except (asyncio.TimeoutError, Exception):
+                    pass
 
         # 3. Related KG entities
         if self._semantic:
             keywords = self._extract_keywords(current_message)
             if keywords:
-                entities = await self._semantic.get_context_for_query(
-                    keywords, limit=5
-                )
-                if entities:
-                    kg_text = "Known infrastructure context:\n" + "\n".join(
-                        f"- {e.name}: {e.properties}" for e in entities
+                try:
+                    entities = await asyncio.wait_for(
+                        self._semantic.get_context_for_query(keywords, limit=5),
+                        timeout=5,
                     )
-                    messages.append(LLMMessage(role="system", content=kg_text))
+                    if entities:
+                        kg_text = "Known infrastructure context:\n" + "\n".join(
+                            f"- {e.name}: {e.properties}" for e in entities
+                        )
+                        messages.append(LLMMessage(role="system", content=kg_text))
+                except (asyncio.TimeoutError, Exception):
+                    pass
+
+        # 3.5 Matching installed skills
+        if self._skill_store:
+            try:
+                matching_skills = await self._skill_store.find_matching_skills(
+                    current_message, limit=2
+                )
+                for skill in matching_skills:
+                    if skill.prompt_template:
+                        skill_text = (
+                            f"## Active Skill: {skill.name}\n"
+                            f"{skill.description}\n\n"
+                            f"{skill.prompt_template[:3000]}"
+                        )
+                        messages.append(LLMMessage(role="system", content=skill_text))
+            except Exception:
+                pass
 
         # 4. Conversation history from working memory
         history = self._working.get_messages(session_id)

@@ -349,7 +349,6 @@ require_approval:
   - mcp_uninstall
   - pve_create_vm
   - k8s_apply_manifest
-  - shell_exec
 YAML
     ok "Created $CONFIG_DIR/safety.yaml"
   fi

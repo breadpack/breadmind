@@ -27,21 +27,23 @@ class EmbeddingService:
         self._model_name = model_name
         self._ollama_base_url = ollama_base_url
         self._backend: str | None = None  # resolved backend
+        self._resolved: bool = False  # True once resolution attempted
         self._local_model: Any = None
         self._cache: dict[str, list[float]] = {}
         self._max_cache = 500
         self._dimensions: int = 384  # updated when backend resolves
 
     def is_available(self) -> bool:
-        if self._backend is not None:
-            return True
+        if self._resolved:
+            return self._backend is not None
         self._resolve_backend()
         return self._backend is not None
 
     def _resolve_backend(self) -> None:
         """Resolve which embedding backend to use."""
-        if self._backend is not None:
+        if self._resolved:
             return
+        self._resolved = True
 
         if self._provider in ("gemini", "auto") and self._api_key:
             try:
@@ -67,13 +69,27 @@ class EmbeddingService:
 
         if self._provider in ("ollama", "auto"):
             try:
-                import aiohttp  # noqa: F401
+                import aiohttp
+                # Quick connectivity check before committing to ollama
+                import socket
+                host = self._ollama_base_url.replace("http://", "").replace("https://", "")
+                h, _, p = host.partition(":")
+                port = int(p) if p else 11434
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(1)
+                try:
+                    sock.connect((h, port))
+                    sock.close()
+                except (socket.timeout, ConnectionRefusedError, OSError):
+                    sock.close()
+                    logger.info("Ollama not reachable, skipping")
+                    raise ConnectionError("Ollama not reachable")
                 self._backend = "ollama"
                 self._model_name = self._model_name or "nomic-embed-text"
                 self._dimensions = 768
                 logger.info(f"Embedding backend: Ollama ({self._model_name})")
                 return
-            except ImportError:
+            except (ImportError, ConnectionError):
                 pass
 
         if self._provider in ("local", "auto"):
