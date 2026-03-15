@@ -713,3 +713,76 @@ class TestAutoPromote:
         cb = ContextBuilder(working_memory=None)
         result = await cb.auto_promote()
         assert result == {"episodic_notes": 0, "semantic_entities": 0}
+
+
+# =========================================================================
+# Importance Detection
+# =========================================================================
+
+class TestImportanceDetection:
+    def test_detects_remember_keyword(self):
+        from breadmind.memory.context_builder import ContextBuilder
+        from breadmind.memory.working import WorkingMemory
+        from breadmind.llm.base import LLMMessage
+
+        wm = WorkingMemory()
+        cb = ContextBuilder(working_memory=wm)
+        session = wm.get_or_create_session("test:imp", user="u", channel="c")
+        wm.add_message("test:imp", LLMMessage(role="user", content="이거 기억해줘: 포트 8443 사용"))
+        assert cb._has_important_content(session) is True
+
+    def test_no_importance_in_casual(self):
+        from breadmind.memory.context_builder import ContextBuilder
+        from breadmind.memory.working import WorkingMemory
+        from breadmind.llm.base import LLMMessage
+
+        wm = WorkingMemory()
+        cb = ContextBuilder(working_memory=wm)
+        session = wm.get_or_create_session("test:cas", user="u", channel="c")
+        wm.add_message("test:cas", LLMMessage(role="user", content="안녕하세요"))
+        assert cb._has_important_content(session) is False
+
+
+# =========================================================================
+# Auto Promote Enhanced
+# =========================================================================
+
+class TestAutoPromoteEnhanced:
+    @pytest.mark.asyncio
+    async def test_force_promote_short_session(self):
+        from breadmind.memory.working import WorkingMemory
+        from breadmind.memory.episodic import EpisodicMemory
+        from breadmind.memory.context_builder import ContextBuilder
+        from breadmind.llm.base import LLMMessage
+
+        wm = WorkingMemory()
+        em = EpisodicMemory()
+        cb = ContextBuilder(working_memory=wm, episodic_memory=em)
+
+        # Short session (3 messages) but forced
+        wm.get_or_create_session("test:force", user="u", channel="c")
+        wm.add_message("test:force", LLMMessage(role="user", content="배포 설정 변경해줘"))
+        wm.add_message("test:force", LLMMessage(role="assistant", content="변경했습니다"))
+        wm.add_message("test:force", LLMMessage(role="user", content="감사"))
+
+        result = await cb.auto_promote(message_threshold=10, force_session_ids=["test:force"])
+        assert result["episodic_notes"] >= 1
+
+    @pytest.mark.asyncio
+    async def test_importance_promotes_short_session(self):
+        from breadmind.memory.working import WorkingMemory
+        from breadmind.memory.episodic import EpisodicMemory
+        from breadmind.memory.context_builder import ContextBuilder
+        from breadmind.llm.base import LLMMessage
+
+        wm = WorkingMemory()
+        em = EpisodicMemory()
+        cb = ContextBuilder(working_memory=wm, episodic_memory=em)
+
+        # Short session with important content
+        wm.get_or_create_session("test:important", user="u", channel="c")
+        wm.add_message("test:important", LLMMessage(role="user", content="항상 rolling update로 배포해줘. 기억해."))
+        wm.add_message("test:important", LLMMessage(role="assistant", content="기억했습니다."))
+
+        result = await cb.auto_promote(message_threshold=10)
+        assert result["episodic_notes"] >= 1

@@ -220,8 +220,13 @@ class ContextBuilder:
 
         return created_entities
 
-    async def auto_promote(self, message_threshold: int = 10) -> dict:
+    async def auto_promote(self, message_threshold: int = 10, force_session_ids: list[str] | None = None) -> dict:
         """Automatically promote qualifying sessions to episodic, then to semantic.
+
+        Triggers:
+        1. Sessions with >= message_threshold messages
+        2. Forced sessions (e.g., on session close)
+        3. Sessions with high-importance content (explicit memory requests, config changes)
 
         Returns summary of what was promoted.
         """
@@ -232,28 +237,59 @@ class ContextBuilder:
         if not self._working:
             return promoted
 
-        # Phase 1: Promote qualifying working memory sessions to episodic
-        new_notes = []
         session_ids = list(self._working._sessions.keys())
-        for session_id in session_ids:
-            try:
-                note = await self.promote_to_episodic(session_id, message_threshold)
-                if note:
-                    new_notes.append(note)
-                    promoted["episodic_notes"] += 1
-            except Exception as e:
-                logging.getLogger(__name__).warning(
-                    f"Failed to promote session {session_id}: {e}"
-                )
 
-        # Phase 2: Promote new episodic notes to semantic (extract entities)
-        if new_notes and self._semantic:
+        for session_id in session_ids:
+            session = self._working._sessions.get(session_id)
+            if not session:
+                continue
+
+            msg_count = len(session.messages)
+            should_promote = False
+
+            # Trigger 1: Message count threshold
+            if msg_count >= message_threshold:
+                should_promote = True
+
+            # Trigger 2: Forced (session close)
+            if force_session_ids and session_id in force_session_ids:
+                should_promote = True
+
+            # Trigger 3: Importance detection — check for memory-worthy keywords
+            if not should_promote and msg_count >= 2:
+                should_promote = self._has_important_content(session)
+
+            if should_promote:
+                try:
+                    note = await self.promote_to_episodic(session_id, message_threshold=1)
+                    if note:
+                        promoted["episodic_notes"] += 1
+                except Exception as e:
+                    logging.getLogger(__name__).warning(f"Failed to promote session {session_id}: {e}")
+
+        # Phase 2: Promote new episodic notes to semantic
+        if promoted["episodic_notes"] > 0 and self._semantic:
             try:
-                entities = await self.promote_to_semantic(new_notes)
-                promoted["semantic_entities"] = len(entities) if entities else 0
+                all_notes = await self._episodic.get_all_notes() if self._episodic else []
+                recent = all_notes[-promoted["episodic_notes"]:] if all_notes else []
+                if recent:
+                    entities = await self.promote_to_semantic(recent)
+                    promoted["semantic_entities"] = len(entities) if entities else 0
             except Exception as e:
-                logging.getLogger(__name__).warning(
-                    f"Failed to promote to semantic: {e}"
-                )
+                logging.getLogger(__name__).warning(f"Failed to promote to semantic: {e}")
 
         return promoted
+
+    def _has_important_content(self, session) -> bool:
+        """Check if a session contains memory-worthy content even if short."""
+        importance_markers = [
+            "기억", "remember", "잊지", "don't forget", "항상", "always",
+            "설정", "config", "변경", "change", "배포", "deploy",
+            "preference", "선호", "default", "기본",
+        ]
+        for msg in session.messages:
+            if msg.content:
+                content_lower = msg.content.lower()
+                if any(marker in content_lower for marker in importance_markers):
+                    return True
+        return False
