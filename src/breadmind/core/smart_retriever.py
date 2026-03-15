@@ -34,6 +34,11 @@ _STOPWORDS = frozenset({
 _WORD_PATTERN = re.compile(r"[a-zA-Z0-9._-]+")
 
 
+def _rrf_score(rank: int, k: int = 60) -> float:
+    """Reciprocal Rank Fusion score. k=60 is the standard constant."""
+    return 1.0 / (rank + k)
+
+
 def extract_keywords(text: str) -> list[str]:
     """Extract keywords from text, filtering stopwords."""
     words = _WORD_PATTERN.findall(text.lower())
@@ -83,58 +88,53 @@ class SmartRetriever:
     async def retrieve_skills(
         self, query: str, token_budget: int = 2000, limit: int = 5,
     ) -> list[ScoredSkill]:
-        """Retrieve most relevant skills using vector + KG search."""
-        candidates: dict[str, dict] = {}  # skill_name -> {vector_score, kg_score}
+        """Retrieve most relevant skills using vector + KG + keyword search with RRF."""
+        vector_ranked: list[tuple[str, float]] = []  # (skill_name, raw_score)
+        kg_ranked: list[tuple[str, float]] = []
+        keyword_ranked: list[tuple[str, float]] = []
 
-        # Step 1: Vector search
+        # Source 1: Vector search
         query_embedding = await self._embedding.encode(query)
         if query_embedding is not None:
-            vector_results = await self._vector_search_skills(
-                query_embedding, limit=10,
-            )
-            for skill_name, score in vector_results:
-                candidates.setdefault(skill_name, {"vector": 0.0, "kg": 0.0})
-                candidates[skill_name]["vector"] = score
+            vector_ranked = await self._vector_search_skills(query_embedding, limit=10)
 
-        # Step 2: KG search
-        kg_results = await self._kg_search_skills(query, limit=10)
-        for skill_name, score in kg_results:
-            candidates.setdefault(skill_name, {"vector": 0.0, "kg": 0.0})
-            candidates[skill_name]["kg"] = score
+        # Source 2: KG graph search
+        kg_ranked = await self._kg_search_skills(query, limit=10)
 
-        # Step 3: Fallback to keyword matching if no results
-        if not candidates:
+        # Source 3: Keyword search (always included, not just fallback)
+        keyword_ranked = await self._keyword_search_skills(query, limit=10)
+
+        # If all sources empty, use SkillStore fallback
+        if not vector_ranked and not kg_ranked and not keyword_ranked:
             return await self._keyword_fallback(query, token_budget, limit)
 
-        # Step 4: Merge and score
-        scored: list[ScoredSkill] = []
-        for skill_name, scores in candidates.items():
+        # RRF merge
+        rrf_scores: dict[str, float] = {}
+        sources: dict[str, set] = {}
+
+        for rank, (name, _) in enumerate(vector_ranked):
+            rrf_scores[name] = rrf_scores.get(name, 0) + _rrf_score(rank)
+            sources.setdefault(name, set()).add("vector")
+
+        for rank, (name, _) in enumerate(kg_ranked):
+            rrf_scores[name] = rrf_scores.get(name, 0) + _rrf_score(rank)
+            sources.setdefault(name, set()).add("kg")
+
+        for rank, (name, _) in enumerate(keyword_ranked):
+            rrf_scores[name] = rrf_scores.get(name, 0) + _rrf_score(rank)
+            sources.setdefault(name, set()).add("keyword")
+
+        # Build ScoredSkill list
+        scored = []
+        for skill_name, score in sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True):
             skill = await self._skill_store.get_skill(skill_name)
             if skill is None:
                 continue
-            v, k = scores["vector"], scores["kg"]
-            if v > 0 and k > 0:
-                merged = v * 0.6 + k * 0.4
-                source = "both"
-            elif v > 0:
-                merged = v * 0.6
-                source = "vector"
-            else:
-                merged = k * 0.4
-                source = "kg"
-            token_est = (
-                len(skill.prompt_template) // 4
-                if skill.prompt_template
-                else 0
-            )
-            scored.append(ScoredSkill(
-                skill=skill, score=merged,
-                token_estimate=token_est, source=source,
-            ))
+            src = sources.get(skill_name, set())
+            source_str = "+".join(sorted(src)) if len(src) > 1 else next(iter(src))
+            token_est = len(skill.prompt_template) // 4 if skill.prompt_template else 0
+            scored.append(ScoredSkill(skill=skill, score=score, token_estimate=token_est, source=source_str))
 
-        scored.sort(key=lambda s: s.score, reverse=True)
-
-        # Step 5: Token budget filtering
         return self._apply_token_budget(scored, token_budget, limit)
 
     async def retrieve_context(
@@ -391,6 +391,29 @@ class SmartRetriever:
             skill_scores.items(), key=lambda x: x[1], reverse=True,
         )
         return sorted_skills[:limit]
+
+    async def _keyword_search_skills(
+        self, query: str, limit: int = 10,
+    ) -> list[tuple[str, float]]:
+        """Search skills by keyword matching. Returns (skill_name, score) pairs."""
+        keywords = extract_keywords(query)
+        if not keywords:
+            return []
+
+        all_skills = await self._skill_store.list_skills()
+        scored = []
+        for skill in all_skills:
+            kw_set = set(k.lower() for k in (skill.trigger_keywords or []))
+            desc_words = set(skill.description.lower().split()) if skill.description else set()
+            query_set = set(keywords)
+            kw_matches = len(query_set & kw_set)
+            desc_matches = len(query_set & desc_words)
+            score = kw_matches * 2.0 + desc_matches
+            if score > 0:
+                scored.append((skill.name, score))
+
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored[:limit]
 
     async def _keyword_fallback(
         self, query: str, token_budget: int, limit: int,
