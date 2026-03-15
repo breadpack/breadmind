@@ -16,7 +16,8 @@ class WebApp:
     def __init__(self, message_handler: Callable | None = None, tool_registry=None, mcp_manager=None,
                  config=None, monitoring_engine=None, safety_config=None,
                  agent=None, audit_logger=None, metrics_collector=None, database=None,
-                 mcp_store=None, safety_guard=None, working_memory=None, message_router=None):
+                 mcp_store=None, safety_guard=None, working_memory=None, message_router=None,
+                 scheduler=None, subagent_manager=None, webhook_manager=None):
         self.app = FastAPI(title="BreadMind", version="0.1.0")
         self._message_handler = message_handler
         self._tool_registry = tool_registry
@@ -32,6 +33,9 @@ class WebApp:
         self._safety_guard = safety_guard
         self._working_memory = working_memory
         self._message_router = message_router
+        self._scheduler = scheduler
+        self._subagent_manager = subagent_manager
+        self._webhook_manager = webhook_manager
         self._connections: list[WebSocket] = []
         self._events: list[dict] = []
         self._lock = asyncio.Lock()
@@ -1238,6 +1242,194 @@ class WebApp:
                 return {"status": "manual", "message": "Please restart the service manually."}
             except Exception as e:
                 return {"status": "error", "message": str(e)}
+
+        # --- Scheduler endpoints ---
+
+        @app.get("/api/scheduler/status")
+        async def scheduler_status():
+            if not self._scheduler:
+                return {"status": {"running": False, "cron_jobs": 0, "heartbeats": 0, "total_runs": 0}}
+            return {"status": self._scheduler.get_status()}
+
+        @app.get("/api/scheduler/cron")
+        async def list_cron_jobs():
+            if not self._scheduler:
+                return {"jobs": []}
+            return {"jobs": self._scheduler.get_cron_jobs()}
+
+        @app.post("/api/scheduler/cron")
+        async def add_cron_job(request: Request):
+            if not self._scheduler:
+                return JSONResponse(status_code=503, content={"error": "Scheduler not configured"})
+            data = await request.json()
+            import uuid
+            job_id = data.get("id", str(uuid.uuid4())[:8])
+            from breadmind.core.scheduler import CronJob
+            job = CronJob(
+                id=job_id, name=data.get("name", ""), schedule=data.get("schedule", ""),
+                task=data.get("task", ""), enabled=data.get("enabled", True),
+                model=data.get("model"),
+            )
+            self._scheduler.add_cron_job(job)
+            # Persist to DB
+            if self._db:
+                try:
+                    jobs = self._scheduler.get_cron_jobs()
+                    await self._db.set_setting("scheduler_cron", jobs)
+                except Exception:
+                    pass
+            return {"status": "ok", "job": {"id": job_id, "name": job.name}}
+
+        @app.delete("/api/scheduler/cron/{job_id}")
+        async def delete_cron_job(job_id: str):
+            if not self._scheduler:
+                return JSONResponse(status_code=503, content={"error": "Scheduler not configured"})
+            removed = self._scheduler.remove_cron_job(job_id)
+            if self._db:
+                try:
+                    await self._db.set_setting("scheduler_cron", self._scheduler.get_cron_jobs())
+                except Exception:
+                    pass
+            return {"status": "ok" if removed else "not_found"}
+
+        @app.get("/api/scheduler/heartbeat")
+        async def list_heartbeats():
+            if not self._scheduler:
+                return {"heartbeats": []}
+            return {"heartbeats": self._scheduler.get_heartbeats()}
+
+        @app.post("/api/scheduler/heartbeat")
+        async def add_heartbeat(request: Request):
+            if not self._scheduler:
+                return JSONResponse(status_code=503, content={"error": "Scheduler not configured"})
+            data = await request.json()
+            import uuid
+            hb_id = data.get("id", str(uuid.uuid4())[:8])
+            from breadmind.core.scheduler import HeartbeatTask
+            hb = HeartbeatTask(
+                id=hb_id, name=data.get("name", ""), interval_minutes=data.get("interval_minutes", 30),
+                task=data.get("task", ""), enabled=data.get("enabled", True),
+            )
+            self._scheduler.add_heartbeat(hb)
+            if self._db:
+                try:
+                    await self._db.set_setting("scheduler_heartbeat", self._scheduler.get_heartbeats())
+                except Exception:
+                    pass
+            return {"status": "ok", "heartbeat": {"id": hb_id, "name": hb.name}}
+
+        @app.delete("/api/scheduler/heartbeat/{hb_id}")
+        async def delete_heartbeat(hb_id: str):
+            if not self._scheduler:
+                return JSONResponse(status_code=503, content={"error": "Scheduler not configured"})
+            removed = self._scheduler.remove_heartbeat(hb_id)
+            if self._db:
+                try:
+                    await self._db.set_setting("scheduler_heartbeat", self._scheduler.get_heartbeats())
+                except Exception:
+                    pass
+            return {"status": "ok" if removed else "not_found"}
+
+        # --- Sub-agent endpoints ---
+
+        @app.post("/api/subagent/spawn")
+        async def spawn_subagent(request: Request):
+            if not self._subagent_manager:
+                return JSONResponse(status_code=503, content={"error": "Sub-agent manager not configured"})
+            data = await request.json()
+            task = await self._subagent_manager.spawn(
+                task=data.get("task", ""),
+                parent_id=data.get("parent_id"),
+                model=data.get("model"),
+            )
+            return {"status": "ok", "task_id": task.id}
+
+        @app.get("/api/subagent/tasks")
+        async def list_subagent_tasks():
+            if not self._subagent_manager:
+                return {"tasks": []}
+            return {"tasks": self._subagent_manager.list_tasks()}
+
+        @app.get("/api/subagent/tasks/{task_id}")
+        async def get_subagent_task(task_id: str):
+            if not self._subagent_manager:
+                return JSONResponse(status_code=503, content={"error": "Sub-agent manager not configured"})
+            task = self._subagent_manager.get_task(task_id)
+            if not task:
+                return JSONResponse(status_code=404, content={"error": "Task not found"})
+            return {"task": task}
+
+        @app.get("/api/subagent/status")
+        async def subagent_status():
+            if not self._subagent_manager:
+                return {"status": {"total": 0, "pending": 0, "running": 0, "completed": 0, "failed": 0}}
+            return {"status": self._subagent_manager.get_status()}
+
+        # --- Webhook endpoints ---
+
+        @app.get("/api/webhook/endpoints")
+        async def list_webhook_endpoints():
+            if not self._webhook_manager:
+                return {"endpoints": []}
+            return {"endpoints": self._webhook_manager.get_endpoints()}
+
+        @app.post("/api/webhook/endpoints")
+        async def add_webhook_endpoint(request: Request):
+            if not self._webhook_manager:
+                return JSONResponse(status_code=503, content={"error": "Webhook manager not configured"})
+            data = await request.json()
+            import uuid
+            from breadmind.web.webhook import WebhookEndpoint
+            ep = WebhookEndpoint(
+                id=data.get("id", str(uuid.uuid4())[:8]),
+                name=data.get("name", ""),
+                path=data.get("path", ""),
+                event_type=data.get("event_type", "generic"),
+                action=data.get("action", "Webhook received: {payload}"),
+                enabled=data.get("enabled", True),
+                secret=data.get("secret", ""),
+            )
+            self._webhook_manager.add_endpoint(ep)
+            # Persist
+            if self._db:
+                try:
+                    await self._db.set_setting("webhook_endpoints", self._webhook_manager.get_endpoints())
+                except Exception:
+                    pass
+            return {"status": "ok", "endpoint": {"id": ep.id, "path": ep.path, "url": f"/api/webhook/receive/{ep.path}"}}
+
+        @app.delete("/api/webhook/endpoints/{endpoint_id}")
+        async def delete_webhook_endpoint(endpoint_id: str):
+            if not self._webhook_manager:
+                return JSONResponse(status_code=503, content={"error": "Webhook manager not configured"})
+            removed = self._webhook_manager.remove_endpoint(endpoint_id)
+            if self._db:
+                try:
+                    await self._db.set_setting("webhook_endpoints", self._webhook_manager.get_endpoints())
+                except Exception:
+                    pass
+            return {"status": "ok" if removed else "not_found"}
+
+        @app.post("/api/webhook/receive/{path:path}")
+        async def receive_webhook(path: str, request: Request):
+            """Universal webhook receiver — route to appropriate handler."""
+            if not self._webhook_manager:
+                return JSONResponse(status_code=503, content={"error": "Webhook not configured"})
+            try:
+                payload = await request.json()
+            except Exception:
+                payload = {"raw": (await request.body()).decode("utf-8", errors="replace")[:5000]}
+            headers = dict(request.headers)
+            result = await self._webhook_manager.handle_webhook(path, payload, headers)
+            if result.get("status") == "not_found":
+                return JSONResponse(status_code=404, content=result)
+            return result
+
+        @app.get("/api/webhook/log")
+        async def webhook_event_log():
+            if not self._webhook_manager:
+                return {"events": []}
+            return {"events": self._webhook_manager.get_event_log()}
 
         @app.websocket("/ws/chat")
         async def websocket_chat(websocket: WebSocket):

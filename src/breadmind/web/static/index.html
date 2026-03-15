@@ -868,6 +868,59 @@
                 html += `<div class="section-footer"><button class="save-btn" id="btn-monitoring-rules" onclick="saveMonitoringRules()">Save</button></div>`;
                 html += `</div>`;
 
+                // Scheduler
+                html += `<div class="settings-section">`;
+                html += `<h3>Scheduler</h3>`;
+                html += `<h4 style="color:#94a3b8;font-size:13px;margin:0 0 8px;">Cron Jobs</h4>`;
+                html += `<div id="cron-jobs-list"></div>`;
+                html += `<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">`;
+                html += `<input type="text" id="cron-name" class="setting-input" placeholder="Job name" style="width:120px;" />`;
+                html += `<input type="text" id="cron-schedule" class="setting-input" placeholder="0 9 * * 1 (cron)" style="width:140px;" />`;
+                html += `<input type="text" id="cron-task" class="setting-input" placeholder="Message to agent" style="flex:1;" />`;
+                html += `<button class="save-btn" onclick="addCronJob()">Add</button>`;
+                html += `</div>`;
+                html += `<h4 style="color:#94a3b8;font-size:13px;margin:16px 0 8px;">Heartbeats</h4>`;
+                html += `<div id="heartbeats-list"></div>`;
+                html += `<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">`;
+                html += `<input type="text" id="hb-name" class="setting-input" placeholder="Name" style="width:120px;" />`;
+                html += `<input type="number" id="hb-interval" class="setting-input" placeholder="30" style="width:80px;" min="1" />`;
+                html += `<span style="color:#64748b;font-size:12px;line-height:32px;">min</span>`;
+                html += `<input type="text" id="hb-task" class="setting-input" placeholder="Message to agent" style="flex:1;" />`;
+                html += `<button class="save-btn" onclick="addHeartbeat()">Add</button>`;
+                html += `</div>`;
+                html += `</div>`;
+
+                // Sub-agents
+                html += `<div class="settings-section">`;
+                html += `<h3>Sub-agents</h3>`;
+                html += `<div id="subagent-status" style="color:#94a3b8;font-size:12px;margin-bottom:8px;"></div>`;
+                html += `<div id="subagent-tasks-list"></div>`;
+                html += `<div style="display:flex;gap:8px;margin-top:8px;">`;
+                html += `<input type="text" id="subagent-task" class="setting-input" placeholder="Task to delegate..." style="flex:1;" />`;
+                html += `<button class="save-btn" onclick="spawnSubagent()">Spawn</button>`;
+                html += `</div>`;
+                html += `</div>`;
+
+                // Webhooks
+                html += `<div class="settings-section">`;
+                html += `<h3>Webhooks</h3>`;
+                html += `<div id="webhook-endpoints-list"></div>`;
+                html += `<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">`;
+                html += `<input type="text" id="wh-name" class="setting-input" placeholder="Name" style="width:100px;" />`;
+                html += `<input type="text" id="wh-path" class="setting-input" placeholder="github-pr" style="width:100px;" />`;
+                html += `<select id="wh-type" class="setting-select" style="width:100px;">`;
+                html += `<option value="generic">Generic</option>`;
+                html += `<option value="github">GitHub</option>`;
+                html += `<option value="gitlab">GitLab</option>`;
+                html += `<option value="ci">CI/CD</option>`;
+                html += `</select>`;
+                html += `<input type="text" id="wh-action" class="setting-input" placeholder="Agent message ({payload})" style="flex:1;" />`;
+                html += `<button class="save-btn" onclick="addWebhook()">Add</button>`;
+                html += `</div>`;
+                html += `<h4 style="color:#94a3b8;font-size:13px;margin:12px 0 8px;">Recent Events</h4>`;
+                html += `<div id="webhook-events-list" style="max-height:200px;overflow-y:auto;"></div>`;
+                html += `</div>`;
+
                 // Messenger Connections
                 html += `<div class="settings-section"><h3>Messenger Connections</h3>`;
                 html += `<div id="messenger-platforms-container"><div class="no-data">Loading messenger platforms...</div></div>`;
@@ -1220,6 +1273,200 @@
             renderSSHHosts();
             const baseDirEl = document.getElementById('tool-base-dir');
             if (baseDirEl) baseDirEl.value = sec.base_directory || '';
+
+            // Load Scheduler, Sub-agents, Webhooks
+            loadScheduler();
+            loadSubagents();
+            loadWebhooks();
+        }
+
+        // ── Scheduler ──
+        async function loadScheduler() {
+            // Cron jobs
+            try {
+                const resp = await fetch('/api/scheduler/cron');
+                const data = await resp.json();
+                const container = document.getElementById('cron-jobs-list');
+                if (data.jobs.length === 0) {
+                    container.innerHTML = '<div class="no-data" style="font-size:12px;color:#64748b;">No cron jobs configured.</div>';
+                } else {
+                    container.innerHTML = data.jobs.map(j =>
+                        '<div class="setting-row" style="font-size:12px;">' +
+                        '<span style="color:' + (j.enabled ? '#34d399' : '#fbbf24') + ';">●</span> ' +
+                        '<strong style="color:#e2e8f0;">' + escapeHtml(j.name) + '</strong> ' +
+                        '<code style="color:#60a5fa;">' + escapeHtml(j.schedule) + '</code> — ' +
+                        '<span style="color:#94a3b8;">' + escapeHtml(j.task).substring(0,40) + '</span>' +
+                        ' <span style="color:#64748b;">(runs: ' + j.run_count + ')</span>' +
+                        ' <button class="btn-sm btn-remove" onclick="deleteCronJob(\'' + j.id + '\')">×</button>' +
+                        '</div>'
+                    ).join('');
+                }
+            } catch(e) {}
+
+            // Heartbeats
+            try {
+                const resp = await fetch('/api/scheduler/heartbeat');
+                const data = await resp.json();
+                const container = document.getElementById('heartbeats-list');
+                if (data.heartbeats.length === 0) {
+                    container.innerHTML = '<div class="no-data" style="font-size:12px;color:#64748b;">No heartbeats configured.</div>';
+                } else {
+                    container.innerHTML = data.heartbeats.map(h =>
+                        '<div class="setting-row" style="font-size:12px;">' +
+                        '<span style="color:' + (h.enabled ? '#34d399' : '#fbbf24') + ';">●</span> ' +
+                        '<strong style="color:#e2e8f0;">' + escapeHtml(h.name) + '</strong> ' +
+                        '<span style="color:#60a5fa;">every ' + h.interval_minutes + 'min</span> — ' +
+                        '<span style="color:#94a3b8;">' + escapeHtml(h.task).substring(0,40) + '</span>' +
+                        ' <span style="color:#64748b;">(runs: ' + h.run_count + ')</span>' +
+                        ' <button class="btn-sm btn-remove" onclick="deleteHeartbeat(\'' + h.id + '\')">×</button>' +
+                        '</div>'
+                    ).join('');
+                }
+            } catch(e) {}
+        }
+
+        async function addCronJob() {
+            const name = document.getElementById('cron-name').value.trim();
+            const schedule = document.getElementById('cron-schedule').value.trim();
+            const task = document.getElementById('cron-task').value.trim();
+            if (!name || !schedule || !task) { showToast('Fill all fields', 'error'); return; }
+            const resp = await fetch('/api/scheduler/cron', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({name, schedule, task})
+            });
+            if (resp.ok) { showToast('Cron job added', 'success'); loadScheduler(); document.getElementById('cron-name').value=''; document.getElementById('cron-schedule').value=''; document.getElementById('cron-task').value=''; }
+            else showToast('Failed', 'error');
+        }
+
+        async function deleteCronJob(id) {
+            await fetch('/api/scheduler/cron/' + id, {method: 'DELETE'});
+            loadScheduler();
+        }
+
+        async function addHeartbeat() {
+            const name = document.getElementById('hb-name').value.trim();
+            const interval = parseInt(document.getElementById('hb-interval').value) || 30;
+            const task = document.getElementById('hb-task').value.trim();
+            if (!name || !task) { showToast('Fill all fields', 'error'); return; }
+            const resp = await fetch('/api/scheduler/heartbeat', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({name, interval_minutes: interval, task})
+            });
+            if (resp.ok) { showToast('Heartbeat added', 'success'); loadScheduler(); document.getElementById('hb-name').value=''; document.getElementById('hb-task').value=''; }
+            else showToast('Failed', 'error');
+        }
+
+        async function deleteHeartbeat(id) {
+            await fetch('/api/scheduler/heartbeat/' + id, {method: 'DELETE'});
+            loadScheduler();
+        }
+
+        // ── Sub-agents ──
+        async function loadSubagents() {
+            try {
+                const [statusResp, tasksResp] = await Promise.all([
+                    fetch('/api/subagent/status'),
+                    fetch('/api/subagent/tasks'),
+                ]);
+                const statusData = await statusResp.json();
+                const tasksData = await tasksResp.json();
+                const s = statusData.status;
+                document.getElementById('subagent-status').innerHTML =
+                    'Total: ' + s.total + ' | Running: <span style="color:#34d399;">' + s.running +
+                    '</span> | Completed: ' + s.completed + ' | Failed: <span style="color:#fca5a5;">' + s.failed + '</span>';
+
+                const container = document.getElementById('subagent-tasks-list');
+                if (tasksData.tasks.length === 0) {
+                    container.innerHTML = '<div class="no-data" style="font-size:12px;color:#64748b;">No sub-agent tasks.</div>';
+                } else {
+                    container.innerHTML = tasksData.tasks.slice(0,10).map(t => {
+                        const statusColor = t.status === 'completed' ? '#34d399' : t.status === 'running' ? '#60a5fa' : t.status === 'failed' ? '#fca5a5' : '#94a3b8';
+                        return '<div class="setting-row" style="font-size:12px;">' +
+                            '<span style="color:' + statusColor + ';">● ' + t.status + '</span> ' +
+                            '<span style="color:#e2e8f0;">' + escapeHtml(t.task).substring(0,50) + '</span>' +
+                            (t.result ? ' → <span style="color:#94a3b8;">' + escapeHtml(t.result).substring(0,40) + '...</span>' : '') +
+                            '</div>';
+                    }).join('');
+                }
+            } catch(e) {}
+        }
+
+        async function spawnSubagent() {
+            const task = document.getElementById('subagent-task').value.trim();
+            if (!task) return;
+            const resp = await fetch('/api/subagent/spawn', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({task})
+            });
+            if (resp.ok) {
+                showToast('Sub-agent spawned', 'success');
+                document.getElementById('subagent-task').value = '';
+                setTimeout(loadSubagents, 1000);
+            }
+        }
+
+        // ── Webhooks ──
+        async function loadWebhooks() {
+            try {
+                const [epResp, logResp] = await Promise.all([
+                    fetch('/api/webhook/endpoints'),
+                    fetch('/api/webhook/log'),
+                ]);
+                const epData = await epResp.json();
+                const logData = await logResp.json();
+
+                const container = document.getElementById('webhook-endpoints-list');
+                if (epData.endpoints.length === 0) {
+                    container.innerHTML = '<div class="no-data" style="font-size:12px;color:#64748b;">No webhook endpoints.</div>';
+                } else {
+                    container.innerHTML = epData.endpoints.map(e =>
+                        '<div class="setting-row" style="font-size:12px;">' +
+                        '<span style="color:' + (e.enabled ? '#34d399' : '#fbbf24') + ';">●</span> ' +
+                        '<strong style="color:#e2e8f0;">' + escapeHtml(e.name) + '</strong> ' +
+                        '<code style="color:#60a5fa;">/api/webhook/receive/' + escapeHtml(e.path) + '</code> ' +
+                        '<span class="detail-badge">' + escapeHtml(e.event_type) + '</span> ' +
+                        '<span style="color:#64748b;">(received: ' + e.received_count + ')</span>' +
+                        ' <button class="btn-sm btn-remove" onclick="deleteWebhook(\'' + e.id + '\')">×</button>' +
+                        '</div>'
+                    ).join('');
+                }
+
+                const logContainer = document.getElementById('webhook-events-list');
+                if (logData.events.length === 0) {
+                    logContainer.innerHTML = '<div class="no-data" style="font-size:12px;color:#64748b;">No events received yet.</div>';
+                } else {
+                    logContainer.innerHTML = logData.events.slice(-10).reverse().map(e =>
+                        '<div style="font-size:11px;color:#94a3b8;padding:4px 0;border-bottom:1px solid #1e293b;">' +
+                        '<span style="color:#64748b;">' + escapeHtml(e.timestamp || '').substring(0,19) + '</span> ' +
+                        '<span class="detail-badge" style="font-size:10px;">' + escapeHtml(e.event_type) + '</span> ' +
+                        escapeHtml(e.summary || '') +
+                        '</div>'
+                    ).join('');
+                }
+            } catch(e) {}
+        }
+
+        async function addWebhook() {
+            const name = document.getElementById('wh-name').value.trim();
+            const path = document.getElementById('wh-path').value.trim();
+            const event_type = document.getElementById('wh-type').value;
+            const action = document.getElementById('wh-action').value.trim() || 'Webhook received: {payload}';
+            if (!name || !path) { showToast('Fill name and path', 'error'); return; }
+            const resp = await fetch('/api/webhook/endpoints', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({name, path, event_type, action})
+            });
+            if (resp.ok) {
+                const data = await resp.json();
+                showToast('Webhook added: ' + data.endpoint.url, 'success');
+                loadWebhooks();
+                document.getElementById('wh-name').value=''; document.getElementById('wh-path').value=''; document.getElementById('wh-action').value='';
+            }
+        }
+
+        async function deleteWebhook(id) {
+            await fetch('/api/webhook/endpoints/' + id, {method: 'DELETE'});
+            loadWebhooks();
         }
 
         function renderMonitoringRules() {
