@@ -2645,13 +2645,28 @@
             if (skillInput) skillInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') searchSkills(); });
         });
 
-        function chatApproval(id, action) {
+        async function chatApproval(id, action) {
             const card = document.getElementById('approval-' + id);
             if (!card) return;
             const btns = card.querySelector('.approval-btns');
-            btns.innerHTML = '<span class="approval-done">' + (action === 'approve' ? '✅ 승인됨' : '❌ 거부됨') + '</span>';
-            fetch('/api/approvals/' + id + '/' + action, { method: 'POST' })
-                .catch(err => console.error('Approval failed:', err));
+            btns.innerHTML = '<span class="approval-done">' + (action === 'approve' ? '⏳ 실행 중...' : '❌ 거부됨') + '</span>';
+            try {
+                const resp = await fetch('/api/approvals/' + id + '/' + action, { method: 'POST' });
+                const data = await resp.json();
+                if (action === 'approve') {
+                    btns.innerHTML = '<span class="approval-done">✅ 승인됨</span>';
+                    if (data.followup) {
+                        // LLM summarized the result
+                        addMessage(data.followup, 'bot');
+                    } else if (data.result && data.result.output) {
+                        // Fallback: show raw tool output
+                        addMessage(data.result.output, 'bot');
+                    }
+                }
+            } catch(err) {
+                console.error('Approval failed:', err);
+                btns.innerHTML = '<span class="approval-done" style="color:#fca5a5;">⚠️ 오류 발생</span>';
+            }
         }
 
         function row(label, value, isEnabled) {

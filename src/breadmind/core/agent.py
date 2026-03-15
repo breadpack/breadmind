@@ -190,6 +190,34 @@ class CoreAgent:
             if self._audit_logger:
                 self._audit_logger.log_approval_request(user, channel, tool_name, "denied")
 
+    async def resume_after_approval(
+        self, approval_id: str, result: ToolResult,
+    ) -> str | None:
+        """Resume LLM conversation after a tool approval, injecting the result."""
+        approval = self._pending_approvals.get(approval_id)
+        if approval is None:
+            return None
+
+        user = approval.get("user", "")
+        channel = approval.get("channel", "")
+        tool_name = approval.get("tool", "")
+
+        # Build the result summary and let handle_message process it
+        status = "[success=True]" if result.success else "[success=False]"
+        result_content = f"{status} {result.output}" if result.output else status
+
+        resume_text = (
+            f"[System] Tool '{tool_name}' was approved and executed.\n"
+            f"Result: {result_content}\n"
+            f"Summarize the result for the user."
+        )
+
+        try:
+            return await self.handle_message(resume_text, user=user, channel=channel)
+        except Exception:
+            logger.exception("Failed to resume after approval")
+            return f"Tool '{tool_name}' executed: {result_content}"
+
     async def handle_message(self, message: str, user: str, channel: str) -> str:
         session_id = f"{user}:{channel}"
         logger.info(json.dumps({"event": "session_start", "user": user, "channel": channel}))

@@ -606,25 +606,37 @@ class WebApp:
 
         @app.post("/api/approvals/{approval_id}/approve")
         async def approve_tool(approval_id: str):
-            """Approve a pending tool execution."""
-            if self._agent and hasattr(self._agent, 'approve_tool'):
-                result = self._agent.approve_tool(approval_id)
-                return {"status": "approved", "approval_id": approval_id, "result": result}
-            return JSONResponse(
-                status_code=404,
-                content={"error": "Approval not found or agent not configured"},
-            )
+            """Approve and execute a pending tool, then resume LLM conversation."""
+            if not self._agent or not hasattr(self._agent, 'approve_tool'):
+                return JSONResponse(
+                    status_code=404,
+                    content={"error": "Approval not found or agent not configured"},
+                )
+            result = await self._agent.approve_tool(approval_id)
+            # Resume LLM conversation with the tool result
+            followup = None
+            if result.success:
+                summary = result.output[:500] if result.output else "completed"
+                followup = await self._agent.resume_after_approval(
+                    approval_id, result,
+                )
+            return {
+                "status": "approved",
+                "approval_id": approval_id,
+                "result": {"success": result.success, "output": result.output[:1000] if result.output else ""},
+                "followup": followup,
+            }
 
         @app.post("/api/approvals/{approval_id}/deny")
         async def deny_tool(approval_id: str):
             """Deny a pending tool execution."""
-            if self._agent and hasattr(self._agent, 'deny_tool'):
-                result = self._agent.deny_tool(approval_id)
-                return {"status": "denied", "approval_id": approval_id, "result": result}
-            return JSONResponse(
-                status_code=404,
-                content={"error": "Approval not found or agent not configured"},
-            )
+            if not self._agent or not hasattr(self._agent, 'deny_tool'):
+                return JSONResponse(
+                    status_code=404,
+                    content={"error": "Approval not found or agent not configured"},
+                )
+            self._agent.deny_tool(approval_id)
+            return {"status": "denied", "approval_id": approval_id}
 
         @app.get("/api/config/api-keys")
         async def get_api_keys_status():
