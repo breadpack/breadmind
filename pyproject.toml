@@ -42,6 +42,7 @@ embeddings = [
 
 [project.scripts]
 breadmind = "breadmind.main:main"
+breadmind-uninstall = "breadmind.uninstall:main"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

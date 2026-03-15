@@ -1448,6 +1448,42 @@ class WebApp:
             except Exception as e:
                 return {"status": "error", "message": str(e)}
 
+        @app.post("/api/system/uninstall")
+        async def uninstall_system(request: Request):
+            """Complete uninstall — stops service, removes config, DB, Docker resources."""
+            data = await request.json()
+            keep_db = data.get("keep_db", False)
+            keep_config = data.get("keep_config", False)
+
+            results = []
+            try:
+                from breadmind.uninstall import (
+                    stop_service, remove_service_files, remove_config,
+                    drop_database, remove_docker_resources,
+                )
+                from breadmind.config import get_default_config_dir
+                config_dir = get_default_config_dir()
+
+                remove_service_files()
+                results.append("service_files: removed")
+
+                if not keep_config:
+                    remove_config(config_dir)
+                    results.append("config: removed")
+
+                if not keep_db:
+                    await drop_database(config_dir)
+                    results.append("database: cleaned")
+
+                remove_docker_resources()
+                results.append("docker: cleaned")
+
+                results.append("status: ok")
+            except Exception as e:
+                results.append(f"error: {e}")
+
+            return {"results": results, "message": "Uninstall complete. Stop the service manually or it will shut down."}
+
         # --- Scheduler endpoints ---
 
         @app.get("/api/scheduler/status")
