@@ -990,6 +990,13 @@
                 html += `<div class="setting-row"><span class="setting-label">Latest</span><span class="setting-value" id="sys-latest">checking...</span></div>`;
                 html += `<button class="save-btn" id="sys-update-btn" style="display:none;margin-top:8px;" onclick="applyUpdate()">Update Now</button>`;
                 html += ` <button class="save-btn" onclick="checkForUpdate()" style="background:#6366f1;margin-top:8px;">Check for Updates</button>`;
+                html += `<div style="margin-top:16px;padding-top:12px;border-top:1px solid #334155;">`;
+                html += `<span style="color:#94a3b8;font-size:12px;">Danger Zone</span>`;
+                html += `<div style="display:flex;gap:8px;margin-top:8px;align-items:center;">`;
+                html += `<button class="save-btn" style="background:#dc2626;" onclick="confirmUninstall()">Uninstall BreadMind</button>`;
+                html += `<label style="font-size:12px;color:#94a3b8;"><input type="checkbox" id="uninstall-keep-db" checked /> Keep database</label>`;
+                html += `<label style="font-size:12px;color:#94a3b8;"><input type="checkbox" id="uninstall-keep-config" /> Keep config</label>`;
+                html += `</div></div>`;
                 html += `</div>`;
 
                 // Database (read-only)
@@ -2360,6 +2367,24 @@
                 btn.textContent = 'Update Now';
                 btn.disabled = false;
                 showToast('Network error', 'error');
+            }
+        }
+
+        async function confirmUninstall() {
+            if (!confirm('Are you sure you want to completely uninstall BreadMind?\n\nThis will remove config, Docker containers, and optionally the database.')) return;
+            if (!confirm('This action is irreversible. Continue?')) return;
+            const keepDb = document.getElementById('uninstall-keep-db').checked;
+            const keepConfig = document.getElementById('uninstall-keep-config').checked;
+            try {
+                showToast('Uninstalling...', 'info');
+                const resp = await fetch('/api/system/uninstall', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({keep_db: keepDb, keep_config: keepConfig})
+                });
+                const data = await resp.json();
+                alert('Uninstall complete.\n\n' + (data.results || []).join('\n') + '\n\nThe service will stop shortly.');
+            } catch(e) {
+                alert('Uninstall request sent. The service may have already stopped.');
             }
         }
 
