@@ -1401,10 +1401,12 @@
                 // Actions
                 html += `<div class="messenger-actions">`;
                 html += `<button class="save-btn" onclick="saveMessengerToken('${key}')">Save Tokens</button>`;
-                html += `<button class="btn-test" onclick="testMessenger('${key}')">Test Connection</button>`;
+                html += `<button class="btn-test" onclick="testMessenger('${key}')">Test</button>`;
                 html += `<button class="save-btn" onclick="saveMessengerUsers('${key}')" style="background:#6366f1;">Save Users</button>`;
+                html += `<button class="save-btn" onclick="showSetupGuide('${key}')" style="background:#d97706;">Setup Guide</button>`;
                 html += `</div>`;
                 html += `<div id="msg-test-result-${key}"></div>`;
+                html += `<div id="msg-setup-guide-${key}" style="display:none;"></div>`;
                 html += `</div>`;
             }
             container.innerHTML = html;
@@ -1460,6 +1462,53 @@
                 }
             } catch(e) {
                 if (resultEl) resultEl.innerHTML = '<div class="messenger-test-result error">Network error</div>';
+            }
+        }
+
+        async function showSetupGuide(platform) {
+            const guideEl = document.getElementById('msg-setup-guide-' + platform);
+            if (!guideEl) return;
+            if (guideEl.style.display !== 'none') { guideEl.style.display = 'none'; return; }
+            guideEl.innerHTML = '<div style="padding:8px;color:#94a3b8;font-size:12px;">Loading setup guide...</div>';
+            guideEl.style.display = '';
+            try {
+                const resp = await fetch('/api/messenger/' + encodeURIComponent(platform) + '/setup-url');
+                const data = await resp.json();
+                let html = '<div style="background:#1a2332;border:1px solid #2d3748;border-radius:8px;padding:12px;margin-top:8px;">';
+                if (data.url && data.steps && data.steps.length === 0) {
+                    html += '<div style="text-align:center;margin:8px 0;">';
+                    if (platform === 'slack') {
+                        html += '<a href="' + escapeHtml(data.url) + '" target="_blank" style="display:inline-block;background:#4A154B;color:white;padding:10px 24px;border-radius:8px;text-decoration:none;font-weight:600;">Add to Slack</a>';
+                    } else if (platform === 'discord') {
+                        html += '<a href="' + escapeHtml(data.url) + '" target="_blank" style="display:inline-block;background:#5865F2;color:white;padding:10px 24px;border-radius:8px;text-decoration:none;font-weight:600;">Add to Discord</a>';
+                    } else if (platform === 'telegram') {
+                        html += '<a href="' + escapeHtml(data.url) + '" target="_blank" style="display:inline-block;background:#0088cc;color:white;padding:10px 24px;border-radius:8px;text-decoration:none;font-weight:600;">Open BotFather</a>';
+                    }
+                    html += '</div>';
+                }
+                if (data.steps && data.steps.length > 0) {
+                    html += '<div style="font-size:13px;font-weight:600;color:#e2e8f0;margin-bottom:8px;">Setup Steps:</div>';
+                    html += '<ol style="margin:0;padding-left:20px;color:#94a3b8;font-size:12px;line-height:2;">';
+                    data.steps.forEach(function(s) {
+                        html += '<li>';
+                        if (s.link) {
+                            html += '<a href="' + escapeHtml(s.link) + '" target="_blank" style="color:#60a5fa;">' + escapeHtml(s.text) + '</a>';
+                        } else {
+                            html += escapeHtml(s.text);
+                        }
+                        html += '</li>';
+                    });
+                    html += '</ol>';
+                    if (platform === 'telegram' && data.url) {
+                        html += '<div style="text-align:center;margin-top:8px;">';
+                        html += '<a href="' + escapeHtml(data.url) + '" target="_blank" style="display:inline-block;background:#0088cc;color:white;padding:8px 20px;border-radius:8px;text-decoration:none;font-size:13px;">Open BotFather</a>';
+                        html += '</div>';
+                    }
+                }
+                html += '</div>';
+                guideEl.innerHTML = html;
+            } catch(e) {
+                guideEl.innerHTML = '<div style="color:#fca5a5;font-size:12px;padding:8px;">Failed to load setup guide.</div>';
             }
         }
 

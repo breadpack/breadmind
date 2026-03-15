@@ -935,6 +935,92 @@ class WebApp:
             except Exception as e:
                 return {"status": "error", "message": str(e)}
 
+        @app.get("/api/messenger/{platform}/setup-url")
+        async def messenger_setup_url(platform: str):
+            """Generate setup/invite URLs for messenger platforms."""
+            if platform == "slack":
+                client_id = os.environ.get("SLACK_CLIENT_ID", "")
+                if not client_id:
+                    return {"url": None, "steps": [
+                        {"step": 1, "text": "Go to Slack API", "link": "https://api.slack.com/apps"},
+                        {"step": 2, "text": "Click 'Create New App' → 'From scratch'"},
+                        {"step": 3, "text": "Add Bot Token Scopes: chat:write, app_mentions:read, channels:read, im:read, im:write"},
+                        {"step": 4, "text": "Enable Socket Mode and get an App Token (xapp-...)"},
+                        {"step": 5, "text": "Install app to your workspace"},
+                        {"step": 6, "text": "Copy Bot Token (xoxb-...) and App Token here"},
+                    ]}
+                redirect_uri = f"http://localhost:{self._config.web.port if self._config else 8080}/api/messenger/slack/oauth-callback"
+                scopes = "chat:write,app_mentions:read,channels:read,im:read,im:write,im:history"
+                url = f"https://slack.com/oauth/v2/authorize?client_id={client_id}&scope={scopes}&redirect_uri={redirect_uri}"
+                return {"url": url, "steps": []}
+
+            elif platform == "discord":
+                client_id = os.environ.get("DISCORD_CLIENT_ID", "")
+                if not client_id:
+                    return {"url": None, "steps": [
+                        {"step": 1, "text": "Go to Discord Developer Portal", "link": "https://discord.com/developers/applications"},
+                        {"step": 2, "text": "Click 'New Application' → name it 'BreadMind'"},
+                        {"step": 3, "text": "Go to 'Bot' tab → click 'Add Bot'"},
+                        {"step": 4, "text": "Enable: Message Content Intent, Server Members Intent"},
+                        {"step": 5, "text": "Copy the Bot Token here"},
+                        {"step": 6, "text": "Or enter Client ID below for auto-invite link"},
+                    ]}
+                permissions = 274877975552  # Send Messages, Read Messages, Add Reactions, Manage Messages
+                url = f"https://discord.com/oauth2/authorize?client_id={client_id}&permissions={permissions}&scope=bot"
+                return {"url": url, "steps": []}
+
+            elif platform == "telegram":
+                return {"url": "https://t.me/BotFather", "steps": [
+                    {"step": 1, "text": "Open BotFather in Telegram", "link": "https://t.me/BotFather"},
+                    {"step": 2, "text": "Send /newbot and follow the prompts"},
+                    {"step": 3, "text": "Copy the HTTP API token (e.g., 123456:ABC-DEF...)"},
+                    {"step": 4, "text": "Paste the token in the Bot Token field above"},
+                ]}
+
+            return JSONResponse(status_code=400, content={"error": "Invalid platform"})
+
+        @app.get("/api/messenger/slack/oauth-callback")
+        async def slack_oauth_callback(code: str = "", error: str = ""):
+            """Handle Slack OAuth callback."""
+            if error:
+                return HTMLResponse(f"<html><body><h1>Slack OAuth Error</h1><p>{error}</p><p><a href='/'>Back to BreadMind</a></p></body></html>")
+            if not code:
+                return HTMLResponse("<html><body><h1>Missing code</h1><p><a href='/'>Back to BreadMind</a></p></body></html>")
+
+            client_id = os.environ.get("SLACK_CLIENT_ID", "")
+            client_secret = os.environ.get("SLACK_CLIENT_SECRET", "")
+            if not client_id or not client_secret:
+                return HTMLResponse("<html><body><h1>Slack OAuth not configured</h1><p>Set SLACK_CLIENT_ID and SLACK_CLIENT_SECRET</p></body></html>")
+
+            import aiohttp
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post("https://slack.com/api/oauth.v2.access", data={
+                        "client_id": client_id,
+                        "client_secret": client_secret,
+                        "code": code,
+                    }) as resp:
+                        data = await resp.json()
+                        if data.get("ok"):
+                            bot_token = data.get("access_token", "")
+                            os.environ["SLACK_BOT_TOKEN"] = bot_token
+                            if self._db:
+                                try:
+                                    from breadmind.config import encrypt_value
+                                    await self._db.set_setting("messenger_token:SLACK_BOT_TOKEN", {"encrypted": encrypt_value(bot_token)})
+                                except Exception:
+                                    pass
+                            return HTMLResponse(
+                                "<html><body style='background:#0d1117;color:#e2e8f0;font-family:sans-serif;text-align:center;padding:60px;'>"
+                                "<h1>✅ Slack Connected!</h1><p>Bot token saved. You can close this window.</p>"
+                                "<p><a href='/' style='color:#60a5fa;'>Back to BreadMind</a></p></body></html>"
+                            )
+                        else:
+                            err = data.get("error", "unknown")
+                            return HTMLResponse(f"<html><body><h1>Slack OAuth Failed</h1><p>{err}</p></body></html>")
+            except Exception as e:
+                return HTMLResponse(f"<html><body><h1>Error</h1><p>{e}</p></body></html>")
+
         # --- Memory Config ---
         @app.get("/api/config/memory")
         async def get_memory_config():
