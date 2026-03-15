@@ -181,3 +181,105 @@ def create_expansion_tools(
         "skill_manage": skill_manage,
         "performance_report": performance_report,
     }
+
+
+def create_memory_tools(
+    episodic_memory=None,
+    profiler=None,
+    smart_retriever=None,
+) -> dict:
+
+    @tool(description="Save important information for future conversations. Use when the user asks to remember something, states a preference, or shares a fact worth keeping. category: 'preference', 'fact', 'instruction', or 'incident'.")
+    async def memory_save(content: str, category: str = "fact") -> str:
+        if episodic_memory is None:
+            return "Memory system not available."
+        try:
+            valid_categories = {"preference", "fact", "instruction", "incident"}
+            if category not in valid_categories:
+                category = "fact"
+
+            # Store as episodic note with structured tags
+            keywords = content.lower().split()[:10]  # Simple keyword extraction
+            note = await episodic_memory.add_note(
+                content=content,
+                keywords=keywords,
+                tags=[f"memory:{category}", "explicit_memory"],
+                context_description=f"User-requested memory ({category})",
+            )
+
+            # Also store as user preference if applicable
+            if category == "preference" and profiler:
+                from breadmind.memory.profiler import UserPreference
+                await profiler.add_preference("default", UserPreference(
+                    category=content[:50], description=content,
+                ))
+
+            # Index in SmartRetriever if available
+            if smart_retriever:
+                try:
+                    await smart_retriever.index_task_result(
+                        role="user", task_desc=f"memory_{category}",
+                        result_summary=content, success=True,
+                    )
+                except Exception:
+                    pass
+
+            return f"Remembered: {content[:100]}{'...' if len(content) > 100 else ''}"
+        except Exception as e:
+            return f"Failed to save memory: {e}"
+
+    @tool(description="Search your long-term memory for previously saved information. Use at conversation start or when context from past interactions would be helpful.")
+    async def memory_search(query: str, limit: int = 5) -> str:
+        if episodic_memory is None:
+            return "Memory system not available."
+        try:
+            results = []
+
+            # Try smart retriever first (vector + KG)
+            if smart_retriever:
+                try:
+                    context_items = await smart_retriever.retrieve_context(query, token_budget=1500, limit=limit)
+                    for item in context_items:
+                        results.append(f"- [{item.source}] {item.content}")
+                except Exception:
+                    pass
+
+            # Fallback to keyword search
+            if not results:
+                keywords = query.lower().split()[:5]
+                notes = await episodic_memory.search_by_keywords(keywords, limit=limit)
+                for note in notes:
+                    results.append(f"- {note.content}")
+
+            if not results:
+                return "No relevant memories found."
+            return "Memories found:\n" + "\n".join(results)
+        except Exception as e:
+            return f"Memory search failed: {e}"
+
+    @tool(description="Delete a previously saved memory by its content. Use when the user asks to forget something or when information is outdated.")
+    async def memory_delete(content_match: str) -> str:
+        if episodic_memory is None:
+            return "Memory system not available."
+        try:
+            # Search for matching notes
+            keywords = content_match.lower().split()[:5]
+            notes = await episodic_memory.search_by_keywords(keywords, limit=5)
+
+            deleted = 0
+            for note in notes:
+                if content_match.lower() in note.content.lower():
+                    await episodic_memory.delete_note(note.id)
+                    deleted += 1
+
+            if deleted == 0:
+                return f"No matching memories found for: {content_match}"
+            return f"Deleted {deleted} memory/memories matching: {content_match[:50]}"
+        except Exception as e:
+            return f"Failed to delete memory: {e}"
+
+    return {
+        "memory_save": memory_save,
+        "memory_search": memory_search,
+        "memory_delete": memory_delete,
+    }

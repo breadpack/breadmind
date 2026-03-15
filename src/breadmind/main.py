@@ -224,6 +224,16 @@ async def run():
     for func in expansion_tools.values():
         registry.register(func)
 
+    # Register memory tools
+    from breadmind.tools.meta import create_memory_tools
+    memory_tools = create_memory_tools(
+        episodic_memory=episodic_memory,
+        profiler=profiler,
+        smart_retriever=smart_retriever,
+    )
+    for func in memory_tools.values():
+        registry.register(func)
+
     # Initialize MCP Store
     mcp_store = None
     try:
