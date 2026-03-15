@@ -226,3 +226,35 @@ async def file_write(path: str, content: str, encoding: str = "utf-8") -> str:
         return f"Error: {e}"
     except Exception as e:
         return f"Error writing file: {e}"
+
+
+@tool(description="Connect a messenger platform (slack, discord, telegram). Returns a URL that the user's browser will automatically open for OAuth authorization. Use when user asks to connect/integrate a messenger.")
+async def messenger_connect(platform: str) -> str:
+    """Generate connection URL for a messenger platform."""
+    platform = platform.lower().strip()
+    valid = {"slack", "discord", "telegram"}
+    if platform not in valid:
+        return f"Invalid platform '{platform}'. Choose from: {', '.join(valid)}"
+
+    if platform == "slack":
+        client_id = os.environ.get("SLACK_CLIENT_ID", "")
+        if client_id:
+            port = os.environ.get("BREADMIND_PORT", "8082")
+            redirect_uri = f"http://localhost:{port}/api/messenger/slack/oauth-callback"
+            scopes = "chat:write,app_mentions:read,channels:read,im:read,im:write,im:history"
+            url = f"https://slack.com/oauth/v2/authorize?client_id={client_id}&scope={scopes}&redirect_uri={redirect_uri}"
+            return f"[OPEN_URL]{url}[/OPEN_URL] Slack OAuth 페이지를 열었습니다. 브라우저에서 워크스페이스 접근을 허용해주세요."
+        else:
+            return "[OPEN_URL]https://api.slack.com/apps[/OPEN_URL] Slack App이 아직 설정되지 않았습니다. 브라우저에서 Slack API 페이지를 열었습니다. 새 앱을 만들고 Bot Token(xoxb-...)과 App Token(xapp-...)을 Settings 페이지에서 입력해주세요."
+
+    elif platform == "discord":
+        client_id = os.environ.get("DISCORD_CLIENT_ID", "")
+        if client_id:
+            permissions = 274877975552
+            url = f"https://discord.com/oauth2/authorize?client_id={client_id}&permissions={permissions}&scope=bot"
+            return f"[OPEN_URL]{url}[/OPEN_URL] Discord 봇 초대 페이지를 열었습니다. 서버를 선택하고 인증해주세요."
+        else:
+            return "[OPEN_URL]https://discord.com/developers/applications[/OPEN_URL] Discord Application이 아직 설정되지 않았습니다. 브라우저에서 Developer Portal을 열었습니다. 새 Application을 만들고 Bot Token을 Settings 페이지에서 입력해주세요."
+
+    elif platform == "telegram":
+        return "[OPEN_URL]https://t.me/BotFather[/OPEN_URL] Telegram BotFather를 열었습니다. /newbot 명령으로 봇을 만들고, 발급된 토큰을 Settings 페이지의 Telegram Bot Token 필드에 입력해주세요."

@@ -1010,9 +1010,13 @@ class WebApp:
                                     await self._db.set_setting("messenger_token:SLACK_BOT_TOKEN", {"encrypted": encrypt_value(bot_token)})
                                 except Exception:
                                     pass
+                            # Notify WebSocket clients
+                            await self.broadcast_event({"type": "messenger_connected", "platform": "slack"})
                             return HTMLResponse(
                                 "<html><body style='background:#0d1117;color:#e2e8f0;font-family:sans-serif;text-align:center;padding:60px;'>"
                                 "<h1>✅ Slack Connected!</h1><p>Bot token saved. You can close this window.</p>"
+                                "<script>setTimeout(function(){window.close();},3000);</script>"
+                                "<p style='color:#64748b;font-size:13px;'>This window will close in 3 seconds...</p>"
                                 "<p><a href='/' style='color:#60a5fa;'>Back to BreadMind</a></p></body></html>"
                             )
                         else:

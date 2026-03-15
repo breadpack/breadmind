@@ -12,7 +12,7 @@ from breadmind.llm.ollama import OllamaProvider
 from breadmind.memory.working import WorkingMemory
 from breadmind.monitoring.engine import MonitoringEngine
 from breadmind.tools.registry import ToolRegistry
-from breadmind.tools.builtin import shell_exec, web_search, file_read, file_write
+from breadmind.tools.builtin import shell_exec, web_search, file_read, file_write, messenger_connect
 from breadmind.tools.mcp_client import MCPClientManager
 from breadmind.tools.registry_search import RegistrySearchEngine, RegistryConfig
 from breadmind.tools.meta import create_meta_tools
@@ -115,7 +115,7 @@ async def run():
     )
 
     # Register built-in tools
-    for t in [shell_exec, web_search, file_read, file_write]:
+    for t in [shell_exec, web_search, file_read, file_write, messenger_connect]:
         registry.register(t)
 
     # Initialize MCP

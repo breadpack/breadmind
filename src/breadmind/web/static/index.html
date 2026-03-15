@@ -386,6 +386,10 @@
                 if (data.type === 'response') { addMessage(data.message, 'bot'); sendBtn.disabled = false; sendBtn.textContent = 'Send'; }
                 else if (data.type === 'notification') addMessage(data.message, 'bot');
                 else if (data.type === 'monitoring_event') addMonitoringEvent(data.event);
+                else if (data.type === 'messenger_connected') {
+                    addMessage('✅ ' + (data.event && data.event.platform || 'Messenger') + ' 연동이 완료되었습니다!', 'bot');
+                    showToast((data.event && data.event.platform || 'Messenger') + ' connected!', 'success');
+                }
             };
         }
 
@@ -411,7 +415,18 @@
             const div = document.createElement('div');
             div.className = `message ${type}`;
             const time = new Date().toLocaleTimeString();
-            div.innerHTML = `<div class="bubble">${escapeHtml(text)}</div><div class="meta">${type === 'user' ? 'You' : 'BreadMind'} · ${time}</div>`;
+            // Detect [OPEN_URL]...[/OPEN_URL] and auto-open in browser
+            let displayText = text;
+            const urlMatch = text.match(/\[OPEN_URL\](.*?)\[\/OPEN_URL\]/);
+            if (urlMatch && type === 'bot') {
+                const url = urlMatch[1];
+                displayText = text.replace(/\[OPEN_URL\].*?\[\/OPEN_URL\]\s*/, '');
+                window.open(url, '_blank');
+            }
+            // Make URLs in text clickable
+            const escaped = escapeHtml(displayText);
+            const withLinks = escaped.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" style="color:#60a5fa;">$1</a>');
+            div.innerHTML = `<div class="bubble">${withLinks}</div><div class="meta">${type === 'user' ? 'You' : 'BreadMind'} · ${time}</div>`;
             messagesDiv.appendChild(div);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
