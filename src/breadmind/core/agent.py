@@ -161,6 +161,7 @@ class CoreAgent:
                 session_id, user=user, channel=channel,
             )
             previous_messages = list(session.messages)
+            logger.info(json.dumps({"event": "context_build", "session": session_id, "previous_msgs": len(previous_messages)}))
             messages = [system_msg] + previous_messages + [user_msg]
             # Save the user message to memory
             self._working_memory.add_message(session_id, user_msg)

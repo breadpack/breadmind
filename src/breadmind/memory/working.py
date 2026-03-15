@@ -52,12 +52,13 @@ class WorkingMemory:
             session.last_active = datetime.now(timezone.utc)
             if len(session.messages) > self._max_messages:
                 session.messages = session.messages[-self._max_messages:]
-            if self._db:
+            if self._db and hasattr(self._db, 'save_conversation'):
                 try:
                     import asyncio
                     asyncio.create_task(self._persist_session(session))
-                except Exception:
-                    pass
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).debug(f"Could not schedule persist: {e}")
 
     def get_messages(self, session_id: str) -> list[LLMMessage]:
         session = self._sessions.get(session_id)

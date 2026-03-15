@@ -292,6 +292,7 @@ async def run():
         tool_registry=registry,
         safety_guard=guard,
         max_turns=config.llm.tool_call_max_turns,
+        working_memory=working_memory,
         tool_gap_detector=tool_gap_detector,
         context_builder=context_builder,
     )
