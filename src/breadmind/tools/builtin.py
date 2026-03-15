@@ -159,19 +159,26 @@ async def shell_exec(command: str, host: str = "localhost", timeout: int = 30,
             return f"Container execution failed: {e}"
 
     if host == "localhost":
-        try:
-            args = shlex.split(command)
-        except ValueError as e:
-            return f"Error: Failed to parse command: {e}"
+        is_windows = sys.platform == "win32"
 
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
+            if is_windows:
+                # On Windows, use shell=True via create_subprocess_shell
+                # to support cmd built-ins, PowerShell, and piped commands
+                proc = await asyncio.create_subprocess_shell(
+                    command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            else:
+                args = shlex.split(command)
+                proc = await asyncio.create_subprocess_exec(
+                    *args,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
         except FileNotFoundError:
-            return f"Error: Command not found: {args[0] if args else command}"
+            return f"Error: Command not found: {command}"
         except OSError as e:
             return f"Error: Failed to execute command: {e}"
 
@@ -181,8 +188,9 @@ async def shell_exec(command: str, host: str = "localhost", timeout: int = 30,
             proc.kill()
             raise TimeoutError(f"Command timed out after {timeout}s: {command}")
 
-        output = stdout.decode("utf-8", errors="replace")
-        errors = stderr.decode("utf-8", errors="replace")
+        encoding = "cp949" if is_windows else "utf-8"
+        output = stdout.decode(encoding, errors="replace")
+        errors = stderr.decode(encoding, errors="replace")
         result = output
         if errors:
             result += f"\nSTDERR: {errors}"
@@ -386,3 +394,9 @@ async def swarm_role(action: str, name: str = "", system_prompt: str = "", descr
         return f"Role '{name}' removed."
 
     return f"Unknown action: {action}. Use list, add, update, or remove."
+
+
+def register_builtin_tools(registry) -> None:
+    """Register all built-in tools into the given ToolRegistry."""
+    for t in [shell_exec, web_search, file_read, file_write, messenger_connect, swarm_role]:
+        registry.register(t)

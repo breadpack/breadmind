@@ -25,7 +25,14 @@ class SafetyGuard:
         self._user_permissions: dict[str, list[str]] = user_permissions or {}
         self._admin_users: list[str] = admin_users or []
 
-    def check(self, action: str, params: dict, user: str, channel: str) -> SafetyResult:
+    def check(self, action: str, params: dict, user: str, channel: str, agent_id: str | None = None) -> SafetyResult:
+        # Role-based policy checking for distributed agents
+        if agent_id and hasattr(self, '_agent_policies'):
+            policies = self._agent_policies.get(agent_id, {})
+            blocked = policies.get("blocked", [])
+            if action in blocked:
+                return SafetyResult.DENY
+
         # Admin users bypass all checks
         if user in self._admin_users:
             return SafetyResult.ALLOW
@@ -69,6 +76,11 @@ class SafetyGuard:
             "user_permissions": self._user_permissions,
             "admin_users": self._admin_users,
         }
+
+    def set_agent_policies(self, agent_id: str, policies: dict) -> None:
+        if not hasattr(self, '_agent_policies'):
+            self._agent_policies = {}
+        self._agent_policies[agent_id] = policies
 
     def check_cooldown(self, target: str, action: str, cooldown_minutes: int = 10) -> bool:
         """Returns True if action is allowed (not in cooldown)."""

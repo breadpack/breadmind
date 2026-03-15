@@ -64,7 +64,30 @@ def _parse_args() -> argparse.Namespace:
                         help="Config directory path (default: platform-specific)")
     parser.add_argument("--log-level", default=None, choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
                         help="Logging level (default: from config or INFO)")
+    parser.add_argument("--mode", choices=["standalone", "commander", "worker"], default="standalone",
+                        help="Run mode: standalone (default), commander, or worker")
+    parser.add_argument("--commander-url", default="", help="Commander WebSocket URL (worker mode only)")
     return parser.parse_args()
+
+
+async def run_worker(config, args):
+    """Bootstrap worker mode — lightweight runtime."""
+    from breadmind.network.worker import Worker
+    from breadmind.tools.registry import ToolRegistry
+    from breadmind.tools.builtin import register_builtin_tools
+
+    registry = ToolRegistry()
+    register_builtin_tools(registry)
+
+    worker = Worker(
+        agent_id=getattr(args, "agent_id", "worker"),
+        commander_url=getattr(args, "commander_url", "") or config.network.commander_url,
+        session_key=b"session-key",  # Derived from mTLS in production
+        tool_registry=registry,
+    )
+
+    logger.info("Worker mode started, connecting to %s", worker._commander_url)
+    # TODO: Connect WebSocket, start heartbeat loop, wait for shutdown
 
 
 async def run():
@@ -99,6 +122,13 @@ async def run():
         level=getattr(logging, log_level, logging.INFO),
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
+
+    # Determine run mode
+    mode = getattr(args, "mode", "standalone") if args else config.network.mode
+
+    if mode == "worker":
+        await run_worker(config, args)
+        return
 
     # Connect to database and load persisted settings
     # Falls back to file-based settings store when DB is unavailable
@@ -310,6 +340,7 @@ async def run():
                 semantic_memory=semantic_memory,
                 profiler=profiler,
                 max_context_tokens=4000,
+                skill_store=skill_store,
             )
         except Exception:
             pass
@@ -424,6 +455,20 @@ async def run():
             team_builder.set_retriever(smart_retriever)
             swarm_manager.set_retriever(smart_retriever)
 
+            # Commander mode initialization
+            commander = None
+            if mode == "commander":
+                from breadmind.network.commander import Commander
+                from breadmind.network.registry import AgentRegistry
+
+                agent_registry = AgentRegistry()
+                commander = Commander(
+                    registry=agent_registry,
+                    llm_provider=provider,
+                    session_key=config.security.api_keys[0].encode() if config.security.api_keys else b"default-session-key",
+                )
+                logger.info("Commander mode initialized")
+
             # Periodic flush of expansion data
             async def _flush_expansion_data():
                 while True:
@@ -483,6 +528,7 @@ async def run():
                 swarm_manager=swarm_manager,
                 skill_store=skill_store,
                 performance_tracker=performance_tracker,
+                search_engine=search_engine,
             )
             print(f"  Starting web server on {web_host}:{web_port}")
             server_config = uvicorn.Config(
