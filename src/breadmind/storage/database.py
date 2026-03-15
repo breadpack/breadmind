@@ -7,9 +7,12 @@ from breadmind.storage.models import EpisodicNote, KGEntity, KGRelation
 
 
 class Database:
+    _has_pgvector: bool = False
+
     def __init__(self, dsn: str):
         self._dsn = dsn
         self._pool: asyncpg.Pool | None = None
+        self._has_pgvector = False
 
     async def connect(self):
         self._pool = await asyncpg.create_pool(self._dsn, min_size=2, max_size=10)
@@ -83,6 +86,22 @@ class Database:
                     installed_at TIMESTAMPTZ DEFAULT NOW()
                 );
             """)
+
+        # pgvector extension (optional)
+        try:
+            async with self.acquire() as conn:
+                await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+                await conn.execute("""
+                    ALTER TABLE episodic_notes
+                    ADD COLUMN IF NOT EXISTS embedding_vec vector(384)
+                """)
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_episodic_embedding_hnsw
+                    ON episodic_notes USING hnsw (embedding_vec vector_cosine_ops)
+                """)
+            self._has_pgvector = True
+        except Exception:
+            self._has_pgvector = False
 
     async def insert_audit(self, entry) -> int:
         async with self.acquire() as conn:
@@ -196,6 +215,72 @@ class Database:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
+
+    # --- pgvector ---
+
+    async def has_pgvector(self) -> bool:
+        """Check if pgvector extension is available."""
+        return getattr(self, '_has_pgvector', False)
+
+    async def save_note_with_vector(self, note: EpisodicNote, embedding: list[float]) -> int:
+        """Save note with both FLOAT8[] embedding and vector(384) embedding_vec."""
+        async with self.acquire() as conn:
+            row = await conn.fetchrow("""
+                INSERT INTO episodic_notes
+                    (content, keywords, tags, context_description, embedding,
+                     linked_note_ids, decay_weight, embedding_vec)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8::vector)
+                RETURNING id
+            """,
+                note.content, note.keywords, note.tags,
+                note.context_description, embedding,
+                note.linked_note_ids, note.decay_weight,
+                str(embedding),  # pgvector accepts string format '[0.1,0.2,...]'
+            )
+            return row["id"]
+
+    async def search_by_embedding(
+        self,
+        embedding: list[float],
+        limit: int = 5,
+        tag_filter: str | None = None,
+    ) -> list[tuple[EpisodicNote, float]]:
+        """Search notes by embedding similarity using pgvector."""
+        if not await self.has_pgvector():
+            return []
+        async with self.acquire() as conn:
+            embedding_str = str(embedding)
+            if tag_filter:
+                rows = await conn.fetch("""
+                    SELECT *, 1 - (embedding_vec <=> $1::vector) as score
+                    FROM episodic_notes
+                    WHERE $2 = ANY(tags) AND embedding_vec IS NOT NULL
+                    ORDER BY embedding_vec <=> $1::vector
+                    LIMIT $3
+                """, embedding_str, tag_filter, limit)
+            else:
+                rows = await conn.fetch("""
+                    SELECT *, 1 - (embedding_vec <=> $1::vector) as score
+                    FROM episodic_notes
+                    WHERE embedding_vec IS NOT NULL
+                    ORDER BY embedding_vec <=> $1::vector
+                    LIMIT $2
+                """, embedding_str, limit)
+
+            results = []
+            for row in rows:
+                note = EpisodicNote(
+                    content=row["content"],
+                    keywords=list(row["keywords"]) if row["keywords"] else [],
+                    tags=list(row["tags"]) if row["tags"] else [],
+                    context_description=row["context_description"] or "",
+                    embedding=list(row["embedding"]) if row["embedding"] else None,
+                    linked_note_ids=list(row["linked_note_ids"]) if row["linked_note_ids"] else [],
+                    decay_weight=row["decay_weight"],
+                    id=row["id"],
+                )
+                results.append((note, float(row["score"])))
+            return results
 
     # --- Knowledge Graph ---
 

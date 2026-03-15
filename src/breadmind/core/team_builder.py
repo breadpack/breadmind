@@ -50,6 +50,10 @@ class TeamBuilder:
         self._skill_store = skill_store
         self._message_handler = message_handler
         self._plan_cache: dict[str, tuple[float, TeamPlan]] = {}
+        self._retriever = None
+
+    def set_retriever(self, retriever):
+        self._retriever = retriever
 
     async def build_team(self, goal: str) -> TeamPlan:
         """Analyze goal and return a TeamPlan with selected/created roles and skill injections."""
@@ -206,6 +210,18 @@ class TeamBuilder:
         if not roles:
             return injections
 
+        if self._retriever:
+            try:
+                scored = await self._retriever.retrieve_skills(goal, token_budget=2000, limit=5)
+                if scored:
+                    skill_prompts = [s.skill.prompt_template for s in scored if s.score > 0.3 and s.skill.prompt_template]
+                    for role in roles:
+                        injections[role] = skill_prompts
+                    return injections
+            except Exception as e:
+                logger.warning(f"SmartRetriever failed in TeamBuilder: {e}")
+
+        # Fallback: existing keyword matching
         try:
             matching_skills = await self._skill_store.find_matching_skills(goal, limit=5)
         except Exception as e:
@@ -215,8 +231,8 @@ class TeamBuilder:
         if not matching_skills:
             return injections
 
-        skill_names = [skill.name for skill in matching_skills]
+        skill_prompts = [s.prompt_template for s in matching_skills if s.prompt_template]
         for role in roles:
-            injections[role] = skill_names
+            injections[role] = skill_prompts
 
         return injections
