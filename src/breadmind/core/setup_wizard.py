@@ -57,6 +57,19 @@ class EnvironmentInfo:
             "network_interfaces": self.network_interfaces,
         }
 
+    def detected_specialties(self) -> list[str]:
+        """Return specialties based on discovered infrastructure."""
+        specs = []
+        if self.kubernetes_available:
+            specs.append("kubernetes")
+        if self.proxmox_available:
+            specs.append("proxmox")
+        if self.openwrt_available:
+            specs.append("openwrt")
+        if self.docker_available:
+            specs.append("docker")
+        return specs
+
     def summary(self) -> str:
         """Human-readable summary of discovered environment."""
         lines = [f"Host: {self.hostname} ({self.os_name} {self.os_version})"]

@@ -130,7 +130,7 @@ DEFAULT_PERSONA = {
     "preset": "professional",
     "system_prompt": DEFAULT_PERSONA_PRESETS["professional"],
     "language": "ko",
-    "specialties": ["kubernetes", "proxmox", "openwrt"],
+    "specialties": [],
 }
 
 

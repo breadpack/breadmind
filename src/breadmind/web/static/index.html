@@ -773,10 +773,10 @@
                         <option value="fr">Fran\u00E7ais</option>
                     </select></div>`;
                 html += `<div class="setting-row" style="flex-direction:column; align-items:flex-start;"><span class="setting-label">Specialties</span>
-                    <div style="display:flex; gap:8px; margin-top:4px;">
-                        <label style="color:#94a3b8; font-size:12px;"><input type="checkbox" id="spec-kubernetes" checked /> Kubernetes</label>
-                        <label style="color:#94a3b8; font-size:12px;"><input type="checkbox" id="spec-proxmox" checked /> Proxmox</label>
-                        <label style="color:#94a3b8; font-size:12px;"><input type="checkbox" id="spec-openwrt" checked /> OpenWrt</label>
+                    <div id="specialties-tags" class="tag-list" style="margin-top:4px;"></div>
+                    <div style="display:flex;gap:8px;margin-top:4px;">
+                        <input type="text" id="new-specialty" class="setting-input" placeholder="e.g. kubernetes, docker, aws..." style="flex:1;" />
+                        <button class="save-btn" onclick="addSpecialty()" style="padding:4px 10px;">Add</button>
                     </div></div>`;
                 html += `<div class="setting-row" style="flex-direction:column; align-items:flex-start;"><span class="setting-label">System Prompt</span>
                     <textarea id="persona-prompt" style="width:100%; height:80px; background:#1a2332; border:1px solid #2d3748; color:#e2e8f0; padding:8px; border-radius:6px; resize:vertical; font-size:12px; margin-top:4px; box-sizing:border-box;"></textarea></div>`;
@@ -1441,10 +1441,8 @@
                 document.getElementById('persona-preset').value = p.preset || 'professional';
                 document.getElementById('persona-language').value = p.language || 'ko';
                 document.getElementById('persona-prompt').value = p.system_prompt || '';
-                const specs = p.specialties || [];
-                document.getElementById('spec-kubernetes').checked = specs.includes('kubernetes');
-                document.getElementById('spec-proxmox').checked = specs.includes('proxmox');
-                document.getElementById('spec-openwrt').checked = specs.includes('openwrt');
+                window._personaSpecialties = p.specialties || [];
+                renderSpecialties();
             } catch(e) {}
         }
 
@@ -1452,14 +1450,41 @@
             // When preset changes, prompt will be updated on save by backend
         }
 
+        function renderSpecialties() {
+            const container = document.getElementById('specialties-tags');
+            if (!container) return;
+            const specs = window._personaSpecialties || [];
+            if (specs.length === 0) {
+                container.innerHTML = '<span style="color:#64748b;font-size:11px;">No specialties set. Add based on your infrastructure.</span>';
+                return;
+            }
+            container.innerHTML = specs.map(s =>
+                `<span class="tag info">${escapeHtml(s)} <span class="tag-remove" onclick="removeSpecialty('${escapeHtml(s)}')">&times;</span></span>`
+            ).join('');
+        }
+
+        function addSpecialty() {
+            const input = document.getElementById('new-specialty');
+            const val = input.value.trim().toLowerCase();
+            if (!val) return;
+            if (!window._personaSpecialties) window._personaSpecialties = [];
+            if (!window._personaSpecialties.includes(val)) {
+                window._personaSpecialties.push(val);
+                renderSpecialties();
+            }
+            input.value = '';
+        }
+
+        function removeSpecialty(name) {
+            window._personaSpecialties = (window._personaSpecialties || []).filter(s => s !== name);
+            renderSpecialties();
+        }
+
         async function savePersona() {
             const btn = document.getElementById('btn-persona');
             btn.disabled = true; btn.textContent = 'Saving...';
 
-            const specialties = [];
-            if (document.getElementById('spec-kubernetes').checked) specialties.push('kubernetes');
-            if (document.getElementById('spec-proxmox').checked) specialties.push('proxmox');
-            if (document.getElementById('spec-openwrt').checked) specialties.push('openwrt');
+            const specialties = window._personaSpecialties || [];
 
             const prompt = document.getElementById('persona-prompt').value.trim();
 

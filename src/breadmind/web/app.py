@@ -187,10 +187,25 @@ class WebApp:
 
         @app.get("/api/setup/discover")
         async def setup_discover():
-            """Discover local infrastructure environment."""
+            """Discover local infrastructure environment and auto-set specialties."""
             from breadmind.core.setup_wizard import discover_environment
             env = await discover_environment()
-            return {"environment": env.to_dict(), "summary": env.summary()}
+            # Auto-set specialties from discovered infra
+            specialties = env.detected_specialties()
+            if specialties and self._config:
+                persona = self._config._persona or {}
+                persona["specialties"] = specialties
+                self._config._persona = persona
+                if self._db:
+                    try:
+                        await self._db.set_setting("persona", persona)
+                    except Exception:
+                        pass
+            return {
+                "environment": env.to_dict(),
+                "summary": env.summary(),
+                "specialties": specialties,
+            }
 
         @app.post("/api/setup/recommend")
         async def setup_recommend():
