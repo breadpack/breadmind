@@ -1,0 +1,306 @@
+#Requires -Version 5.1
+# BreadMind Worker Installer for Windows
+# Usage: irm https://raw.githubusercontent.com/breadpack/breadmind/master/deploy/install/install-worker.ps1 | iex
+#   or:  .\install-worker.ps1 -Commander "wss://192.168.1.100:8081/ws/agent/self" [-AgentId "myworker"]
+
+param(
+    [string]$Commander = "",
+    [string]$AgentId = "",
+    [string]$ConfigDir = "",
+    [switch]$Help
+)
+
+$ErrorActionPreference = "Stop"
+$BreadMindVersion = "0.1.0"
+if (-not $ConfigDir) {
+    $ConfigDir = Join-Path $env:APPDATA "breadmind-worker"
+}
+$NssmUrl = "https://nssm.cc/release/nssm-2.24.zip"
+$script:PythonCmd = $null
+$script:PythonArgs = @()
+
+$script:IsInteractive = [Environment]::UserInteractive -and -not ([Console]::IsInputRedirected)
+
+function Write-Info  { Write-Host "[INFO] $args" -ForegroundColor Blue }
+function Write-Ok    { Write-Host "[OK] $args" -ForegroundColor Green }
+function Write-Warn  { Write-Host "[WARN] $args" -ForegroundColor Yellow }
+function Write-Err   { Write-Host "[ERROR] $args" -ForegroundColor Red }
+
+# -------------------------------------------------------------------
+# Validation
+# -------------------------------------------------------------------
+function Validate-Args {
+    if ([string]::IsNullOrEmpty($script:Commander)) {
+        if ($script:IsInteractive) {
+            $script:Commander = Read-Host "Commander WebSocket URL"
+        }
+        if ([string]::IsNullOrEmpty($script:Commander)) {
+            Write-Err "-Commander URL is required."
+            Write-Err "Example: .\install-worker.ps1 -Commander wss://192.168.1.100:8081/ws/agent/self"
+            exit 1
+        }
+    }
+
+    if ([string]::IsNullOrEmpty($AgentId)) {
+        $AgentId = $env:COMPUTERNAME.ToLower()
+    }
+    $script:AgentId = $AgentId
+}
+
+# -------------------------------------------------------------------
+# Python
+# -------------------------------------------------------------------
+function Test-PythonVersion {
+    Write-Info "Checking Python 3.11+..."
+    foreach ($cmd in @("python", "python3", "py")) {
+        try {
+            $cmdArgs = @("-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+            if ($cmd -eq "py") {
+                $cmdArgs = @("-3") + $cmdArgs
+            }
+            $ver = & $cmd @cmdArgs 2>$null
+            if ($ver) {
+                $parts = $ver.Split('.')
+                if ([int]$parts[0] -ge 3 -and [int]$parts[1] -ge 11) {
+                    $script:PythonCmd = $cmd
+                    if ($cmd -eq "py") {
+                        $script:PythonArgs = @("-3")
+                    } else {
+                        $script:PythonArgs = @()
+                    }
+                    Write-Ok "Python found: $cmd ($ver)"
+                    return $true
+                }
+            }
+        } catch {}
+    }
+    return $false
+}
+
+function Install-Python {
+    Write-Info "Installing Python via winget..."
+    try {
+        winget install Python.Python.3.12 --accept-source-agreements --accept-package-agreements
+        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+        Write-Ok "Python installed. You may need to restart your terminal."
+    } catch {
+        Write-Err "Failed to install Python. Please install Python 3.11+ from https://python.org"
+        exit 1
+    }
+}
+
+# -------------------------------------------------------------------
+# BreadMind installation
+# -------------------------------------------------------------------
+function Install-Worker {
+    Write-Info "Installing BreadMind (worker mode)..."
+    $installed = $false
+
+    try {
+        & $script:PythonCmd @($script:PythonArgs + @("-m", "pip", "install", "breadmind")) 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Ok "BreadMind installed from PyPI."
+            $installed = $true
+        }
+    } catch {}
+
+    if (-not $installed) {
+        try {
+            & $script:PythonCmd @($script:PythonArgs + @("-m", "pip", "install", "git+https://github.com/breadpack/breadmind.git"))
+            if ($LASTEXITCODE -eq 0) {
+                Write-Ok "BreadMind installed from GitHub."
+                $installed = $true
+            }
+        } catch {}
+    }
+
+    if (-not $installed) {
+        Write-Err "Failed to install BreadMind. Check your network connection."
+        exit 1
+    }
+}
+
+# -------------------------------------------------------------------
+# Configuration
+# -------------------------------------------------------------------
+function Setup-Config {
+    Write-Info "Setting up worker configuration..."
+    if (-not (Test-Path $ConfigDir)) {
+        New-Item -ItemType Directory -Path $ConfigDir -Force | Out-Null
+    }
+
+    $configPath = Join-Path $ConfigDir "config.yaml"
+    @"
+# BreadMind Worker Configuration
+# Auto-generated by install-worker.ps1
+
+network:
+  mode: worker
+  commander_url: "$($script:Commander)"
+  heartbeat_interval: 30
+  offline_threshold: 90
+  offline_queue_max_rows: 10000
+  offline_queue_max_mb: 100
+
+llm:
+  # Worker does not call LLM directly - proxied through Commander
+  default_provider: none
+
+logging:
+  level: INFO
+"@ | Set-Content $configPath -Encoding UTF8
+    Write-Ok "Created $configPath"
+}
+
+# -------------------------------------------------------------------
+# Service setup
+# -------------------------------------------------------------------
+function Install-Nssm {
+    if (Get-Command nssm -ErrorAction SilentlyContinue) { return $true }
+    $existingNssm = Join-Path $ConfigDir "bin\nssm.exe"
+    if (Test-Path $existingNssm) {
+        $env:Path += ";$(Join-Path $ConfigDir 'bin')"
+        return $true
+    }
+    Write-Info "Downloading NSSM for service management..."
+    try {
+        $zipPath = Join-Path $env:TEMP "nssm.zip"
+        $extractPath = Join-Path $env:TEMP "nssm"
+        Invoke-WebRequest -Uri $NssmUrl -OutFile $zipPath -TimeoutSec 15
+        Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
+        $nssmExe = Get-ChildItem -Path $extractPath -Recurse -Filter "nssm.exe" | Where-Object { $_.DirectoryName -match "win64" } | Select-Object -First 1
+        $destDir = Join-Path $ConfigDir "bin"
+        New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+        Copy-Item $nssmExe.FullName (Join-Path $destDir "nssm.exe")
+        $env:Path += ";$destDir"
+        Write-Ok "NSSM installed to $destDir"
+        return $true
+    } catch {
+        Write-Warn "NSSM download failed."
+        return $false
+    }
+}
+
+function Setup-Service {
+    Write-Info "Setting up Windows service..."
+
+    $pythonPath = & $script:PythonCmd @($script:PythonArgs + @("-c", "import sys; print(sys.executable)")) 2>$null
+    if (-not $pythonPath) {
+        Write-Err "Could not determine Python executable path."
+        exit 1
+    }
+
+    $logFile = Join-Path $ConfigDir "worker.log"
+    $errFile = Join-Path $ConfigDir "worker.err"
+    $started = $false
+
+    # Strategy 1: NSSM service
+    if (Install-Nssm) {
+        try {
+            # Remove existing service if present
+            nssm stop BreadMindWorker 2>$null
+            nssm remove BreadMindWorker confirm 2>$null
+
+            nssm install BreadMindWorker $pythonPath "-m" "breadmind" "--mode" "worker" "--commander-url" $script:Commander "--config-dir" $ConfigDir
+            nssm set BreadMindWorker AppDirectory $ConfigDir
+            nssm set BreadMindWorker Description "BreadMind Worker Agent - connects to Commander at $($script:Commander)"
+            nssm set BreadMindWorker Start SERVICE_AUTO_START
+            nssm set BreadMindWorker AppEnvironmentExtra "PYTHONUNBUFFERED=1" "BREADMIND_AGENT_ID=$($script:AgentId)"
+            nssm set BreadMindWorker AppStdout $logFile
+            nssm set BreadMindWorker AppStderr $errFile
+            nssm set BreadMindWorker AppRestartDelay 5000
+            nssm start BreadMindWorker
+            Write-Ok "Worker service started (NSSM)."
+            $started = $true
+        } catch {
+            Write-Warn "NSSM service setup failed: $_"
+        }
+    }
+
+    # Strategy 2: Start as background process
+    if (-not $started) {
+        Write-Info "Starting worker as background process..."
+        $env:PYTHONUNBUFFERED = "1"
+        $env:BREADMIND_AGENT_ID = $script:AgentId
+        $proc = Start-Process -FilePath $pythonPath `
+            -ArgumentList "-m", "breadmind", "--mode", "worker", "--commander-url", $script:Commander, "--config-dir", $ConfigDir `
+            -WindowStyle Hidden `
+            -RedirectStandardOutput $logFile `
+            -RedirectStandardError $errFile `
+            -PassThru
+        if ($proc) {
+            Write-Ok "Worker started (PID: $($proc.Id))"
+            Write-Info "Note: Process will stop when you log out. For persistent service, install NSSM manually."
+            $started = $true
+        }
+    }
+
+    if (-not $started) {
+        Write-Err "Failed to start worker. Run manually:"
+        Write-Err "  $pythonPath -m breadmind --mode worker --commander-url `"$($script:Commander)`" --config-dir `"$ConfigDir`""
+    }
+}
+
+# -------------------------------------------------------------------
+# Main
+# -------------------------------------------------------------------
+Write-Host ""
+Write-Host "=========================================" -ForegroundColor Cyan
+Write-Host "  BreadMind Worker Installer v$BreadMindVersion" -ForegroundColor Cyan
+Write-Host "  Lightweight Agent for Remote Nodes" -ForegroundColor Cyan
+Write-Host "=========================================" -ForegroundColor Cyan
+Write-Host ""
+
+if ($Help) {
+    Write-Host "Usage: .\install-worker.ps1 -Commander <URL> [-AgentId <name>] [-ConfigDir <path>]"
+    Write-Host ""
+    Write-Host "Required:"
+    Write-Host "  -Commander URL    Commander WebSocket URL"
+    Write-Host ""
+    Write-Host "Options:"
+    Write-Host "  -AgentId NAME     Worker agent ID (default: computer name)"
+    Write-Host "  -ConfigDir DIR    Config directory (default: %APPDATA%\breadmind-worker)"
+    Write-Host "  -Help             Show this help message"
+    Write-Host ""
+    Write-Host "One-liner install:"
+    Write-Host '  irm https://raw.githubusercontent.com/breadpack/breadmind/master/deploy/install/install-worker.ps1 | iex'
+    Write-Host ""
+    Write-Host "With parameters:"
+    Write-Host '  $env:Commander="wss://host:8081/ws/agent/self"; irm .../install-worker.ps1 | iex'
+    exit 0
+}
+
+# Support passing Commander via env var (for piped execution)
+if ([string]::IsNullOrEmpty($Commander) -and $env:Commander) {
+    $Commander = $env:Commander
+}
+if ([string]::IsNullOrEmpty($AgentId) -and $env:AgentId) {
+    $AgentId = $env:AgentId
+}
+
+Validate-Args
+
+if (-not (Test-PythonVersion)) {
+    Write-Warn "Python 3.11+ not found."
+    Install-Python
+    if (-not (Test-PythonVersion)) {
+        Write-Err "Python still not found. Please restart terminal and try again."
+        exit 1
+    }
+}
+
+Install-Worker
+Setup-Config
+Setup-Service
+
+Write-Host ""
+Write-Ok "========================================="
+Write-Ok "  BreadMind Worker installation complete!"
+Write-Ok "========================================="
+Write-Host ""
+Write-Info "Agent ID:   $($script:AgentId)"
+Write-Info "Commander:  $($script:Commander)"
+Write-Info "Config:     $ConfigDir"
+Write-Info "Logs:       Get-Content '$ConfigDir\worker.log' -Wait"
+Write-Info "Control:    nssm {start|stop|restart} BreadMindWorker"
+Write-Host ""
