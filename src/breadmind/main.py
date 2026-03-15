@@ -71,6 +71,20 @@ def create_provider(config):
         return OllamaProvider()
 
 
+def _find_free_port(preferred: int, max_attempts: int = 10) -> int:
+    """Return preferred port if available, otherwise find the next free one."""
+    import socket
+    for offset in range(max_attempts):
+        port = preferred + offset
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("", port))
+                return port
+        except OSError:
+            continue
+    return preferred  # fallback, let uvicorn report the error
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="BreadMind AI Infrastructure Agent")
     parser.add_argument("--web", action="store_true", help="Start web UI mode with uvicorn")
@@ -276,9 +290,12 @@ async def run():
     print(f"  Meta tools: {len(meta_tools)}")
     print(f"  MCP servers: {len(config.mcp.servers)}")
 
-    # Resolve host/port from CLI args or config
+    # Resolve host/port from CLI args or config, auto-find free port if needed
     web_host = args.host or config.web.host
     web_port = args.port or config.web.port
+    web_port = _find_free_port(web_port)
+    if web_port != (args.port or config.web.port):
+        print(f"  Port {args.port or config.web.port} in use, using {web_port}")
 
     # Background update checker
     async def check_updates_periodically():

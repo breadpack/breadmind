@@ -115,17 +115,19 @@ resolve_db_port() {
         return
       fi
     fi
-    # Port 5432 is in use but user doesn't want to use it, try alternatives
-    warn "Port 5432 is in use, trying 5433..."
-    DB_PORT=5433
-    if ! check_port $DB_PORT; then
-      warn "Port 5433 is also in use, trying 5434..."
-      DB_PORT=5434
-      if ! check_port $DB_PORT; then
-        err "Ports 5432, 5433, and 5434 are all in use."
-        err "Please free a port or use --external-db flag."
-        exit 1
+    # Port 5432 is in use, scan for next free port
+    local found=false
+    for p in $(seq 5433 5440); do
+      if check_port $p; then
+        DB_PORT=$p
+        found=true
+        break
       fi
+    done
+    if [ "$found" = false ]; then
+      err "No free PostgreSQL port found (5432-5440)."
+      err "Please free a port or use --external-db flag."
+      exit 1
     fi
     info "Will use port $DB_PORT for PostgreSQL."
   fi

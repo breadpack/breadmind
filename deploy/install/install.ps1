@@ -94,17 +94,19 @@ function Resolve-DbPort {
                 return
             }
         }
-        # Port 5432 in use, try alternatives
-        Write-Warn "Port 5432 is in use, trying 5433..."
-        $script:DbPort = 5433
-        if (-not (Test-PortAvailable -Port 5433)) {
-            Write-Warn "Port 5433 is also in use, trying 5434..."
-            $script:DbPort = 5434
-            if (-not (Test-PortAvailable -Port 5434)) {
-                Write-Err "Ports 5432, 5433, and 5434 are all in use."
-                Write-Err "Please free a port or use -ExternalDB flag."
-                exit 1
+        # Port 5432 in use, scan for next free port
+        $found = $false
+        for ($p = 5433; $p -le 5440; $p++) {
+            if (Test-PortAvailable -Port $p) {
+                $script:DbPort = $p
+                $found = $true
+                break
             }
+        }
+        if (-not $found) {
+            Write-Err "No free PostgreSQL port found (5432-5440)."
+            Write-Err "Please free a port or use -ExternalDB flag."
+            exit 1
         }
         Write-Info "Will use port $($script:DbPort) for PostgreSQL."
     }
