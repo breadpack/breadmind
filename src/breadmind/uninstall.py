@@ -21,6 +21,17 @@ def _print(msg: str):
     print(f"  {msg}")
 
 
+def _find_nssm() -> str | None:
+    """Find nssm.exe in config dir or PATH."""
+    config_dir = get_default_config_dir()
+    nssm = Path(config_dir) / "bin" / "nssm.exe"
+    if nssm.exists():
+        return str(nssm)
+    if shutil.which("nssm"):
+        return "nssm"
+    return None
+
+
 def _find_breadmind_pids() -> list[int]:
     """Find running breadmind processes."""
     pids = []
@@ -62,6 +73,27 @@ def stop_service():
         subprocess.run(["sudo", "systemctl", "disable", "breadmind"],
                         capture_output=True, timeout=10)
         _print("systemd service stopped and disabled")
+    elif system == "Windows":
+        # Stop and remove NSSM or sc.exe service
+        nssm_path = _find_nssm()
+        svc_removed = False
+        if nssm_path:
+            r = subprocess.run([nssm_path, "stop", "BreadMind"],
+                                capture_output=True, timeout=15)
+            r2 = subprocess.run([nssm_path, "remove", "BreadMind", "confirm"],
+                                 capture_output=True, timeout=15)
+            svc_removed = r2.returncode == 0
+        if not svc_removed:
+            r = subprocess.run(["sc", "stop", "BreadMind"],
+                                capture_output=True, timeout=15)
+            r2 = subprocess.run(["sc", "delete", "BreadMind"],
+                                 capture_output=True, timeout=15)
+            svc_removed = r2.returncode == 0
+        if svc_removed:
+            _print("Windows service stopped and removed")
+        else:
+            _print("Windows service removal requires admin. Run as Administrator:"
+                   "\n    sc stop BreadMind && sc delete BreadMind")
     elif system == "Darwin":
         plist = Path.home() / "Library/LaunchAgents/dev.breadpack.breadmind.plist"
         if plist.exists():
@@ -96,6 +128,13 @@ def remove_service_files():
             subprocess.run(["sudo", "systemctl", "daemon-reload"], capture_output=True)
             removed.append(str(svc))
 
+    elif system == "Windows":
+        # NSSM service already removed in stop_service, clean up bin dir
+        config_dir = get_default_config_dir()
+        bin_dir = Path(config_dir) / "bin"
+        if bin_dir.exists():
+            shutil.rmtree(bin_dir, ignore_errors=True)
+            removed.append(str(bin_dir))
     elif system == "Darwin":
         plist = Path.home() / "Library/LaunchAgents/dev.breadpack.breadmind.plist"
         if plist.exists():
