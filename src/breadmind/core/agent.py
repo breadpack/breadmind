@@ -374,6 +374,15 @@ class CoreAgent:
                         self._working_memory.add_message(session_id, tool_msg)
                     if self._audit_logger:
                         self._audit_logger.log_approval_request(user, channel, tc.name, "pending")
+                    # Push approval request to UI immediately via progress callback
+                    await self._notify_progress(
+                        "approval_request",
+                        json.dumps({
+                            "approval_id": approval_id,
+                            "tool": tc.name,
+                            "args": tc.arguments,
+                        }),
+                    )
                     continue
 
                 # Check cooldown (only for automated/monitoring channels)
