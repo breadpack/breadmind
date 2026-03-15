@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import hmac
 import logging
 import json
 from datetime import datetime, timezone
@@ -52,7 +54,33 @@ class WebhookManager:
             for e in self._endpoints.values()
         ]
 
-    async def handle_webhook(self, path: str, payload: dict, headers: dict = None) -> dict:
+    def _verify_secret(self, endpoint: WebhookEndpoint, payload_bytes: bytes, headers: dict) -> bool:
+        """Verify webhook signature using HMAC-SHA256."""
+        if not endpoint.secret:
+            return True  # No secret configured, skip verification
+
+        # GitHub: X-Hub-Signature-256
+        github_sig = headers.get("x-hub-signature-256", "")
+        if github_sig:
+            expected = "sha256=" + hmac.new(
+                endpoint.secret.encode(), payload_bytes, hashlib.sha256
+            ).hexdigest()
+            return hmac.compare_digest(github_sig, expected)
+
+        # GitLab: X-Gitlab-Token
+        gitlab_token = headers.get("x-gitlab-token", "")
+        if gitlab_token:
+            return hmac.compare_digest(gitlab_token, endpoint.secret)
+
+        # Generic: X-Webhook-Secret
+        generic_secret = headers.get("x-webhook-secret", "")
+        if generic_secret:
+            return hmac.compare_digest(generic_secret, endpoint.secret)
+
+        # If secret is set but no signature provided, reject
+        return False
+
+    async def handle_webhook(self, path: str, payload: dict, headers: dict = None, payload_bytes: bytes = b"") -> dict:
         """Process an incoming webhook."""
         endpoint = self.get_endpoint_by_path(path)
         if not endpoint:
@@ -60,7 +88,9 @@ class WebhookManager:
         if not endpoint.enabled:
             return {"status": "disabled", "error": "Webhook endpoint is disabled"}
 
-        # TODO: verify secret if set (HMAC signature check)
+        # Verify secret
+        if not self._verify_secret(endpoint, payload_bytes, headers or {}):
+            return {"status": "unauthorized", "error": "Invalid webhook signature"}
 
         endpoint.received_count += 1
         endpoint.last_received = datetime.now(timezone.utc)

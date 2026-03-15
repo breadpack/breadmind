@@ -1,4 +1,7 @@
 import asyncio
+import hashlib
+import hmac
+import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from fastapi.testclient import TestClient
@@ -261,6 +264,99 @@ async def test_get_event_log():
     log = wm.get_event_log()
     assert len(log) == 2
     assert log[0]["endpoint"] == "Log Test"
+
+
+# ── Webhook HMAC verification tests ──
+
+
+def test_verify_secret_github_correct():
+    wm = WebhookManager()
+    ep = WebhookEndpoint(id="ep1", name="GH", path="gh", event_type="github",
+                         action="x", secret="mysecret")
+    payload = b'{"action":"opened"}'
+    sig = "sha256=" + hmac.new(b"mysecret", payload, hashlib.sha256).hexdigest()
+    headers = {"x-hub-signature-256": sig}
+    assert wm._verify_secret(ep, payload, headers) is True
+
+
+def test_verify_secret_github_wrong():
+    wm = WebhookManager()
+    ep = WebhookEndpoint(id="ep1", name="GH", path="gh", event_type="github",
+                         action="x", secret="mysecret")
+    payload = b'{"action":"opened"}'
+    headers = {"x-hub-signature-256": "sha256=wrong"}
+    assert wm._verify_secret(ep, payload, headers) is False
+
+
+def test_verify_secret_gitlab_token():
+    wm = WebhookManager()
+    ep = WebhookEndpoint(id="ep1", name="GL", path="gl", event_type="gitlab",
+                         action="x", secret="gitlab-token-123")
+    headers = {"x-gitlab-token": "gitlab-token-123"}
+    assert wm._verify_secret(ep, b"", headers) is True
+
+
+def test_verify_secret_gitlab_token_wrong():
+    wm = WebhookManager()
+    ep = WebhookEndpoint(id="ep1", name="GL", path="gl", event_type="gitlab",
+                         action="x", secret="gitlab-token-123")
+    headers = {"x-gitlab-token": "wrong-token"}
+    assert wm._verify_secret(ep, b"", headers) is False
+
+
+def test_verify_secret_generic():
+    wm = WebhookManager()
+    ep = WebhookEndpoint(id="ep1", name="Gen", path="gen", event_type="generic",
+                         action="x", secret="my-generic-secret")
+    headers = {"x-webhook-secret": "my-generic-secret"}
+    assert wm._verify_secret(ep, b"", headers) is True
+
+
+def test_verify_secret_no_secret_configured():
+    wm = WebhookManager()
+    ep = WebhookEndpoint(id="ep1", name="Open", path="open", event_type="generic",
+                         action="x", secret="")
+    assert wm._verify_secret(ep, b"", {}) is True
+
+
+def test_verify_secret_secret_set_no_header_rejects():
+    wm = WebhookManager()
+    ep = WebhookEndpoint(id="ep1", name="Sec", path="sec", event_type="generic",
+                         action="x", secret="some-secret")
+    assert wm._verify_secret(ep, b"", {}) is False
+
+
+@pytest.mark.asyncio
+async def test_handle_webhook_rejects_invalid_signature():
+    handler = AsyncMock(return_value="ok")
+    wm = WebhookManager()
+    wm.set_message_handler(handler)
+    ep = WebhookEndpoint(id="ep1", name="Secure", path="secure-hook",
+                         event_type="github", action="x", secret="topsecret")
+    wm.add_endpoint(ep)
+    result = await wm.handle_webhook("secure-hook", {"data": 1}, headers={}, payload_bytes=b'{"data": 1}')
+    assert result["status"] == "unauthorized"
+    assert "Invalid webhook signature" in result["error"]
+    handler.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handle_webhook_accepts_valid_signature():
+    handler = AsyncMock(return_value="processed")
+    wm = WebhookManager()
+    wm.set_message_handler(handler)
+    ep = WebhookEndpoint(id="ep1", name="Secure", path="secure-hook",
+                         event_type="github", action="Got: {payload}", secret="topsecret")
+    wm.add_endpoint(ep)
+    payload_bytes = b'{"data": 1}'
+    sig = "sha256=" + hmac.new(b"topsecret", payload_bytes, hashlib.sha256).hexdigest()
+    result = await wm.handle_webhook(
+        "secure-hook", {"data": 1},
+        headers={"x-hub-signature-256": sig},
+        payload_bytes=payload_bytes,
+    )
+    assert result["status"] == "ok"
+    handler.assert_called_once()
 
 
 # ── Web API endpoint tests ──

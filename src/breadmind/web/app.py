@@ -5,6 +5,7 @@ import os
 import sys
 from dataclasses import asdict
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
@@ -17,7 +18,7 @@ class WebApp:
                  config=None, monitoring_engine=None, safety_config=None,
                  agent=None, audit_logger=None, metrics_collector=None, database=None,
                  mcp_store=None, safety_guard=None, working_memory=None, message_router=None,
-                 scheduler=None, subagent_manager=None, webhook_manager=None):
+                 scheduler=None, subagent_manager=None, webhook_manager=None, auth=None):
         self.app = FastAPI(title="BreadMind", version="0.1.0")
         self._message_handler = message_handler
         self._tool_registry = tool_registry
@@ -36,6 +37,21 @@ class WebApp:
         self._scheduler = scheduler
         self._subagent_manager = subagent_manager
         self._webhook_manager = webhook_manager
+        self._auth = auth
+
+        # CORS middleware
+        if config and hasattr(config, 'security'):
+            origins = config.security.cors_origins
+        else:
+            origins = ["http://localhost:8080", "http://127.0.0.1:8080"]
+        self.app.add_middleware(
+            CORSMiddleware,
+            allow_origins=origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
         self._connections: list[WebSocket] = []
         self._events: list[dict] = []
         self._lock = asyncio.Lock()
@@ -71,6 +87,107 @@ class WebApp:
 
     def _setup_routes(self):
         app = self.app
+
+        # --- Auth endpoints ---
+
+        @app.post("/api/auth/login")
+        async def login(request: Request):
+            """Authenticate with password."""
+            if not self._auth or not self._auth.enabled:
+                return {"status": "ok", "message": "Auth disabled"}
+            data = await request.json()
+            password = data.get("password", "")
+            if self._auth.verify_password(password):
+                token = self._auth.create_session(
+                    ip=request.client.host if request.client else "",
+                    user_agent=request.headers.get("user-agent", ""),
+                )
+                response = JSONResponse({"status": "ok", "token": token})
+                response.set_cookie(
+                    "breadmind_session", token,
+                    httponly=True, samesite="strict",
+                    max_age=self._auth._session_timeout,
+                )
+                return response
+            return JSONResponse(status_code=401, content={"error": "Invalid password"})
+
+        @app.post("/api/auth/logout")
+        async def logout(request: Request):
+            token = request.cookies.get("breadmind_session", "")
+            if self._auth and token:
+                self._auth.revoke_session(token)
+            response = JSONResponse({"status": "ok"})
+            response.delete_cookie("breadmind_session")
+            return response
+
+        @app.get("/api/auth/status")
+        async def auth_status(request: Request):
+            if not self._auth or not self._auth.enabled:
+                return {"auth_enabled": False, "authenticated": True}
+            authenticated = self._auth.authenticate_request(request)
+            return {
+                "auth_enabled": True,
+                "authenticated": authenticated,
+                "sessions": self._auth.get_active_sessions(),
+            }
+
+        @app.post("/api/auth/setup")
+        async def setup_auth(request: Request):
+            """Initial password setup (only works when no password is set)."""
+            if self._auth and self._auth._password_hash:
+                return JSONResponse(status_code=403, content={"error": "Password already configured"})
+            data = await request.json()
+            password = data.get("password", "")
+            if len(password) < 8:
+                return JSONResponse(status_code=400, content={"error": "Password must be at least 8 characters"})
+            from breadmind.web.auth import AuthManager
+            pw_hash = AuthManager.hash_password(password)
+            if self._auth:
+                self._auth._password_hash = pw_hash
+                self._auth._enabled = True
+            # Persist to DB
+            if self._db:
+                try:
+                    await self._db.set_setting("auth", {"password_hash": pw_hash, "enabled": True})
+                except Exception:
+                    pass
+            token = self._auth.create_session() if self._auth else ""
+            response = JSONResponse({"status": "ok", "message": "Password set successfully"})
+            if token:
+                response.set_cookie("breadmind_session", token, httponly=True, samesite="strict")
+            return response
+
+        # --- Auth middleware ---
+
+        @app.middleware("http")
+        async def auth_middleware(request: Request, call_next):
+            path = request.url.path
+            # Skip auth for certain paths
+            skip_paths = ["/api/auth/", "/health", "/api/webhook/receive/"]
+            if any(path.startswith(p) for p in skip_paths):
+                return await call_next(request)
+
+            # Skip if auth not enabled
+            if not self._auth or not self._auth.enabled:
+                return await call_next(request)
+
+            # Let the index route handle its own rendering
+            if path == "/":
+                return await call_next(request)
+
+            # Static files don't need auth
+            if path.startswith("/static/"):
+                return await call_next(request)
+
+            # API calls need auth
+            if path.startswith("/api/") and not self._auth.authenticate_request(request):
+                return JSONResponse(status_code=401, content={"error": "Authentication required"})
+
+            # WebSocket paths are handled in their own route
+            if path.startswith("/ws/"):
+                return await call_next(request)
+
+            return await call_next(request)
 
         @app.get("/health")
         async def health():
@@ -1433,6 +1550,11 @@ class WebApp:
 
         @app.websocket("/ws/chat")
         async def websocket_chat(websocket: WebSocket):
+            # Auth check for WebSocket
+            if self._auth and self._auth.enabled:
+                if not self._auth.authenticate_websocket(websocket):
+                    await websocket.close(code=4001, reason="Authentication required")
+                    return
             await websocket.accept()
             async with self._lock:
                 self._connections.append(websocket)

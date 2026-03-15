@@ -11,7 +11,7 @@ _VALID_LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 @dataclass
 class WebConfig:
     port: int = 8080
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
 
 
 @dataclass
@@ -63,11 +63,22 @@ class MCPConfig:
 
 
 @dataclass
+class SecurityConfig:
+    auth_enabled: bool = False
+    password_hash: str = ""  # SHA-256 hash
+    api_keys: list[str] = field(default_factory=list)
+    session_timeout: int = 86400  # 24 hours
+    cors_origins: list[str] = field(default_factory=lambda: ["http://localhost:8080", "http://127.0.0.1:8080"])
+    require_https: bool = False
+
+
+@dataclass
 class AppConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
     mcp: MCPConfig = field(default_factory=MCPConfig)
     web: WebConfig = field(default_factory=WebConfig)
+    security: SecurityConfig = field(default_factory=SecurityConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     _persona: dict = field(default=None)
 
@@ -174,6 +185,7 @@ def load_config(config_dir: str = "config") -> AppConfig:
             ]
 
     web_raw = raw.get("web", {})
+    security_raw = raw.get("security", {})
     logging_raw = raw.get("logging", {})
 
     return AppConfig(
@@ -181,6 +193,7 @@ def load_config(config_dir: str = "config") -> AppConfig:
         database=DatabaseConfig(**{k: (int(v) if k == "port" else v) for k, v in db_raw.items() if k in DatabaseConfig.__dataclass_fields__}),
         mcp=mcp_config,
         web=WebConfig(**{k: v for k, v in web_raw.items() if k in WebConfig.__dataclass_fields__}),
+        security=SecurityConfig(**{k: v for k, v in security_raw.items() if k in SecurityConfig.__dataclass_fields__}),
         logging=LoggingConfig(**{k: v for k, v in logging_raw.items() if k in LoggingConfig.__dataclass_fields__}),
     )
 

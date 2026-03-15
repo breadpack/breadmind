@@ -40,6 +40,8 @@ class ToolSecurityConfig:
     _sensitive_patterns: list[str] = list(SENSITIVE_FILE_PATTERNS)
     _allowed_ssh_hosts: list[str] = list(ALLOWED_SSH_HOSTS)
     _base_directory: str = str(Path.cwd())
+    _command_whitelist: list[str] = []  # If non-empty, only these commands allowed
+    _command_whitelist_enabled: bool = False
 
     @classmethod
     def update(cls, dangerous_patterns=None, sensitive_patterns=None,
@@ -54,12 +56,19 @@ class ToolSecurityConfig:
             cls._base_directory = base_directory
 
     @classmethod
+    def set_command_whitelist(cls, commands: list[str], enabled: bool = True):
+        cls._command_whitelist = commands
+        cls._command_whitelist_enabled = enabled
+
+    @classmethod
     def get_config(cls) -> dict:
         return {
             "dangerous_patterns": cls._dangerous_patterns,
             "sensitive_file_patterns": cls._sensitive_patterns,
             "allowed_ssh_hosts": cls._allowed_ssh_hosts,
             "base_directory": cls._base_directory,
+            "command_whitelist": cls._command_whitelist,
+            "command_whitelist_enabled": cls._command_whitelist_enabled,
         }
 
     @classmethod
@@ -69,6 +78,8 @@ class ToolSecurityConfig:
         cls._sensitive_patterns = list(SENSITIVE_FILE_PATTERNS)
         cls._allowed_ssh_hosts = list(ALLOWED_SSH_HOSTS)
         cls._base_directory = str(Path.cwd())
+        cls._command_whitelist = []
+        cls._command_whitelist_enabled = False
 
 
 def _is_dangerous_command(command: str) -> bool:
@@ -78,6 +89,23 @@ def _is_dangerous_command(command: str) -> bool:
         if pattern.lower() in cmd_lower:
             return True
     return False
+
+
+def _is_command_allowed(command: str) -> tuple[bool, str]:
+    """Check if command is allowed. Returns (allowed, reason)."""
+    config = ToolSecurityConfig
+
+    # Whitelist mode (if enabled, only whitelisted commands pass)
+    if config._command_whitelist_enabled and config._command_whitelist:
+        cmd_base = command.split()[0] if command.split() else ""
+        if not any(cmd_base.startswith(w) for w in config._command_whitelist):
+            return False, f"Command '{cmd_base}' not in whitelist"
+
+    # Blacklist check (existing)
+    if _is_dangerous_command(command):
+        return False, "Command matches dangerous pattern"
+
+    return True, ""
 
 
 def _validate_path(path: str) -> Path:
@@ -109,9 +137,10 @@ def _validate_path(path: str) -> Path:
 async def shell_exec(command: str, host: str = "localhost", timeout: int = 30,
                      port: int = 22, username: str = None,
                      key_file: str = None) -> str:
-    # Check for dangerous commands
-    if _is_dangerous_command(command):
-        return f"Error: Command blocked - matches dangerous pattern: {command}"
+    # Check if command is allowed (whitelist + blacklist)
+    allowed, reason = _is_command_allowed(command)
+    if not allowed:
+        return f"Error: Command blocked - {reason}: {command}"
 
     if host == "localhost":
         try:

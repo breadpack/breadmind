@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch, MagicMock
 from breadmind.tools.builtin import (
     shell_exec, web_search, file_read, file_write,
-    _is_dangerous_command, _validate_path,
+    _is_dangerous_command, _is_command_allowed, _validate_path,
     DANGEROUS_PATTERNS, BASE_DIRECTORY,
     ToolSecurityConfig,
 )
@@ -368,3 +368,88 @@ async def test_tool_security_config_updated_ssh_hosts_used_by_shell_exec(reset_s
     ToolSecurityConfig.update(allowed_ssh_hosts=["trusted.example.com"])
     result = await shell_exec(command="echo hi", host="evil.example.com", timeout=5)
     assert "not allowed" in result.lower()
+
+
+# =========================================================================
+# Command whitelist and _is_command_allowed tests
+# =========================================================================
+
+
+def test_is_command_allowed_dangerous_pattern(reset_security_config):
+    """Test _is_command_allowed rejects dangerous patterns."""
+    allowed, reason = _is_command_allowed("rm -rf /")
+    assert allowed is False
+    assert "dangerous pattern" in reason.lower()
+
+
+def test_is_command_allowed_safe_command(reset_security_config):
+    """Test _is_command_allowed accepts safe commands."""
+    allowed, reason = _is_command_allowed("echo hello")
+    assert allowed is True
+    assert reason == ""
+
+
+def test_whitelist_blocks_non_whitelisted(reset_security_config):
+    """Test that whitelist mode blocks commands not in the whitelist."""
+    ToolSecurityConfig.set_command_whitelist(["git", "ls"], enabled=True)
+    allowed, reason = _is_command_allowed("curl http://evil.com")
+    assert allowed is False
+    assert "not in whitelist" in reason.lower()
+
+
+def test_whitelist_allows_whitelisted(reset_security_config):
+    """Test that whitelist mode allows whitelisted commands."""
+    ToolSecurityConfig.set_command_whitelist(["git", "ls", "echo"], enabled=True)
+    allowed, reason = _is_command_allowed("git status")
+    assert allowed is True
+    assert reason == ""
+
+
+def test_whitelist_disabled_falls_back_to_blacklist(reset_security_config):
+    """Test that disabled whitelist falls back to blacklist-only check."""
+    ToolSecurityConfig.set_command_whitelist(["git"], enabled=False)
+    # curl is not in whitelist, but whitelist is disabled so it should pass
+    allowed, reason = _is_command_allowed("curl http://example.com")
+    assert allowed is True
+
+    # Dangerous command should still be blocked by blacklist
+    allowed, reason = _is_command_allowed("rm -rf /")
+    assert allowed is False
+
+
+def test_whitelist_still_checks_blacklist(reset_security_config):
+    """Test that even whitelisted commands are checked against blacklist."""
+    ToolSecurityConfig.set_command_whitelist(["rm"], enabled=True)
+    # "rm" is in whitelist, but "rm -rf /" matches dangerous pattern
+    allowed, reason = _is_command_allowed("rm -rf /")
+    assert allowed is False
+    assert "dangerous pattern" in reason.lower()
+
+
+@pytest.mark.asyncio
+async def test_shell_exec_whitelist_blocks_command(reset_security_config):
+    """Test that shell_exec respects whitelist mode."""
+    ToolSecurityConfig.set_command_whitelist(["git"], enabled=True)
+    if sys.platform == "win32":
+        result = await shell_exec(command="cmd /c echo hello", host="localhost", timeout=5)
+    else:
+        result = await shell_exec(command="echo hello", host="localhost", timeout=5)
+    assert "blocked" in result.lower()
+    assert "not in whitelist" in result.lower()
+
+
+def test_get_config_includes_whitelist(reset_security_config):
+    """Test that get_config returns whitelist fields."""
+    ToolSecurityConfig.set_command_whitelist(["git", "ls"], enabled=True)
+    config = ToolSecurityConfig.get_config()
+    assert config["command_whitelist"] == ["git", "ls"]
+    assert config["command_whitelist_enabled"] is True
+
+
+def test_reset_clears_whitelist(reset_security_config):
+    """Test that reset clears whitelist settings."""
+    ToolSecurityConfig.set_command_whitelist(["git"], enabled=True)
+    ToolSecurityConfig.reset()
+    config = ToolSecurityConfig.get_config()
+    assert config["command_whitelist"] == []
+    assert config["command_whitelist_enabled"] is False

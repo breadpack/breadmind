@@ -3,6 +3,7 @@ import json
 import re
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 from breadmind.llm.base import ToolDefinition
 from breadmind.tools.registry import ToolResult
@@ -32,6 +33,8 @@ _INJECTION_PATTERNS = [
 ]
 
 _DEFAULT_MAX_CONCURRENT = 5
+
+ALLOWED_MCP_COMMANDS = {"node", "npx", "python", "python3", "uvx", "docker", "deno", "bun"}
 
 
 def _check_prompt_injection(text: str) -> bool:
@@ -96,6 +99,25 @@ class MCPClientManager:
         self, name: str, command: str, args: list[str],
         env: dict[str, str] | None = None, source: str = "config",
     ) -> list[ToolDefinition]:
+        # Validate command against allowed list
+        cmd_base = Path(command).name.lower() if command else ""
+        # Strip common extensions (.exe, .cmd, .bat) for Windows compatibility
+        for ext in (".exe", ".cmd", ".bat"):
+            if cmd_base.endswith(ext):
+                cmd_base = cmd_base[:-len(ext)]
+                break
+        if cmd_base not in ALLOWED_MCP_COMMANDS:
+            raise ValueError(
+                f"MCP server command '{command}' not in allowed list: {ALLOWED_MCP_COMMANDS}"
+            )
+
+        # Validate args don't contain shell injection
+        for arg in args:
+            if any(c in arg for c in [';', '&&', '||', '`', '$(']):
+                raise ValueError(
+                    f"MCP server argument contains suspicious characters: {arg}"
+                )
+
         proc = await asyncio.create_subprocess_exec(
             command, *args,
             stdin=asyncio.subprocess.PIPE,
