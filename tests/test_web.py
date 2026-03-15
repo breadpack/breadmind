@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 from breadmind.web.app import WebApp
 
@@ -980,3 +980,150 @@ def test_post_messenger_test_invalid_platform():
     client = TestClient(app.app)
     resp = client.post("/api/messenger/invalid/test")
     assert resp.status_code == 400
+
+
+# --- Update endpoint tests ---
+
+def test_check_update_returns_version_info(monkeypatch):
+    """Test GET /api/update/check returns version info with mocked aiohttp."""
+    import aiohttp
+
+    mock_json = AsyncMock(return_value={
+        "info": {"version": "0.2.0", "summary": "New features"}
+    })
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.json = mock_json
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=mock_resp)
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+
+    monkeypatch.setattr(aiohttp, "ClientSession", lambda: mock_session)
+
+    app = WebApp(message_handler=lambda m, **kw: "ok")
+    client = TestClient(app.app)
+    resp = client.get("/api/update/check")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["current"] == "0.1.0"
+    assert data["latest"] == "0.2.0"
+    assert data["update_available"] is True
+    assert data["release_notes"] == "New features"
+
+
+def test_check_update_no_update_available(monkeypatch):
+    """Test GET /api/update/check when already on latest version."""
+    import aiohttp
+
+    mock_json = AsyncMock(return_value={
+        "info": {"version": "0.1.0", "summary": "Current version"}
+    })
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.json = mock_json
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    # PyPI returns current version, GitHub also returns current
+    mock_gh_json = AsyncMock(return_value={
+        "tag_name": "v0.1.0", "body": "Current release"
+    })
+    mock_gh_resp = MagicMock()
+    mock_gh_resp.status = 200
+    mock_gh_resp.json = mock_gh_json
+    mock_gh_resp.__aenter__ = AsyncMock(return_value=mock_gh_resp)
+    mock_gh_resp.__aexit__ = AsyncMock(return_value=False)
+
+    call_count = [0]
+    def mock_get(*args, **kwargs):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return mock_resp
+        return mock_gh_resp
+
+    mock_session = MagicMock()
+    mock_session.get = mock_get
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+
+    monkeypatch.setattr(aiohttp, "ClientSession", lambda: mock_session)
+
+    app = WebApp(message_handler=lambda m, **kw: "ok")
+    client = TestClient(app.app)
+    resp = client.get("/api/update/check")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["current"] == "0.1.0"
+    assert data["update_available"] is False
+
+
+def test_apply_update_success(monkeypatch):
+    """Test POST /api/update/apply with mocked subprocess."""
+    import asyncio
+
+    async def mock_create_subprocess_exec(*args, **kwargs):
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(
+            b"Successfully installed breadmind-0.2.0", b""
+        ))
+        return mock_proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", mock_create_subprocess_exec)
+
+    app = WebApp(message_handler=lambda m, **kw: "ok")
+    client = TestClient(app.app)
+    resp = client.post("/api/update/apply")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["restart_required"] is True
+    assert "Update installed" in data["message"]
+
+
+def test_apply_update_failure_then_github(monkeypatch):
+    """Test POST /api/update/apply falls back to GitHub on pip failure."""
+    import asyncio
+
+    call_count = [0]
+    async def mock_create_subprocess_exec(*args, **kwargs):
+        call_count[0] += 1
+        mock_proc = MagicMock()
+        if call_count[0] == 1:
+            # First call (pip install breadmind) fails
+            mock_proc.returncode = 1
+            mock_proc.communicate = AsyncMock(return_value=(
+                b"", b"ERROR: No matching distribution"
+            ))
+        else:
+            # Second call (GitHub fallback) succeeds
+            mock_proc.returncode = 0
+            mock_proc.communicate = AsyncMock(return_value=(
+                b"Successfully installed breadmind-0.2.0", b""
+            ))
+        return mock_proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", mock_create_subprocess_exec)
+
+    app = WebApp(message_handler=lambda m, **kw: "ok")
+    client = TestClient(app.app)
+    resp = client.post("/api/update/apply")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert "GitHub" in data["message"]
+
+
+def test_restart_service_returns_status():
+    """Test POST /api/update/restart returns a status."""
+    app = WebApp(message_handler=lambda m, **kw: "ok")
+    client = TestClient(app.app)
+    resp = client.post("/api/update/restart")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "status" in data
+    assert "message" in data

@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import sys
 from dataclasses import asdict
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -1113,6 +1114,130 @@ class WebApp:
                 except Exception:
                     pass
             return {"status": "ok", "level": level}
+
+        @app.get("/api/update/check")
+        async def check_update():
+            """Check for new version from PyPI or GitHub."""
+            import aiohttp
+            current = "0.1.0"
+            latest = current
+            update_available = False
+            release_notes = ""
+
+            try:
+                # Try PyPI first
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        "https://pypi.org/pypi/breadmind/json",
+                        timeout=aiohttp.ClientTimeout(total=10),
+                    ) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            latest = data.get("info", {}).get("version", current)
+                            release_notes = data.get("info", {}).get("summary", "")
+            except Exception:
+                pass
+
+            if latest == current:
+                # Try GitHub releases
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(
+                            "https://api.github.com/repos/breadpack/breadmind/releases/latest",
+                            timeout=aiohttp.ClientTimeout(total=10),
+                        ) as resp:
+                            if resp.status == 200:
+                                data = await resp.json()
+                                tag = data.get("tag_name", "").lstrip("v")
+                                if tag:
+                                    latest = tag
+                                    release_notes = data.get("body", "")[:500]
+                except Exception:
+                    pass
+
+            # Simple version comparison
+            try:
+                from packaging.version import Version
+                update_available = Version(latest) > Version(current)
+            except Exception:
+                update_available = latest != current and latest > current
+
+            return {
+                "current": current,
+                "latest": latest,
+                "update_available": update_available,
+                "release_notes": release_notes,
+            }
+
+        @app.post("/api/update/apply")
+        async def apply_update():
+            """Apply update by running pip install --upgrade."""
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    sys.executable, "-m", "pip", "install", "--upgrade", "breadmind",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await proc.communicate()
+                output = stdout.decode("utf-8", errors="replace")
+                if proc.returncode == 0:
+                    return {
+                        "status": "ok",
+                        "message": "Update installed. Restart the service to apply.",
+                        "output": output[-500:],
+                        "restart_required": True,
+                    }
+                else:
+                    # Try GitHub fallback
+                    proc2 = await asyncio.create_subprocess_exec(
+                        sys.executable, "-m", "pip", "install", "--upgrade",
+                        "git+https://github.com/breadpack/breadmind.git",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    stdout2, stderr2 = await proc2.communicate()
+                    if proc2.returncode == 0:
+                        return {
+                            "status": "ok",
+                            "message": "Update installed from GitHub. Restart the service to apply.",
+                            "output": stdout2.decode("utf-8", errors="replace")[-500:],
+                            "restart_required": True,
+                        }
+                    return {
+                        "status": "error",
+                        "message": "Update failed",
+                        "output": stderr.decode("utf-8", errors="replace")[-500:],
+                    }
+            except Exception as e:
+                return {"status": "error", "message": str(e)}
+
+        @app.post("/api/update/restart")
+        async def restart_service():
+            """Restart the BreadMind service after update."""
+            import platform as _platform
+            try:
+                if _platform.system() == "Windows":
+                    # Try NSSM restart
+                    nssm_path = os.path.join(os.environ.get("APPDATA", ""), "breadmind", "bin", "nssm.exe")
+                    if os.path.exists(nssm_path):
+                        proc = await asyncio.create_subprocess_exec(
+                            nssm_path, "restart", "BreadMind",
+                            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                        )
+                        await proc.communicate()
+                        return {"status": "ok", "message": "Service restarting..."}
+                else:
+                    # Try systemctl restart
+                    proc = await asyncio.create_subprocess_exec(
+                        "sudo", "systemctl", "restart", "breadmind",
+                        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                    )
+                    await proc.communicate()
+                    return {"status": "ok", "message": "Service restarting..."}
+
+                return {"status": "manual", "message": "Please restart the service manually."}
+            except Exception as e:
+                return {"status": "error", "message": str(e)}
 
         @app.websocket("/ws/chat")
         async def websocket_chat(websocket: WebSocket):

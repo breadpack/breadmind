@@ -245,6 +245,35 @@ async def run():
     web_host = args.host or config.web.host
     web_port = args.port or config.web.port
 
+    # Background update checker
+    async def check_updates_periodically():
+        import aiohttp
+        while True:
+            await asyncio.sleep(3600)  # Check every hour
+            try:
+                current = "0.1.0"
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        "https://pypi.org/pypi/breadmind/json",
+                        timeout=aiohttp.ClientTimeout(total=10),
+                    ) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            latest = data.get("info", {}).get("version", current)
+                            if latest != current:
+                                print(f"  Update available: v{current} → v{latest}")
+                                # If web app running, broadcast notification
+                                if args.web and 'web_app' in dir():
+                                    await web_app.broadcast_event({
+                                        "type": "update_available",
+                                        "current": current,
+                                        "latest": latest,
+                                    })
+            except Exception:
+                pass
+
+    update_task = asyncio.create_task(check_updates_periodically())
+
     try:
         if args.web:
             import uvicorn
@@ -286,6 +315,7 @@ async def run():
                 response = await agent.handle_message(user_input, user="local", channel="cli")
                 print(f"breadmind> {response}\n")
     finally:
+        update_task.cancel()
         await monitoring_engine.stop()
         await mcp_manager.stop_all()
         working_memory._sessions.clear()

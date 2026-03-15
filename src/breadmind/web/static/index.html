@@ -270,9 +270,21 @@
         .cat-section { margin-bottom:16px; }
         .cat-section h4 { color:#94a3b8; font-size:13px; margin:0 0 8px 0; }
         .cat-section .server-card { margin-bottom:6px; }
+
+        /* Update banner */
+        .update-banner { display:none; background:linear-gradient(135deg, #1e3a5f, #064e3b); padding:10px 20px; text-align:center; font-size:13px; color:#e2e8f0; position:relative; z-index:100; }
+        .update-banner.show { display:block; }
+        .update-banner a { color:#60a5fa; cursor:pointer; text-decoration:underline; margin:0 8px; }
+        .update-banner .btn-update { background:#3b82f6; color:white; border:none; padding:4px 16px; border-radius:4px; cursor:pointer; font-size:12px; margin-left:8px; }
+        .update-banner .btn-dismiss { background:none; border:none; color:#64748b; cursor:pointer; position:absolute; right:12px; top:50%; transform:translateY(-50%); font-size:16px; }
     </style>
 </head>
 <body>
+    <div class="update-banner" id="updateBanner">
+        <span id="updateText"></span>
+        <button class="btn-update" id="updateBtn" onclick="applyUpdate()">Update Now</button>
+        <button class="btn-dismiss" onclick="dismissUpdate()">&times;</button>
+    </div>
     <header>
         <h1>&#x1F35E; BreadMind</h1>
         <span class="badge">v0.1.0</span>
@@ -386,6 +398,7 @@
                 if (data.type === 'response') { addMessage(data.message, 'bot'); sendBtn.disabled = false; sendBtn.textContent = 'Send'; }
                 else if (data.type === 'notification') addMessage(data.message, 'bot');
                 else if (data.type === 'monitoring_event') addMonitoringEvent(data.event);
+                else if (data.type === 'update_available') { showUpdateBanner(data.event.current, data.event.latest, ''); }
                 else if (data.type === 'messenger_connected') {
                     addMessage('✅ ' + (data.event && data.event.platform || 'Messenger') + ' 연동이 완료되었습니다!', 'bot');
                     showToast((data.event && data.event.platform || 'Messenger') + ' connected!', 'success');
@@ -894,6 +907,14 @@
                 html += `<div class="section-footer"><button class="save-btn" id="btn-logging" onclick="saveLogging()">Save</button></div>`;
                 html += `</div>`;
 
+                // System Info
+                html += `<div class="settings-section"><h3>System Info</h3>`;
+                html += `<div class="setting-row"><span class="setting-label">Version</span><span class="setting-value" id="sys-version">v0.1.0</span></div>`;
+                html += `<div class="setting-row"><span class="setting-label">Latest</span><span class="setting-value" id="sys-latest">checking...</span></div>`;
+                html += `<button class="save-btn" id="sys-update-btn" style="display:none;margin-top:8px;" onclick="applyUpdate()">Update Now</button>`;
+                html += ` <button class="save-btn" onclick="checkForUpdate()" style="background:#6366f1;margin-top:8px;">Check for Updates</button>`;
+                html += `</div>`;
+
                 // Database (read-only)
                 html += `<div class="settings-section"><h3>Database</h3>`;
                 if (config.database) {
@@ -911,6 +932,8 @@
                 const curProvider = (config.llm || {}).default_provider || 'claude';
                 const curModel = (config.llm || {}).default_model || '';
                 loadModelsForProvider(curProvider, curModel);
+                // Check for updates when settings tab opens
+                checkForUpdate();
             });
         }
 
@@ -1900,6 +1923,68 @@
         document.getElementById('mcp-search-input').addEventListener('keydown', function(e) {
             if (e.key === 'Enter') searchMCP();
         });
+
+        // Check for updates on page load and via WebSocket
+        async function checkForUpdate() {
+            try {
+                const resp = await fetch('/api/update/check');
+                const data = await resp.json();
+                if (data.update_available) {
+                    showUpdateBanner(data.current, data.latest, data.release_notes);
+                }
+                // Update settings version info if elements exist
+                const sysVersion = document.getElementById('sys-version');
+                if (sysVersion) sysVersion.textContent = 'v' + data.current;
+                const sysLatest = document.getElementById('sys-latest');
+                if (sysLatest) {
+                    sysLatest.textContent = data.update_available ? 'v' + data.latest + ' (update available)' : 'v' + data.latest + ' (up to date)';
+                }
+                const sysUpdateBtn = document.getElementById('sys-update-btn');
+                if (sysUpdateBtn) sysUpdateBtn.style.display = data.update_available ? '' : 'none';
+            } catch(e) {}
+        }
+
+        function showUpdateBanner(current, latest, notes) {
+            const banner = document.getElementById('updateBanner');
+            const text = document.getElementById('updateText');
+            text.innerHTML = '&#x1F504; New version available: v' + escapeHtml(current) + ' &rarr; <strong>v' + escapeHtml(latest) + '</strong>';
+            if (notes) text.innerHTML += ' &mdash; ' + escapeHtml(notes.substring(0, 100));
+            banner.classList.add('show');
+        }
+
+        function dismissUpdate() {
+            document.getElementById('updateBanner').classList.remove('show');
+        }
+
+        async function applyUpdate() {
+            const btn = document.getElementById('updateBtn');
+            btn.disabled = true;
+            btn.textContent = 'Updating...';
+            try {
+                const resp = await fetch('/api/update/apply', { method: 'POST' });
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    btn.textContent = 'Restarting...';
+                    showToast('Update installed! Restarting...', 'success');
+                    // Try to restart service
+                    await fetch('/api/update/restart', { method: 'POST' });
+                    // Wait and reload page
+                    setTimeout(function() { location.reload(); }, 5000);
+                } else {
+                    btn.textContent = 'Update Failed';
+                    btn.disabled = false;
+                    showToast(data.message || 'Update failed', 'error');
+                    setTimeout(function() { btn.textContent = 'Update Now'; }, 3000);
+                }
+            } catch(e) {
+                btn.textContent = 'Update Now';
+                btn.disabled = false;
+                showToast('Network error', 'error');
+            }
+        }
+
+        // Check for updates on page load
+        checkForUpdate();
 
         // Load initial data
         fetch('/api/tools').then(r => r.json()).then(data => {
