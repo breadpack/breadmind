@@ -14,6 +14,7 @@ from breadmind.core.audit import AuditLogger
 
 if TYPE_CHECKING:
     from breadmind.memory.working import WorkingMemory
+    from breadmind.core.tool_gap import ToolGapDetector
 
 logger = logging.getLogger("breadmind.agent")
 
@@ -31,6 +32,7 @@ class CoreAgent:
         chat_timeout: int = 120,
         audit_logger: AuditLogger | None = None,
         summarizer: object | None = None,
+        tool_gap_detector: ToolGapDetector | None = None,
     ):
         self._provider = provider
         self._tools = tool_registry
@@ -43,6 +45,7 @@ class CoreAgent:
         self._total_usage: dict[str, int] = {"input_tokens": 0, "output_tokens": 0}
         self._audit_logger = audit_logger
         self._summarizer = summarizer
+        self._tool_gap_detector = tool_gap_detector
         self._pending_approvals: dict[str, dict] = {}
 
     async def update_provider(self, provider: LLMProvider):
@@ -297,6 +300,16 @@ class CoreAgent:
                             self._tools.execute(tc.name, tc.arguments),
                             timeout=self._tool_timeout,
                         )
+                        # Check for tool gap
+                        if result.not_found and self._tool_gap_detector:
+                            try:
+                                gap_result = await self._tool_gap_detector.check_and_resolve(
+                                    tc.name, tc.arguments, user, channel,
+                                )
+                                elapsed = (time.monotonic() - t_start) * 1000
+                                return tc, f"[success=False] {gap_result.message}", elapsed
+                            except Exception as e:
+                                logger.error(f"ToolGapDetector error: {e}")
                         elapsed = (time.monotonic() - t_start) * 1000
                         prefix = f"[success={result.success}]"
                         return tc, f"{prefix} {result.output}", elapsed
