@@ -11,7 +11,7 @@ from breadmind.llm.factory import create_provider
 from breadmind.memory.working import WorkingMemory
 from breadmind.monitoring.engine import MonitoringEngine
 from breadmind.tools.registry import ToolRegistry
-from breadmind.tools.builtin import shell_exec, web_search, file_read, file_write, messenger_connect
+from breadmind.tools.builtin import shell_exec, web_search, file_read, file_write, messenger_connect, swarm_role
 from breadmind.tools.mcp_client import MCPClientManager
 from breadmind.tools.registry_search import RegistrySearchEngine, RegistryConfig
 from breadmind.tools.meta import create_meta_tools
@@ -127,7 +127,7 @@ async def run():
     )
 
     # Register built-in tools
-    for t in [shell_exec, web_search, file_read, file_write, messenger_connect]:
+    for t in [shell_exec, web_search, file_read, file_write, messenger_connect, swarm_role]:
         registry.register(t)
 
     # Initialize MCP
@@ -294,6 +294,14 @@ async def run():
             import uvicorn
             from breadmind.web.app import WebApp
 
+            # Initialize SwarmManager
+            from breadmind.core.swarm import SwarmManager
+            swarm_manager = SwarmManager(message_handler=agent.handle_message)
+
+            # Wire swarm_role tool
+            from breadmind.tools.builtin import set_swarm_manager
+            set_swarm_manager(swarm_manager, db)
+
             web_app = WebApp(
                 message_handler=agent.handle_message,
                 tool_registry=registry,
@@ -308,6 +316,7 @@ async def run():
                 mcp_store=mcp_store,
                 safety_guard=guard,
                 working_memory=working_memory,
+                swarm_manager=swarm_manager,
             )
             print(f"  Starting web server on {web_host}:{web_port}")
             server_config = uvicorn.Config(

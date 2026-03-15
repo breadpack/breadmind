@@ -324,3 +324,65 @@ async def messenger_connect(platform: str) -> str:
 
     elif platform == "telegram":
         return "[OPEN_URL]https://t.me/BotFather[/OPEN_URL] Telegram BotFather를 열었습니다. /newbot 명령으로 봇을 만들고, 발급된 토큰을 Settings 페이지의 Telegram Bot Token 필드에 입력해주세요."
+
+
+# --- Swarm role management ---
+_swarm_manager = None
+_swarm_db = None
+
+
+def set_swarm_manager(manager, db=None):
+    """Wire the swarm manager so chat tools can manage roles."""
+    global _swarm_manager, _swarm_db
+    _swarm_manager = manager
+    _swarm_db = db
+
+
+@tool(description="Manage Agent Swarm roles. action: 'list', 'add', 'update', or 'remove'. For add/update, provide name, system_prompt, and description.")
+async def swarm_role(action: str, name: str = "", system_prompt: str = "", description: str = "") -> str:
+    if _swarm_manager is None:
+        return "Swarm manager not configured."
+
+    if action == "list":
+        roles = _swarm_manager.get_available_roles()
+        lines = [f"- **{r['role']}**: {r['description']}" for r in roles]
+        return f"Available roles ({len(roles)}):\n" + "\n".join(lines)
+
+    elif action == "add":
+        if not name or not system_prompt:
+            return "Error: name and system_prompt are required for adding a role."
+        name = name.strip().lower().replace(" ", "_")
+        _swarm_manager.add_role(name, system_prompt, description or name)
+        if _swarm_db:
+            try:
+                import asyncio
+                await _swarm_db.set_setting("swarm_roles", _swarm_manager.export_roles())
+            except Exception:
+                pass
+        return f"Role '{name}' added successfully."
+
+    elif action == "update":
+        if not name:
+            return "Error: name is required for updating a role."
+        _swarm_manager.update_role(name, system_prompt=system_prompt, description=description)
+        if _swarm_db:
+            try:
+                await _swarm_db.set_setting("swarm_roles", _swarm_manager.export_roles())
+            except Exception:
+                pass
+        return f"Role '{name}' updated."
+
+    elif action == "remove":
+        if not name:
+            return "Error: name is required for removing a role."
+        removed = _swarm_manager.remove_role(name)
+        if not removed:
+            return f"Role '{name}' not found."
+        if _swarm_db:
+            try:
+                await _swarm_db.set_setting("swarm_roles", _swarm_manager.export_roles())
+            except Exception:
+                pass
+        return f"Role '{name}' removed."
+
+    return f"Unknown action: {action}. Use list, add, update, or remove."
