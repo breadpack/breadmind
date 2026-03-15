@@ -2109,7 +2109,7 @@ class WebApp:
         @app.get("/api/sessions")
         async def list_sessions():
             if self._working_memory:
-                return {"sessions": self._working_memory.list_session_summaries(user="web")}
+                return {"sessions": await self._working_memory.list_all_sessions(user="web")}
             return {"sessions": []}
 
         @app.get("/api/sessions/{session_id}/messages")
@@ -2143,6 +2143,11 @@ class WebApp:
                     # Handle session switching
                     if msg.get("type") == "switch_session":
                         current_session = msg.get("session_id", "default")
+                        # Try loading from DB if not in memory
+                        if self._working_memory and self._working_memory._db:
+                            sid = f"web:{current_session}"
+                            if sid not in self._working_memory._sessions:
+                                await self._working_memory.load_session_from_db(sid)
                         # Send session history
                         if self._working_memory:
                             messages = self._working_memory.get_session_messages(f"web:{current_session}")

@@ -530,3 +530,64 @@ async def test_promote_to_semantic_no_semantic():
     cb = ContextBuilder(wm)
     entities = await cb.promote_to_semantic()
     assert entities == []
+
+
+# =========================================================================
+# Working Memory - DB Persistence
+# =========================================================================
+
+class TestWorkingMemoryPersistence:
+    @pytest.mark.asyncio
+    async def test_persist_and_load_session(self):
+        mock_db = AsyncMock()
+        mock_db.save_conversation = AsyncMock()
+        mock_db.load_conversation = AsyncMock(return_value={
+            "session_id": "test:1",
+            "user": "testuser",
+            "channel": "web",
+            "title": "Test Session",
+            "messages": [
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "hi there"},
+            ],
+        })
+        mock_db.list_conversations = AsyncMock(return_value=[])
+
+        wm = WorkingMemory(db=mock_db)
+        loaded = await wm.load_session_from_db("test:1")
+        assert loaded is True
+        msgs = wm.get_messages("test:1")
+        assert len(msgs) == 2
+        assert msgs[0].content == "hello"
+
+    @pytest.mark.asyncio
+    async def test_list_all_sessions_includes_db(self):
+        mock_db = AsyncMock()
+        mock_db.list_conversations = AsyncMock(return_value=[
+            {"session_id": "db:1", "user_id": "", "channel": "web",
+             "title": "Old Session", "created_at": datetime.now(timezone.utc),
+             "last_active": datetime.now(timezone.utc)},
+        ])
+
+        wm = WorkingMemory(db=mock_db)
+        # Add an in-memory session
+        wm.get_or_create_session("mem:1", user="u", channel="c")
+        sessions = await wm.list_all_sessions()
+        ids = [s["session_id"] for s in sessions]
+        assert "mem:1" in ids
+        assert "db:1" in ids
+
+    @pytest.mark.asyncio
+    async def test_load_nonexistent_session(self):
+        mock_db = AsyncMock()
+        mock_db.load_conversation = AsyncMock(return_value=None)
+
+        wm = WorkingMemory(db=mock_db)
+        loaded = await wm.load_session_from_db("nonexistent")
+        assert loaded is False
+
+    @pytest.mark.asyncio
+    async def test_no_db_graceful(self):
+        wm = WorkingMemory()  # No DB
+        loaded = await wm.load_session_from_db("test")
+        assert loaded is False

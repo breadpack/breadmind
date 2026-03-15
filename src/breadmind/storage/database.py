@@ -85,6 +85,18 @@ class Database:
                     status TEXT DEFAULT 'stopped',
                     installed_at TIMESTAMPTZ DEFAULT NOW()
                 );
+
+                CREATE TABLE IF NOT EXISTS conversations (
+                    session_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL DEFAULT '',
+                    channel TEXT NOT NULL DEFAULT '',
+                    title TEXT DEFAULT '',
+                    messages JSONB NOT NULL DEFAULT '[]',
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    last_active TIMESTAMPTZ DEFAULT NOW()
+                );
+                CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id);
+                CREATE INDEX IF NOT EXISTS idx_conversations_active ON conversations(last_active DESC);
             """)
 
         # pgvector extension (optional)
@@ -400,3 +412,60 @@ class Database:
                 "DELETE FROM settings WHERE key = $1", key
             )
             return result == "DELETE 1"
+
+    # --- Conversations ---
+
+    async def save_conversation(self, session_id: str, user: str, channel: str,
+                                title: str, messages: list[dict], created_at=None, last_active=None):
+        """Upsert conversation to DB."""
+        from datetime import datetime, timezone
+        async with self.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO conversations (session_id, user_id, channel, title, messages, created_at, last_active)
+                VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)
+                ON CONFLICT (session_id) DO UPDATE SET
+                    messages = EXCLUDED.messages,
+                    title = EXCLUDED.title,
+                    last_active = EXCLUDED.last_active
+            """, session_id, user, channel, title,
+                json.dumps(messages),
+                created_at or datetime.now(timezone.utc),
+                last_active or datetime.now(timezone.utc))
+
+    async def load_conversation(self, session_id: str) -> dict | None:
+        """Load a conversation from DB."""
+        async with self.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM conversations WHERE session_id = $1", session_id)
+            if not row:
+                return None
+            return {
+                "session_id": row["session_id"],
+                "user": row["user_id"],
+                "channel": row["channel"],
+                "title": row["title"],
+                "messages": json.loads(row["messages"]) if isinstance(row["messages"], str) else row["messages"],
+                "created_at": row["created_at"],
+                "last_active": row["last_active"],
+            }
+
+    async def list_conversations(self, user: str = "", limit: int = 50) -> list[dict]:
+        """List recent conversations."""
+        async with self.acquire() as conn:
+            if user:
+                rows = await conn.fetch(
+                    "SELECT session_id, user_id, channel, title, created_at, last_active "
+                    "FROM conversations WHERE user_id = $1 ORDER BY last_active DESC LIMIT $2",
+                    user, limit)
+            else:
+                rows = await conn.fetch(
+                    "SELECT session_id, user_id, channel, title, created_at, last_active "
+                    "FROM conversations ORDER BY last_active DESC LIMIT $1",
+                    limit)
+            return [dict(row) for row in rows]
+
+    async def delete_conversation(self, session_id: str) -> bool:
+        async with self.acquire() as conn:
+            result = await conn.execute(
+                "DELETE FROM conversations WHERE session_id = $1", session_id)
+            return "DELETE 1" in result

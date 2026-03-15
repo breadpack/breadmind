@@ -239,7 +239,7 @@ async def run():
         print(f"  MCP Store: not available ({e})")
 
     # Initialize working memory
-    working_memory = WorkingMemory()
+    working_memory = WorkingMemory(db=db)
 
     # Initialize monitoring engine
     monitoring_engine = MonitoringEngine()
