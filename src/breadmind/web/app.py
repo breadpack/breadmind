@@ -174,8 +174,28 @@ class WebApp:
         async def setup_recommend():
             """Use LLM to generate setup recommendations based on environment."""
             from breadmind.core.setup_wizard import discover_environment, generate_recommendations
+
             env = await discover_environment()
-            recommendations = await generate_recommendations(env, self._message_handler)
+
+            # Create a fresh provider with the newly saved key
+            # (the main agent may still use the old/fallback provider)
+            handler = self._message_handler
+            try:
+                from breadmind.main import create_provider
+                if self._config:
+                    provider = create_provider(self._config)
+                    from breadmind.llm.base import LLMMessage
+                    async def fresh_handler(msg, user="setup", channel="setup"):
+                        resp = await provider.chat([
+                            LLMMessage(role="system", content="You are BreadMind, an AI infrastructure agent."),
+                            LLMMessage(role="user", content=msg),
+                        ])
+                        return resp.content or ""
+                    handler = fresh_handler
+            except Exception:
+                pass
+
+            recommendations = await generate_recommendations(env, handler)
             return {"environment": env.to_dict(), "recommendations": recommendations}
 
         # --- Auth endpoints ---
