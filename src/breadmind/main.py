@@ -156,6 +156,12 @@ async def run():
         await apply_db_settings(config, db)
         print(f"  Settings: {config_dir}/settings.json")
 
+    # First-run setup wizard (CLI mode only, web has its own UI)
+    if not args.web:
+        from breadmind.core.setup_wizard import is_first_run_async, run_cli_wizard
+        if await is_first_run_async(db):
+            await run_cli_wizard(db, config)
+
     provider = create_provider(config)
     registry = ToolRegistry()
     guard = SafetyGuard(

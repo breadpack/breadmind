@@ -91,6 +91,93 @@ class WebApp:
     def _setup_routes(self):
         app = self.app
 
+        # --- Setup wizard endpoints ---
+
+        @app.get("/api/setup/status")
+        async def setup_status():
+            """Check if first-run setup is needed."""
+            from breadmind.core.setup_wizard import is_first_run_async
+            first_run = await is_first_run_async(self._db)
+            return {"first_run": first_run}
+
+        @app.get("/api/setup/providers")
+        async def setup_providers():
+            """List available LLM providers for setup."""
+            from breadmind.core.setup_wizard import PROVIDER_OPTIONS
+            return {"providers": PROVIDER_OPTIONS}
+
+        @app.post("/api/setup/validate")
+        async def setup_validate(request: Request):
+            """Validate an API key for a provider."""
+            data = await request.json()
+            provider_id = data.get("provider", "")
+            api_key = data.get("api_key", "")
+            from breadmind.core.setup_wizard import validate_api_key
+            result = await validate_api_key(provider_id, api_key)
+            return result
+
+        @app.post("/api/setup/complete")
+        async def setup_complete(request: Request):
+            """Save provider config and mark setup as done."""
+            data = await request.json()
+            provider_id = data.get("provider", "")
+            api_key = data.get("api_key", "")
+            model = data.get("model", "")
+
+            from breadmind.core.setup_wizard import PROVIDER_OPTIONS, mark_setup_complete
+
+            # Find provider info
+            provider_info = next((p for p in PROVIDER_OPTIONS if p["id"] == provider_id), None)
+            if not provider_info:
+                return JSONResponse(status_code=400, content={"error": "Invalid provider"})
+
+            # Save API key
+            env_key = provider_info.get("env_key")
+            if env_key and api_key:
+                os.environ[env_key] = api_key
+                if self._db:
+                    try:
+                        from breadmind.config import save_api_key_to_db
+                        await save_api_key_to_db(self._db, env_key, api_key)
+                    except Exception:
+                        from breadmind.config import save_env_var
+                        save_env_var(env_key, api_key)
+                else:
+                    from breadmind.config import save_env_var
+                    save_env_var(env_key, api_key)
+
+            # Save provider config
+            if not model:
+                model = provider_info["models"][0]
+            if self._config:
+                self._config.llm.default_provider = provider_id
+                self._config.llm.default_model = model
+            if self._db:
+                await self._db.set_setting("llm", {
+                    "default_provider": provider_id,
+                    "default_model": model,
+                    "tool_call_max_turns": self._config.llm.tool_call_max_turns if self._config else 10,
+                    "tool_call_timeout_seconds": self._config.llm.tool_call_timeout_seconds if self._config else 30,
+                })
+
+            await mark_setup_complete(self._db)
+            return {"status": "ok", "provider": provider_id, "model": model}
+
+        @app.get("/api/setup/discover")
+        async def setup_discover():
+            """Discover local infrastructure environment."""
+            from breadmind.core.setup_wizard import discover_environment
+            env = await discover_environment()
+            return {"environment": env.to_dict(), "summary": env.summary()}
+
+        @app.post("/api/setup/recommend")
+        async def setup_recommend():
+            """Use LLM to generate setup recommendations based on environment."""
+            from breadmind.core.setup_wizard import discover_environment, generate_recommendations
+            env = await discover_environment()
+            recommendations = await generate_recommendations(env, self._message_handler)
+            return {"environment": env.to_dict(), "recommendations": recommendations}
+
         # --- Auth endpoints ---
 
         @app.post("/api/auth/login")
@@ -166,7 +253,7 @@ class WebApp:
         async def auth_middleware(request: Request, call_next):
             path = request.url.path
             # Skip auth for certain paths
-            skip_paths = ["/api/auth/", "/health", "/api/webhook/receive/"]
+            skip_paths = ["/api/auth/", "/api/setup/", "/health", "/api/webhook/receive/"]
             if any(path.startswith(p) for p in skip_paths):
                 return await call_next(request)
 

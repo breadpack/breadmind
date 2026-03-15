@@ -294,6 +294,41 @@
             <span id="statusText" style="font-size:13px;color:#94a3b8;">Connecting...</span>
         </div>
     </header>
+
+    <!-- Setup Wizard Modal -->
+    <div id="setup-wizard" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:#0f172a;z-index:9999;overflow-y:auto;">
+        <div style="max-width:560px;margin:60px auto;padding:24px;">
+            <h1 style="color:#f8fafc;font-size:28px;margin-bottom:8px;">Welcome to BreadMind</h1>
+            <p style="color:#94a3b8;margin-bottom:32px;">AI Infrastructure Agent - Initial Setup</p>
+
+            <!-- Step 1: Provider -->
+            <div id="setup-step-1">
+                <h3 style="color:#e2e8f0;margin-bottom:16px;">Step 1: Select LLM Provider</h3>
+                <div id="setup-providers" style="display:flex;flex-direction:column;gap:10px;"></div>
+            </div>
+
+            <!-- Step 2: API Key -->
+            <div id="setup-step-2" style="display:none;">
+                <h3 style="color:#e2e8f0;margin-bottom:16px;">Step 2: Enter API Key</h3>
+                <p id="setup-signup-link" style="color:#94a3b8;font-size:13px;margin-bottom:12px;"></p>
+                <div style="display:flex;gap:8px;">
+                    <input type="password" id="setup-api-key" class="setting-input" placeholder="API key" style="flex:1;" />
+                    <button class="save-btn" id="setup-validate-btn" onclick="setupValidateKey()">Validate</button>
+                </div>
+                <div id="setup-key-status" style="margin-top:8px;font-size:13px;"></div>
+            </div>
+
+            <!-- Step 3: Discover -->
+            <div id="setup-step-3" style="display:none;">
+                <h3 style="color:#e2e8f0;margin-bottom:16px;">Step 3: Environment Discovery</h3>
+                <div id="setup-env-status" style="color:#94a3b8;font-size:13px;">Scanning your infrastructure...</div>
+                <pre id="setup-env-result" style="background:#1e293b;border:1px solid #334155;border-radius:8px;padding:12px;font-size:12px;color:#e2e8f0;margin-top:12px;white-space:pre-wrap;display:none;"></pre>
+                <div id="setup-recommendations" style="background:#1e293b;border:1px solid #334155;border-radius:8px;padding:12px;font-size:13px;color:#e2e8f0;margin-top:12px;white-space:pre-wrap;display:none;"></div>
+                <button class="save-btn" id="setup-finish-btn" style="margin-top:16px;display:none;" onclick="setupFinish()">Start Using BreadMind</button>
+            </div>
+        </div>
+    </div>
+
     <div class="tabs">
         <div class="tab active" onclick="switchTab('chat')">Chat</div>
         <div class="tab" onclick="switchTab('monitoring')">Monitoring <span class="count" id="eventCount">0</span></div>
@@ -2387,6 +2422,127 @@
                 alert('Uninstall request sent. The service may have already stopped.');
             }
         }
+
+        // ── Setup Wizard ──
+        let _setupProvider = null;
+
+        async function checkFirstRun() {
+            try {
+                const resp = await fetch('/api/setup/status');
+                const data = await resp.json();
+                if (data.first_run) {
+                    document.getElementById('setup-wizard').style.display = 'block';
+                    await loadSetupProviders();
+                }
+            } catch(e) {}
+        }
+
+        async function loadSetupProviders() {
+            const resp = await fetch('/api/setup/providers');
+            const data = await resp.json();
+            const container = document.getElementById('setup-providers');
+            container.innerHTML = data.providers.map(p => {
+                const free = p.free_tier ? '<span style="color:#34d399;font-size:11px;"> (free tier)</span>' : '';
+                const models = p.models.join(', ');
+                return `<div onclick="selectSetupProvider('${p.id}')" id="setup-p-${p.id}" style="background:#1e293b;border:2px solid #334155;border-radius:10px;padding:14px;cursor:pointer;transition:all 0.2s;" onmouseover="this.style.borderColor='#3b82f6'" onmouseout="this.style.borderColor=this.dataset.selected==='true'?'#3b82f6':'#334155'">
+                    <div style="font-size:15px;color:#f8fafc;">${p.name}${free}</div>
+                    <div style="font-size:12px;color:#64748b;margin-top:4px;">Models: ${models}</div>
+                </div>`;
+            }).join('');
+        }
+
+        function selectSetupProvider(id) {
+            fetch('/api/setup/providers').then(r => r.json()).then(data => {
+                _setupProvider = data.providers.find(p => p.id === id);
+                // Highlight selected
+                data.providers.forEach(p => {
+                    const el = document.getElementById('setup-p-' + p.id);
+                    if (el) { el.style.borderColor = p.id === id ? '#3b82f6' : '#334155'; el.dataset.selected = (p.id === id).toString(); }
+                });
+                // Show step 2 or skip (ollama has no key)
+                if (_setupProvider.env_key) {
+                    document.getElementById('setup-step-2').style.display = 'block';
+                    document.getElementById('setup-signup-link').innerHTML =
+                        'Get your API key: <a href="' + _setupProvider.signup_url + '" target="_blank" style="color:#60a5fa;">' + _setupProvider.signup_url + '</a>';
+                    document.getElementById('setup-api-key').focus();
+                } else {
+                    // No key needed (ollama), go straight to complete
+                    setupComplete('');
+                }
+            });
+        }
+
+        async function setupValidateKey() {
+            const key = document.getElementById('setup-api-key').value.trim();
+            if (!key) return;
+            const statusEl = document.getElementById('setup-key-status');
+            const btn = document.getElementById('setup-validate-btn');
+            btn.disabled = true; btn.textContent = 'Validating...';
+            statusEl.innerHTML = '<span style="color:#94a3b8;">Checking...</span>';
+            try {
+                const resp = await fetch('/api/setup/validate', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({provider: _setupProvider.id, api_key: key})
+                });
+                const data = await resp.json();
+                if (data.valid) {
+                    statusEl.innerHTML = '<span style="color:#34d399;">Valid! Saving...</span>';
+                    await setupComplete(key);
+                } else {
+                    statusEl.innerHTML = '<span style="color:#fca5a5;">Invalid: ' + (data.error || 'check key') + '</span>';
+                    btn.disabled = false; btn.textContent = 'Validate';
+                }
+            } catch(e) {
+                statusEl.innerHTML = '<span style="color:#fca5a5;">Connection error</span>';
+                btn.disabled = false; btn.textContent = 'Validate';
+            }
+        }
+
+        async function setupComplete(apiKey) {
+            // Save provider + key
+            await fetch('/api/setup/complete', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    provider: _setupProvider.id,
+                    api_key: apiKey,
+                    model: _setupProvider.models[0],
+                })
+            });
+            // Show step 3: discover
+            document.getElementById('setup-step-1').style.display = 'none';
+            document.getElementById('setup-step-2').style.display = 'none';
+            document.getElementById('setup-step-3').style.display = 'block';
+            // Run discovery
+            try {
+                const resp = await fetch('/api/setup/discover');
+                const data = await resp.json();
+                document.getElementById('setup-env-status').textContent = 'Discovery complete!';
+                document.getElementById('setup-env-result').style.display = 'block';
+                document.getElementById('setup-env-result').textContent = data.summary;
+                document.getElementById('setup-finish-btn').style.display = 'inline-block';
+                // Try LLM recommendations
+                try {
+                    const recResp = await fetch('/api/setup/recommend', {method: 'POST'});
+                    const recData = await recResp.json();
+                    if (recData.recommendations) {
+                        const recEl = document.getElementById('setup-recommendations');
+                        recEl.style.display = 'block';
+                        recEl.innerHTML = '<strong style="color:#3b82f6;">AI Recommendations:</strong><br>' + escapeHtml(recData.recommendations);
+                    }
+                } catch(e) {}
+            } catch(e) {
+                document.getElementById('setup-env-status').textContent = 'Discovery failed, but setup is complete.';
+                document.getElementById('setup-finish-btn').style.display = 'inline-block';
+            }
+        }
+
+        function setupFinish() {
+            document.getElementById('setup-wizard').style.display = 'none';
+            location.reload();
+        }
+
+        // Check first run on page load
+        checkFirstRun();
 
         // Check for updates on page load
         checkForUpdate();
