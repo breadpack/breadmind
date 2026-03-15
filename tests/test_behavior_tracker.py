@@ -160,3 +160,60 @@ async def test_analyze_db_persistence():
     call_args = tracker._db.set_setting.call_args
     assert call_args[0][0] == "behavior_prompt"
     assert call_args[0][1]["prompt"] == "New prompt."
+
+
+# --- Task 4-6 tests: CoreAgent integration ---
+
+from breadmind.core.agent import CoreAgent
+from breadmind.core.safety import SafetyGuard
+from breadmind.tools.registry import ToolRegistry
+
+
+def test_agent_behavior_prompt_getter_setter():
+    provider = AsyncMock()
+    agent = CoreAgent(
+        provider=provider,
+        tool_registry=ToolRegistry(),
+        safety_guard=SafetyGuard(),
+        behavior_prompt="initial behavior",
+    )
+    assert agent.get_behavior_prompt() == "initial behavior"
+    agent.set_behavior_prompt("updated behavior")
+    assert agent.get_behavior_prompt() == "updated behavior"
+    assert "updated behavior" in agent._system_prompt
+
+
+@pytest.mark.asyncio
+async def test_agent_notifications_prepended():
+    provider = AsyncMock()
+    provider.chat = AsyncMock(return_value=LLMResponse(
+        content="response", tool_calls=[],
+        usage=TokenUsage(input_tokens=10, output_tokens=5),
+        stop_reason="end_turn",
+    ))
+    agent = CoreAgent(
+        provider=provider,
+        tool_registry=ToolRegistry(),
+        safety_guard=SafetyGuard(),
+    )
+    agent.add_notification("test notification")
+    result = await agent.handle_message("hi", "user1", "test")
+    assert "test notification" in result
+    assert "response" in result
+    # Second call should not have notification
+    result2 = await agent.handle_message("hi again", "user1", "test")
+    assert "test notification" not in result2
+
+
+def test_set_persona_preserves_behavior_prompt():
+    provider = AsyncMock()
+    agent = CoreAgent(
+        provider=provider,
+        tool_registry=ToolRegistry(),
+        safety_guard=SafetyGuard(),
+        behavior_prompt="my custom rules",
+    )
+    agent.set_persona({"name": "TestBot", "language": "en", "preset": "friendly",
+                        "system_prompt": "You are TestBot."})
+    assert "my custom rules" in agent._system_prompt
+    assert "TestBot" in agent._system_prompt

@@ -34,6 +34,7 @@ class CoreAgent:
         summarizer: object | None = None,
         tool_gap_detector: ToolGapDetector | None = None,
         context_builder: object | None = None,
+        behavior_prompt: str | None = None,
     ):
         self._provider = provider
         self._tools = tool_registry
@@ -49,6 +50,16 @@ class CoreAgent:
         self._tool_gap_detector = tool_gap_detector
         self._context_builder = context_builder
         self._pending_approvals: dict[str, dict] = {}
+        self._behavior_prompt = behavior_prompt
+        self._notifications: list[str] = []
+        self._behavior_tracker: object | None = None
+
+        # If behavior_prompt provided, rebuild system_prompt with it
+        if behavior_prompt is not None:
+            from breadmind.config import build_system_prompt, DEFAULT_PERSONA
+            self._system_prompt = build_system_prompt(
+                DEFAULT_PERSONA, behavior_prompt=behavior_prompt,
+            )
 
     async def update_provider(self, provider: LLMProvider):
         """Replace the LLM provider at runtime, closing the old one."""
@@ -83,7 +94,26 @@ class CoreAgent:
 
     def set_persona(self, persona: dict):
         from breadmind.config import build_system_prompt
-        self._system_prompt = build_system_prompt(persona)
+        self._system_prompt = build_system_prompt(
+            persona, behavior_prompt=self._behavior_prompt,
+        )
+
+    def get_behavior_prompt(self) -> str:
+        from breadmind.config import _PROACTIVE_BEHAVIOR_PROMPT
+        return self._behavior_prompt or _PROACTIVE_BEHAVIOR_PROMPT
+
+    def set_behavior_prompt(self, prompt: str):
+        from breadmind.config import build_system_prompt, DEFAULT_PERSONA
+        self._behavior_prompt = prompt
+        self._system_prompt = build_system_prompt(
+            DEFAULT_PERSONA, behavior_prompt=prompt,
+        )
+
+    def add_notification(self, message: str):
+        self._notifications.append(message)
+
+    def set_behavior_tracker(self, tracker):
+        self._behavior_tracker = tracker
 
     def get_usage(self) -> dict[str, int]:
         return dict(self._total_usage)
@@ -233,12 +263,22 @@ class CoreAgent:
 
             if not response.has_tool_calls:
                 final_content = response.content or ""
+                # Prepend pending notifications
+                if self._notifications:
+                    prefix = "\n".join(self._notifications) + "\n\n"
+                    self._notifications.clear()
+                    final_content = prefix + final_content
                 if self._working_memory is not None:
                     self._working_memory.add_message(
                         session_id,
                         LLMMessage(role="assistant", content=final_content),
                     )
                 logger.info(json.dumps({"event": "session_end", "user": user, "channel": channel}))
+                # Fire-and-forget behavior analysis
+                if self._behavior_tracker is not None:
+                    asyncio.create_task(
+                        self._safe_analyze(session_id, list(messages))
+                    )
                 return final_content
 
             # Process tool calls — collect tasks for parallel execution
@@ -363,4 +403,20 @@ class CoreAgent:
                         self._working_memory.add_message(session_id, tool_msg)
 
         logger.info(json.dumps({"event": "session_end", "user": user, "channel": channel, "reason": "max_turns"}))
-        return "Maximum tool call turns reached. Please try a simpler request."
+        final = "Maximum tool call turns reached. Please try a simpler request."
+        if self._notifications:
+            prefix = "\n".join(self._notifications) + "\n\n"
+            self._notifications.clear()
+            final = prefix + final
+        if self._behavior_tracker is not None:
+            asyncio.create_task(
+                self._safe_analyze(session_id, list(messages))
+            )
+        return final
+
+    async def _safe_analyze(self, session_id: str, messages: list[LLMMessage]):
+        """Fire-and-forget behavior analysis with error protection."""
+        try:
+            await self._behavior_tracker.analyze(session_id, messages)
+        except Exception:
+            logger.exception("Behavior analysis failed")

@@ -314,19 +314,48 @@ async def run():
         except Exception:
             pass
 
+    from breadmind.config import build_system_prompt, DEFAULT_PERSONA
+
+    # Load saved behavior prompt from DB
+    saved_behavior_prompt = None
+    if db is not None:
+        try:
+            bp_data = await db.get_setting("behavior_prompt")
+            if bp_data and "prompt" in bp_data:
+                saved_behavior_prompt = bp_data["prompt"]
+        except Exception:
+            pass
+
+    system_prompt = build_system_prompt(
+        DEFAULT_PERSONA, behavior_prompt=saved_behavior_prompt,
+    )
+
     agent_kwargs = dict(
         provider=provider,
         tool_registry=registry,
         safety_guard=guard,
+        system_prompt=system_prompt,
         max_turns=config.llm.tool_call_max_turns,
         working_memory=working_memory,
         tool_gap_detector=tool_gap_detector,
         context_builder=context_builder,
+        behavior_prompt=saved_behavior_prompt,
     )
     if audit_logger is not None:
         agent_kwargs["audit_logger"] = audit_logger
 
     agent = CoreAgent(**agent_kwargs)
+
+    # Wire BehaviorTracker
+    from breadmind.core.behavior_tracker import BehaviorTracker
+    behavior_tracker = BehaviorTracker(
+        provider=provider,
+        get_behavior_prompt=agent.get_behavior_prompt,
+        set_behavior_prompt=agent.set_behavior_prompt,
+        add_notification=agent.add_notification,
+        db=db,
+    )
+    agent.set_behavior_tracker(behavior_tracker)
 
     # Wire metrics_collector to registry if supported
     if metrics_collector is not None and hasattr(registry, 'set_metrics_collector'):
