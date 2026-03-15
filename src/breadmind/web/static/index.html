@@ -282,18 +282,18 @@
         .update-banner .btn-update { background:#3b82f6; color:white; border:none; padding:4px 16px; border-radius:4px; cursor:pointer; font-size:12px; margin-left:8px; }
         .update-banner .btn-dismiss { background:none; border:none; color:#64748b; cursor:pointer; position:absolute; right:12px; top:50%; transform:translateY(-50%); font-size:16px; }
         /* Markdown styles in chat bubbles */
-        .bubble { line-height:1.35; font-size:13.5px; }
+        .bubble { line-height:1.4; font-size:13.5px; }
         .bubble > *:first-child { margin-top:0; }
         .bubble > *:last-child { margin-bottom:0; }
         .bubble h1,.bubble h2,.bubble h3,.bubble h4 { color:#f1f5f9; font-weight:600; letter-spacing:-0.01em; line-height:1.3; }
-        .bubble h1 { font-size:1.15em; margin:8px 0 2px; padding-bottom:3px; border-bottom:1px solid #334155; }
-        .bubble h2 { font-size:1.05em; margin:6px 0 2px; padding-bottom:2px; border-bottom:1px solid #1e293b; }
-        .bubble h3 { font-size:0.95em; margin:5px 0 1px; }
-        .bubble h4 { font-size:0.85em; margin:4px 0 1px; color:#94a3b8; text-transform:uppercase; letter-spacing:0.05em; }
-        .bubble p { margin:2px 0; }
+        .bubble h1 { font-size:1.15em; margin:6px 0 1px; padding-bottom:2px; border-bottom:1px solid #334155; }
+        .bubble h2 { font-size:1.05em; margin:5px 0 1px; padding-bottom:1px; border-bottom:1px solid #1e293b; }
+        .bubble h3 { font-size:0.95em; margin:4px 0 0; }
+        .bubble h4 { font-size:0.85em; margin:3px 0 0; color:#94a3b8; text-transform:uppercase; letter-spacing:0.05em; }
+        .bubble p { margin:1px 0; }
         .bubble li > p { margin:0; }
-        .bubble ul,.bubble ol { margin:2px 0 2px 16px; padding:0; }
-        .bubble li { margin:0; }
+        .bubble ul,.bubble ol { margin:0 0 0 16px; padding:0; line-height:1.3; }
+        .bubble li { margin:0; padding:1px 0; }
         .bubble li > ul,.bubble li > ol { margin:0 0 0 14px; }
         .bubble code {
             background:rgba(99,102,241,0.15); padding:1px 6px; border-radius:4px;
@@ -302,7 +302,7 @@
         }
         .bubble pre {
             background:#0c1222; border:1px solid #1e293b; border-radius:8px;
-            padding:10px 14px; overflow-x:auto; margin:6px 0;
+            padding:8px 12px; overflow-x:auto; margin:4px 0;
             position:relative;
         }
         .bubble pre code {
@@ -314,12 +314,12 @@
             font-size:10px; color:#475569; text-transform:uppercase; letter-spacing:0.05em;
         }
         .bubble blockquote {
-            border-left:3px solid #6366f1; padding:4px 12px; margin:4px 0;
+            border-left:3px solid #6366f1; padding:2px 10px; margin:2px 0;
             background:rgba(99,102,241,0.06); border-radius:0 6px 6px 0;
             color:#a5b4fc; font-style:italic;
         }
         .bubble blockquote p { margin:1px 0; }
-        .bubble table { border-collapse:collapse; margin:6px 0; font-size:12px; width:100%; }
+        .bubble table { border-collapse:collapse; margin:3px 0; font-size:12px; width:100%; }
         .bubble th {
             background:#1e293b; color:#94a3b8; font-weight:600;
             text-transform:uppercase; font-size:10.5px; letter-spacing:0.04em;
@@ -331,9 +331,9 @@
         .bubble em { color:#c4b5fd; }
         .bubble a { color:#60a5fa; text-decoration:none; border-bottom:1px solid rgba(96,165,250,0.3); transition:border-color .15s; }
         .bubble a:hover { border-color:#60a5fa; }
-        .bubble hr { border:none; border-top:1px solid #334155; margin:6px 0; }
-        .bubble .mermaid { margin:6px 0; background:#0c1222; border-radius:8px; padding:12px; border:1px solid #1e293b; }
-        .bubble img { max-width:100%; border-radius:6px; margin:4px 0; }
+        .bubble hr { border:none; border-top:1px solid #334155; margin:3px 0; }
+        .bubble .mermaid { margin:4px 0; background:#0c1222; border-radius:8px; padding:10px; border:1px solid #1e293b; }
+        .bubble img { max-width:100%; border-radius:6px; margin:2px 0; }
         /* Copy button on code blocks */
         .bubble pre .copy-btn {
             position:absolute; top:6px; right:6px; background:#334155; border:none;
