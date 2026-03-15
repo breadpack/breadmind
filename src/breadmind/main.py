@@ -348,12 +348,18 @@ async def run():
     from breadmind.config import build_system_prompt, DEFAULT_PERSONA
 
     # Load saved behavior prompt from DB
+    # If saved prompt lacks the "Autonomous Problem Solving" section,
+    # discard it so the updated default is used instead.
     saved_behavior_prompt = None
     if db is not None:
         try:
             bp_data = await db.get_setting("behavior_prompt")
             if bp_data and "prompt" in bp_data:
-                saved_behavior_prompt = bp_data["prompt"]
+                saved = bp_data["prompt"]
+                if "Autonomous Problem Solving" in saved:
+                    saved_behavior_prompt = saved
+                else:
+                    logger.info("Discarding saved behavior prompt (missing autonomous solving section)")
         except Exception:
             pass
 

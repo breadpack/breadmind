@@ -609,7 +609,14 @@
                     loadSessions();
                 }
                 else if (data.type === 'notification') addMessage(data.message, 'bot');
-                else if (data.type === 'monitoring_event') addMonitoringEvent(data.event);
+                else if (data.type === 'monitoring_event') {
+                    if (data.event && data.event.type === 'behavior_prompt_updated') {
+                        const el = document.getElementById('prompt-behavior');
+                        if (el) { el.value = data.event.prompt; }
+                        showToast('Behavior prompt auto-improved: ' + (data.event.reason || ''), 'info');
+                    }
+                    addMonitoringEvent(data.event);
+                }
                 else if (data.type === 'update_available') { showUpdateBanner(data.event.current, data.event.latest, ''); }
                 else if (data.type === 'messenger_connected') {
                     addMessage((data.event && data.event.platform || 'Messenger') + ' connected!', 'bot');
@@ -1369,6 +1376,14 @@
                 html += `<div class="section-footer"><button class="save-btn" onclick="savePrompts()">Save All Prompts</button></div>`;
                 html += `</div>`;
 
+                html += `<div class="settings-section" data-stab="prompts"><h3>Behavior Rules</h3>`;
+                html += `<p style="color:#64748b;font-size:12px;margin-bottom:8px;">Agent의 행동 규칙 프롬프트입니다. 자동 개선 시스템이 대화 분석 후 자동으로 업데이트할 수 있습니다. 비우면 기본값으로 초기화됩니다.</p>`;
+                html += `<textarea class="prompt-editor" id="prompt-behavior" style="min-height:200px;"></textarea>`;
+                html += `<div style="display:flex;gap:8px;margin-top:8px;align-items:center;">`;
+                html += `<button class="save-btn" onclick="savePrompts()">Save All Prompts</button>`;
+                html += `<button class="save-btn" onclick="resetBehaviorPrompt()" style="background:#475569;">Reset to Default</button>`;
+                html += `</div></div>`;
+
                 html += `<div class="settings-section" data-stab="prompts"><h3>Swarm Role Prompts</h3>`;
                 html += `<p style="color:#64748b;font-size:12px;margin-bottom:8px;">Edit or add expert roles for Agent Swarm.</p>`;
                 html += `<div id="swarm-role-editors"></div>`;
@@ -1424,6 +1439,8 @@
                 const resp = await fetch('/api/config/prompts');
                 const data = await resp.json();
                 document.getElementById('prompt-main').value = data.main_system_prompt || '';
+                document.getElementById('prompt-behavior').value = data.behavior_prompt || '';
+                window._behaviorPromptDefault = data.behavior_prompt_default || '';
                 document.getElementById('prompt-decompose').value = data.swarm_decompose || '';
                 document.getElementById('prompt-aggregate').value = data.swarm_aggregate || '';
                 document.getElementById('prompt-mcp-install').value = data.mcp_install || '';
@@ -1463,6 +1480,11 @@
             } else { const d = await resp.json(); showToast(d.error || 'Failed', 'error'); }
         }
 
+        function resetBehaviorPrompt() {
+            document.getElementById('prompt-behavior').value = window._behaviorPromptDefault || '';
+            showToast('Reset to default. Click "Save All Prompts" to apply.', 'info');
+        }
+
         async function deleteSwarmRole(name) {
             if (!confirm('Delete role "' + name + '"?')) return;
             const resp = await fetch('/api/swarm/roles/' + encodeURIComponent(name), {method: 'DELETE'});
@@ -1473,6 +1495,7 @@
         async function savePrompts() {
             const payload = {
                 main_system_prompt: document.getElementById('prompt-main').value,
+                behavior_prompt: document.getElementById('prompt-behavior').value,
                 swarm_decompose: document.getElementById('prompt-decompose').value,
                 swarm_aggregate: document.getElementById('prompt-aggregate').value,
                 mcp_install: document.getElementById('prompt-mcp-install').value,

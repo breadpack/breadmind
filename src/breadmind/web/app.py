@@ -64,6 +64,12 @@ class WebApp:
         self._lock = asyncio.Lock()
         self._setup_routes()
 
+        # Wire BehaviorTracker broadcast to push updates to Settings UI
+        if self._agent and hasattr(self._agent, '_behavior_tracker'):
+            tracker = self._agent._behavior_tracker
+            if tracker is not None:
+                tracker._on_prompt_updated = self._on_behavior_prompt_updated
+
         # Restore swarm roles from DB on startup
         @self.app.on_event("startup")
         async def _restore_swarm_roles():
@@ -74,6 +80,14 @@ class WebApp:
                         self._swarm_manager.import_roles(roles_data)
                 except Exception:
                     pass
+
+    async def _on_behavior_prompt_updated(self, new_prompt: str, reason: str):
+        """Broadcast behavior prompt update to connected WebSocket clients."""
+        await self.broadcast_event({
+            "type": "behavior_prompt_updated",
+            "prompt": new_prompt,
+            "reason": reason,
+        })
 
     async def on_monitoring_event(self, event):
         """Called by monitoring engine when an event occurs."""
@@ -959,8 +973,16 @@ class WebApp:
                     "is_custom": f"swarm_role:{name}" in custom,
                 }
 
+            # Behavior prompt (from dedicated DB key, not custom_prompts)
+            from breadmind.config import _PROACTIVE_BEHAVIOR_PROMPT
+            behavior_prompt = _PROACTIVE_BEHAVIOR_PROMPT
+            if self._agent and hasattr(self._agent, 'get_behavior_prompt'):
+                behavior_prompt = self._agent.get_behavior_prompt()
+
             return {
                 "main_system_prompt": custom.get("main_system_prompt", ""),
+                "behavior_prompt": behavior_prompt,
+                "behavior_prompt_default": _PROACTIVE_BEHAVIOR_PROMPT,
                 "swarm_roles": roles,
                 "swarm_decompose": custom.get("swarm_decompose", ""),
                 "swarm_aggregate": custom.get("swarm_aggregate", ""),
@@ -1010,6 +1032,25 @@ class WebApp:
             # Apply main system prompt to agent
             if "main_system_prompt" in data and data["main_system_prompt"] and self._agent:
                 self._agent.set_system_prompt(data["main_system_prompt"])
+
+            # Apply behavior prompt to agent
+            if "behavior_prompt" in data and self._agent:
+                from breadmind.config import _PROACTIVE_BEHAVIOR_PROMPT
+                new_bp = data["behavior_prompt"].strip()
+                if new_bp:
+                    self._agent.set_behavior_prompt(new_bp)
+                else:
+                    # Empty = reset to default
+                    self._agent.set_behavior_prompt(_PROACTIVE_BEHAVIOR_PROMPT)
+                    new_bp = _PROACTIVE_BEHAVIOR_PROMPT
+                # Persist behavior prompt separately
+                if self._db:
+                    from datetime import datetime, timezone
+                    await self._db.set_setting("behavior_prompt", {
+                        "prompt": new_bp,
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                        "reason": "manual edit via Settings UI",
+                    })
 
             # Persist
             if self._db:
