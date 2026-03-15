@@ -79,6 +79,13 @@ async def run_worker(config, args):
     registry = ToolRegistry()
     register_builtin_tools(registry)
 
+    # Register browser tools (optional — requires pip install 'breadmind[browser]')
+    try:
+        from breadmind.tools.browser import register_browser_tools
+        register_browser_tools(registry)
+    except Exception:
+        pass
+
     worker = Worker(
         agent_id=getattr(args, "agent_id", "worker"),
         commander_url=getattr(args, "commander_url", "") or config.network.commander_url,
@@ -166,6 +173,13 @@ async def run():
     # Register built-in tools
     for t in [shell_exec, web_search, file_read, file_write, messenger_connect, swarm_role]:
         registry.register(t)
+
+    # Register browser tools (optional — requires pip install 'breadmind[browser]')
+    try:
+        from breadmind.tools.browser import register_browser_tools
+        register_browser_tools(registry)
+    except Exception:
+        pass
 
     # Initialize MCP
     mcp_manager = MCPClientManager(

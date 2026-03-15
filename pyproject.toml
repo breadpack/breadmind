@@ -36,6 +36,9 @@ messenger = [
     "google-api-python-client>=2.100.0",
     "google-auth-oauthlib>=1.2.0",
 ]
+browser = [
+    "playwright>=1.40.0",
+]
 embeddings = [
     "sentence-transformers>=3.0.0",
 ]
