@@ -115,6 +115,7 @@ async def run():
     )
 
     # Connect to database and load persisted settings
+    # Falls back to file-based settings store when DB is unavailable
     db = None
     try:
         from breadmind.storage.database import Database
@@ -126,8 +127,12 @@ async def run():
         await apply_db_settings(config, db)
         print("  Database connected, settings loaded")
     except Exception as e:
-        print(f"  Database not available ({e}), using file-based config")
-        db = None
+        print(f"  Database not available ({e}), using file-based settings")
+        from breadmind.storage.settings_store import FileSettingsStore
+        db = FileSettingsStore(os.path.join(config_dir, "settings.json"))
+        from breadmind.config import apply_db_settings
+        await apply_db_settings(config, db)
+        print(f"  Settings: {config_dir}/settings.json")
 
     provider = create_provider(config)
     registry = ToolRegistry()
