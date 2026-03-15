@@ -127,12 +127,17 @@ class GeminiProvider(LLMProvider):
             elif msg.tool_calls:
                 parts = []
                 for tc in msg.tool_calls:
-                    parts.append({
+                    fc_part: dict = {
                         "functionCall": {
                             "name": tc.name,
                             "args": tc.arguments,
                         }
-                    })
+                    }
+                    # Preserve thought_signature for Gemini thinking models
+                    ts = tc.metadata.get("thought_signature") if tc.metadata else None
+                    if ts:
+                        fc_part["functionCall"]["thought_signature"] = ts
+                    parts.append(fc_part)
                 contents.append({"role": "model", "parts": parts})
             else:
                 role = "model" if msg.role == "assistant" else "user"
@@ -184,10 +189,14 @@ class GeminiProvider(LLMProvider):
                 text_content = part["text"]
             elif "functionCall" in part:
                 fc = part["functionCall"]
+                metadata = {}
+                if "thought_signature" in fc:
+                    metadata["thought_signature"] = fc["thought_signature"]
                 tool_calls.append(ToolCall(
                     id=str(uuid.uuid4())[:8],
                     name=fc.get("name", ""),
                     arguments=fc.get("args", {}),
+                    metadata=metadata,
                 ))
 
         # Parse usage metadata
