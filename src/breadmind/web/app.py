@@ -19,7 +19,8 @@ class WebApp:
                  agent=None, audit_logger=None, metrics_collector=None, database=None,
                  mcp_store=None, safety_guard=None, working_memory=None, message_router=None,
                  scheduler=None, subagent_manager=None, webhook_manager=None, auth=None,
-                 container_executor=None, swarm_manager=None):
+                 container_executor=None, swarm_manager=None,
+                 skill_store=None, performance_tracker=None):
         self.app = FastAPI(title="BreadMind", version="0.1.0")
         self._message_handler = message_handler
         self._tool_registry = tool_registry
@@ -41,6 +42,8 @@ class WebApp:
         self._auth = auth
         self._container_executor = container_executor
         self._swarm_manager = swarm_manager
+        self._skill_store = skill_store
+        self._performance_tracker = performance_tracker
 
         # CORS middleware
         if config and hasattr(config, 'security'):
@@ -1976,6 +1979,71 @@ class WebApp:
                 return JSONResponse(status_code=404, content={"error": "Role not found"})
             await self._persist_swarm_roles()
             return {"status": "ok"}
+
+        # --- Skills endpoints ---
+
+        @app.get("/api/skills")
+        async def list_skills():
+            if not self._skill_store:
+                return []
+            skills = await self._skill_store.list_skills()
+            return [{"name": s.name, "description": s.description, "source": s.source,
+                     "usage_count": s.usage_count, "trigger_keywords": s.trigger_keywords} for s in skills]
+
+        @app.post("/api/skills")
+        async def create_skill(request: Request):
+            if not self._skill_store:
+                return JSONResponse(status_code=503, content={"error": "Skill store not configured"})
+            body = await request.json()
+            skill = await self._skill_store.add_skill(
+                name=body["name"], description=body["description"],
+                prompt_template=body.get("prompt_template", ""),
+                steps=body.get("steps", []),
+                trigger_keywords=body.get("trigger_keywords", []),
+                source="manual")
+            await self._skill_store.flush_to_db()
+            return {"name": skill.name, "status": "created"}
+
+        @app.put("/api/skills/{name}")
+        async def update_skill(name: str, request: Request):
+            if not self._skill_store:
+                return JSONResponse(status_code=503, content={"error": "Skill store not configured"})
+            body = await request.json()
+            await self._skill_store.update_skill(name, **body)
+            await self._skill_store.flush_to_db()
+            return {"name": name, "status": "updated"}
+
+        @app.delete("/api/skills/{name}")
+        async def delete_skill(name: str):
+            if not self._skill_store:
+                return JSONResponse(status_code=503, content={"error": "Skill store not configured"})
+            removed = await self._skill_store.remove_skill(name)
+            if removed:
+                await self._skill_store.flush_to_db()
+            return {"name": name, "removed": removed}
+
+        # --- Performance endpoints ---
+
+        @app.get("/api/performance")
+        async def get_performance():
+            if not self._performance_tracker:
+                return {}
+            all_stats = self._performance_tracker.get_all_stats()
+            return {name: {"total_runs": s.total_runs, "success_rate": s.success_rate,
+                            "avg_duration_ms": s.avg_duration_ms, "failures": s.failures}
+                    for name, s in all_stats.items()}
+
+        @app.get("/api/performance/{role}")
+        async def get_role_performance(role: str):
+            if not self._performance_tracker:
+                return JSONResponse(status_code=503, content={"error": "Performance tracker not configured"})
+            stats = self._performance_tracker.get_role_stats(role)
+            if not stats:
+                return JSONResponse(status_code=404, content={"error": f"No stats for '{role}'"})
+            return {"role": role, "total_runs": stats.total_runs,
+                    "success_rate": stats.success_rate, "avg_duration_ms": stats.avg_duration_ms,
+                    "successes": stats.successes, "failures": stats.failures,
+                    "feedback_count": len(stats.feedback_history)}
 
         # --- Additional Messenger endpoints (WhatsApp, Gmail, Signal) ---
 

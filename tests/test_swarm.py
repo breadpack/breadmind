@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from breadmind.core.swarm import (
@@ -134,3 +135,99 @@ class TestDefaultRoles:
             assert member.role == name
             assert member.system_prompt
             assert member.description
+
+
+class TestSwarmMemberSource:
+    def test_default_source_is_manual(self):
+        member = SwarmMember(role="test", system_prompt="prompt")
+        assert member.source == "manual"
+
+    def test_auto_source(self):
+        member = SwarmMember(role="test", system_prompt="prompt", source="auto")
+        assert member.source == "auto"
+
+
+class TestSwarmCoordinatorAvailableRoles:
+    @pytest.mark.asyncio
+    async def test_decompose_uses_available_roles(self):
+        async def mock_handler(msg, user="", channel=""):
+            return "TASK|custom_role|Do the custom thing|none"
+        coordinator = SwarmCoordinator(message_handler=mock_handler)
+        available = {"custom_role", "general"}
+        tasks = await coordinator.decompose("test goal", available_roles=available)
+        assert any(t.role == "custom_role" for t in tasks)
+
+    @pytest.mark.asyncio
+    async def test_parse_tasks_respects_available_roles(self):
+        coordinator = SwarmCoordinator()
+        response = "TASK|auto_created|Do something|none\nTASK|unknown_xyz|Another|none"
+        tasks = coordinator._parse_tasks(response, available_roles={"auto_created", "general"})
+        assert tasks[0].role == "auto_created"
+        assert tasks[1].role == "general"
+
+
+class TestSwarmManagerAddRoleSource:
+    def test_add_role_with_source(self):
+        manager = SwarmManager()
+        manager.add_role("new_role", "prompt", "desc", source="auto")
+        roles = manager.export_roles()
+        assert roles["new_role"]["source"] == "auto"
+
+    def test_import_roles_default_source(self):
+        manager = SwarmManager()
+        manager.import_roles({"old_role": {"system_prompt": "p", "description": "d"}})
+        member = manager._roles.get("old_role")
+        assert member is not None
+        assert member.source == "manual"
+
+
+class TestSwarmManagerIntegration:
+    @pytest.mark.asyncio
+    async def test_swarm_records_performance(self):
+        from breadmind.core.performance import PerformanceTracker
+        tracker = PerformanceTracker()
+        async def mock_handler(msg, user="", channel=""):
+            if "decompose" in channel or "Decompose" in msg:
+                return "TASK|general|Do something|none"
+            if "aggregate" in channel or "aggregating" in msg.lower():
+                return "Summary: all good"
+            return "Task completed successfully"
+        manager = SwarmManager(message_handler=mock_handler, tracker=tracker)
+        swarm = await manager.spawn_swarm("Test goal")
+        for _ in range(50):
+            await asyncio.sleep(0.1)
+            info = manager.get_swarm(swarm.id)
+            if info and info["status"] in ("completed", "failed"):
+                break
+        stats = tracker.get_role_stats("general")
+        assert stats is not None
+        assert stats.total_runs >= 1
+
+    @pytest.mark.asyncio
+    async def test_swarm_uses_team_builder(self):
+        from breadmind.core.performance import PerformanceTracker
+        from breadmind.core.skill_store import SkillStore
+        from breadmind.core.team_builder import TeamBuilder
+        tracker = PerformanceTracker()
+        skill_store = SkillStore()
+        team_builder_called = False
+        async def mock_handler(msg, user="", channel=""):
+            nonlocal team_builder_called
+            if "team_build" in channel:
+                team_builder_called = True
+                return "ASSESS|general|0.8|use\nCREATE_NONE"
+            if "decompose" in channel:
+                return "TASK|general|Do task|none"
+            if "aggregate" in channel:
+                return "Done"
+            return "OK"
+        manager = SwarmManager(message_handler=mock_handler, tracker=tracker)
+        team_builder = TeamBuilder(manager, tracker, skill_store, mock_handler)
+        manager.set_team_builder(team_builder)
+        swarm = await manager.spawn_swarm("Test")
+        for _ in range(50):
+            await asyncio.sleep(0.1)
+            info = manager.get_swarm(swarm.id)
+            if info and info["status"] in ("completed", "failed"):
+                break
+        assert team_builder_called

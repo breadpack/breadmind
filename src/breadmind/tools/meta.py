@@ -98,3 +98,86 @@ def create_meta_tools(
         "mcp_start": mcp_start,
         "mcp_stop": mcp_stop,
     }
+
+
+def create_expansion_tools(
+    skill_store=None,
+    tracker=None,
+) -> dict:
+
+    @tool(description="Manage reusable skills. action: 'list', 'add', 'update', 'remove'. For add: provide name, description, prompt_template, trigger_keywords (comma-separated).")
+    async def skill_manage(
+        action: str, name: str = "", description: str = "",
+        prompt_template: str = "", trigger_keywords: str = "",
+    ) -> str:
+        if skill_store is None:
+            return "SkillStore not available."
+        if action == "list":
+            skills = await skill_store.list_skills()
+            if not skills:
+                return "No skills registered."
+            lines = []
+            for s in skills:
+                lines.append(f"- **{s.name}** ({s.source}): {s.description}")
+                lines.append(f"  Keywords: {', '.join(s.trigger_keywords)}")
+                lines.append(f"  Usage: {s.usage_count} (success: {s.success_count})")
+            return "\n".join(lines)
+        if action == "add":
+            if not name or not description:
+                return "Error: name and description required."
+            try:
+                kws = [k.strip() for k in trigger_keywords.split(",") if k.strip()]
+                skill = await skill_store.add_skill(name, description, prompt_template, [], kws, "manual")
+                return f"Skill '{skill.name}' created."
+            except ValueError as e:
+                return f"Error: {e}"
+        if action == "update":
+            if not name:
+                return "Error: name required."
+            kwargs = {}
+            if description:
+                kwargs["description"] = description
+            if prompt_template:
+                kwargs["prompt_template"] = prompt_template
+            if trigger_keywords:
+                kwargs["trigger_keywords"] = [k.strip() for k in trigger_keywords.split(",")]
+            try:
+                await skill_store.update_skill(name, **kwargs)
+                return f"Skill '{name}' updated."
+            except ValueError as e:
+                return f"Error: {e}"
+        if action == "remove":
+            if not name:
+                return "Error: name required."
+            removed = await skill_store.remove_skill(name)
+            return f"Skill '{name}' removed." if removed else f"Skill '{name}' not found."
+        return f"Unknown action: {action}. Use list, add, update, or remove."
+
+    @tool(description="View performance stats for swarm roles. Optionally specify a role name for detailed stats.")
+    async def performance_report(role: str = "") -> str:
+        if tracker is None:
+            return "PerformanceTracker not available."
+        if role:
+            stats = tracker.get_role_stats(role)
+            if not stats:
+                return f"No stats for role '{role}'."
+            return (
+                f"**{role}** — {stats.total_runs} runs, "
+                f"{stats.success_rate:.0%} success rate, "
+                f"avg {stats.avg_duration_ms:.0f}ms\n"
+                f"Successes: {stats.successes}, Failures: {stats.failures}\n"
+                f"Feedback entries: {len(stats.feedback_history)}"
+            )
+        all_stats = tracker.get_all_stats()
+        if not all_stats:
+            return "No performance data available."
+        lines = []
+        for name, stats in sorted(all_stats.items()):
+            lines.append(f"- **{name}**: {stats.total_runs} runs, "
+                f"{stats.success_rate:.0%} success, avg {stats.avg_duration_ms:.0f}ms")
+        return "\n".join(lines)
+
+    return {
+        "skill_manage": skill_manage,
+        "performance_report": performance_report,
+    }

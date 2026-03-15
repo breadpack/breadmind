@@ -81,3 +81,45 @@ async def test_mcp_stop(meta_tools):
     manager._processes["srv"] = mock_proc
     result = await tools["mcp_stop"](name="srv")
     assert "Stopped" in result
+
+@pytest.mark.asyncio
+async def test_skill_manage_list():
+    from breadmind.core.skill_store import SkillStore
+    from breadmind.tools.meta import create_expansion_tools
+    skill_store = SkillStore()
+    await skill_store.add_skill("s1", "desc", "prompt", [], ["kw"], "manual")
+    tools = create_expansion_tools(skill_store=skill_store, tracker=None)
+    result = await tools["skill_manage"](action="list")
+    assert "s1" in result
+
+@pytest.mark.asyncio
+async def test_skill_manage_add():
+    from breadmind.core.skill_store import SkillStore
+    from breadmind.tools.meta import create_expansion_tools
+    skill_store = SkillStore()
+    tools = create_expansion_tools(skill_store=skill_store, tracker=None)
+    result = await tools["skill_manage"](action="add", name="new_skill",
+        description="A new skill", prompt_template="Do things", trigger_keywords="kw1,kw2")
+    assert "new_skill" in result
+    assert await skill_store.get_skill("new_skill") is not None
+
+@pytest.mark.asyncio
+async def test_performance_report():
+    from breadmind.core.performance import PerformanceTracker
+    from breadmind.tools.meta import create_expansion_tools
+    tracker = PerformanceTracker()
+    await tracker.record_task_result("role_a", "t1", True, 100.0, "ok")
+    tools = create_expansion_tools(skill_store=None, tracker=tracker)
+    result = await tools["performance_report"]()
+    assert "role_a" in result
+
+@pytest.mark.asyncio
+async def test_performance_report_specific_role():
+    from breadmind.core.performance import PerformanceTracker
+    from breadmind.tools.meta import create_expansion_tools
+    tracker = PerformanceTracker()
+    await tracker.record_task_result("role_a", "t1", True, 100.0, "ok")
+    tools = create_expansion_tools(skill_store=None, tracker=tracker)
+    result = await tools["performance_report"](role="role_a")
+    assert "role_a" in result
+    assert "100" in result or "1" in result

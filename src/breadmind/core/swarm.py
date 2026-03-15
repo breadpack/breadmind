@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -32,6 +33,7 @@ class SwarmMember:
     role: str
     system_prompt: str
     description: str = ""
+    source: str = "manual"
 
 
 DEFAULT_ROLES: dict[str, SwarmMember] = {
@@ -159,11 +161,12 @@ class SwarmCoordinator:
     def __init__(self, message_handler=None):
         self._message_handler = message_handler
 
-    async def decompose(self, goal: str) -> list[SwarmTask]:
+    async def decompose(self, goal: str, available_roles: set[str] | None = None) -> list[SwarmTask]:
         """Use LLM to decompose a goal into subtasks with role assignments."""
+        roles_to_show = available_roles if available_roles else DEFAULT_ROLES.keys()
         decompose_prompt = (
             f"Decompose this goal into 2-5 concrete subtasks. For each task, specify which expert role should handle it.\n\n"
-            f"Available roles: {', '.join(DEFAULT_ROLES.keys())}\n\n"
+            f"Available roles: {', '.join(roles_to_show)}\n\n"
             f"Goal: {goal}\n\n"
             f"Respond in this exact format (one task per line):\n"
             f"TASK|<role>|<description>|<depends_on_task_numbers_comma_separated_or_none>\n\n"
@@ -191,9 +194,9 @@ class SwarmCoordinator:
         else:
             return [SwarmTask(id="t1", description=goal, role="general")]
 
-        return self._parse_tasks(str(response))
+        return self._parse_tasks(str(response), available_roles=available_roles)
 
-    def _parse_tasks(self, response: str) -> list[SwarmTask]:
+    def _parse_tasks(self, response: str, available_roles: set[str] | None = None) -> list[SwarmTask]:
         """Parse LLM response into SwarmTasks."""
         tasks: list[SwarmTask] = []
         task_num = 0
@@ -216,7 +219,10 @@ class SwarmCoordinator:
                     if dep.isdigit():
                         depends_on.append(f"t{dep}")
 
-            if role not in DEFAULT_ROLES:
+            if available_roles is not None:
+                if role not in available_roles:
+                    role = "general"
+            elif role not in DEFAULT_ROLES:
                 role = "general"
 
             tasks.append(SwarmTask(
@@ -281,7 +287,8 @@ class SwarmManager:
 
     _MAX_SWARMS = 100
 
-    def __init__(self, message_handler=None, custom_roles: dict[str, SwarmMember] | None = None):
+    def __init__(self, message_handler=None, custom_roles: dict[str, SwarmMember] | None = None,
+                 tracker=None, team_builder=None, skill_store=None):
         self._message_handler = message_handler
         self._coordinator = SwarmCoordinator(message_handler=message_handler)
         self._swarms: dict[str, SwarmResult] = {}
@@ -290,10 +297,23 @@ class SwarmManager:
             self._roles.update(custom_roles)
         self._lock = asyncio.Lock()
         self._bg_tasks: set[asyncio.Task] = set()
+        self._tracker = tracker
+        self._team_builder = team_builder
+        self._skill_store = skill_store
+        self._task_complete_count = 0
 
     def set_message_handler(self, handler):
         self._message_handler = handler
         self._coordinator._message_handler = handler
+
+    def set_team_builder(self, team_builder):
+        self._team_builder = team_builder
+
+    def set_tracker(self, tracker):
+        self._tracker = tracker
+
+    def set_skill_store(self, skill_store):
+        self._skill_store = skill_store
 
     async def spawn_swarm(self, goal: str, roles: list[str] | None = None) -> SwarmResult:
         """Spawn a new swarm to achieve a goal."""
@@ -332,8 +352,17 @@ class SwarmManager:
         """Execute a swarm: decompose -> dispatch -> aggregate."""
         swarm.status = "running"
         try:
+            # Phase 0: Build optimal team
+            if self._team_builder:
+                try:
+                    team_plan = await self._team_builder.build_team(swarm.goal)
+                    logger.info(f"TeamBuilder selected roles: {team_plan.selected_roles}, created: {team_plan.created_roles}")
+                except Exception as e:
+                    logger.error(f"TeamBuilder failed, proceeding with defaults: {e}")
+
             # Phase 1: Decompose goal into tasks
-            tasks = await self._coordinator.decompose(swarm.goal)
+            available_roles = set(self._roles.keys())
+            tasks = await self._coordinator.decompose(swarm.goal, available_roles=available_roles)
 
             # Filter by requested roles if specified
             if roles:
@@ -375,6 +404,7 @@ class SwarmManager:
 
                 # Execute ready tasks in parallel
                 async def run_task(task: SwarmTask) -> None:
+                    t_start = time.monotonic()
                     task.status = "running"
                     self._update_swarm_task(swarm, task)
                     try:
@@ -412,6 +442,29 @@ class SwarmManager:
                     finally:
                         completed_ids.add(task.id)
                         self._update_swarm_task(swarm, task)
+                        if self._tracker:
+                            elapsed_ms = (time.monotonic() - t_start) * 1000
+                            await self._tracker.record_task_result(
+                                role=task.role,
+                                task_desc=task.description,
+                                success=(task.status == "completed"),
+                                duration_ms=elapsed_ms,
+                                result_summary=(task.result[:200] if task.result else task.error[:200]),
+                            )
+                            self._task_complete_count += 1
+                            # Trigger pattern detection every 10 tasks
+                            if self._task_complete_count % 10 == 0 and self._skill_store:
+                                try:
+                                    recent = [
+                                        {"role": t.role, "description": t.description,
+                                         "success": t.status == "completed"}
+                                        for t in tasks if t.status in ("completed", "failed")
+                                    ]
+                                    patterns = await self._skill_store.detect_patterns(recent, self._message_handler)
+                                    if patterns:
+                                        logger.info(f"Detected {len(patterns)} skill patterns from recent tasks")
+                                except Exception as e:
+                                    logger.error(f"Pattern detection failed: {e}")
 
                 await asyncio.gather(*[run_task(t) for t in ready])
 
@@ -474,10 +527,11 @@ class SwarmManager:
             for name, member in self._roles.items()
         ]
 
-    def add_role(self, name: str, system_prompt: str, description: str = ""):
+    def add_role(self, name: str, system_prompt: str, description: str = "", source: str = "manual"):
         self._roles[name] = SwarmMember(
             role=name, system_prompt=system_prompt,
             description=description or f"Custom role: {name}",
+            source=source,
         )
 
     def remove_role(self, name: str) -> bool:
@@ -499,7 +553,7 @@ class SwarmManager:
     def export_roles(self) -> dict[str, dict]:
         """Export all roles as serializable dict for DB persistence."""
         return {
-            name: {"system_prompt": m.system_prompt, "description": m.description}
+            name: {"system_prompt": m.system_prompt, "description": m.description, "source": m.source}
             for name, m in self._roles.items()
         }
 
@@ -511,4 +565,5 @@ class SwarmManager:
                 role=name,
                 system_prompt=data.get("system_prompt", ""),
                 description=data.get("description", f"Role: {name}"),
+                source=data.get("source", "manual"),
             )

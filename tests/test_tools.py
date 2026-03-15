@@ -51,6 +51,15 @@ async def test_registry_execute_unknown_tool():
 
 
 @pytest.mark.asyncio
+async def test_execute_unknown_tool_sets_not_found():
+    registry = ToolRegistry()
+    result = await registry.execute("nonexistent_tool", {})
+    assert result.success is False
+    assert result.not_found is True
+    assert "nonexistent_tool" in result.output
+
+
+@pytest.mark.asyncio
 async def test_registry_filters_unexpected_parameters():
     """Test that unexpected parameters are filtered out and don't cause errors."""
     registry = ToolRegistry()

@@ -728,3 +728,40 @@ def test_update_timeouts_rejects_invalid(agent):
     assert agent._max_turns == original_turns
     agent.update_max_turns(-1)
     assert agent._max_turns == original_turns
+
+
+@pytest.mark.asyncio
+async def test_agent_triggers_tool_gap_detector_on_not_found():
+    from unittest.mock import AsyncMock, MagicMock
+    from breadmind.core.agent import CoreAgent
+    from breadmind.tools.registry import ToolRegistry, ToolResult
+    from breadmind.core.safety import SafetyGuard, SafetyResult
+    from breadmind.llm.base import LLMResponse, ToolCall, TokenUsage
+
+    registry = MagicMock(spec=ToolRegistry)
+    registry.get_all_definitions.return_value = [MagicMock(name="some_tool", description="test", parameters={})]
+    registry.execute = AsyncMock(return_value=ToolResult(success=False, output="Tool not found: missing_tool", not_found=True))
+
+    provider = AsyncMock()
+    provider.chat = AsyncMock(side_effect=[
+        LLMResponse(content="",
+            tool_calls=[ToolCall(id="tc1", name="missing_tool", arguments={})],
+            usage=TokenUsage(input_tokens=10, output_tokens=10),
+            stop_reason="tool_use"),
+        LLMResponse(content="I couldn't find that tool.",
+            tool_calls=[], usage=TokenUsage(input_tokens=10, output_tokens=10),
+            stop_reason="end_turn"),
+    ])
+
+    guard = MagicMock(spec=SafetyGuard)
+    guard.check.return_value = SafetyResult.ALLOW
+    guard.check_cooldown.return_value = True
+
+    gap_detector = AsyncMock()
+    gap_detector.check_and_resolve = AsyncMock(return_value=MagicMock(
+        resolved=False, message="Tool 'missing_tool' not found. Found MCP: k8s-mcp.", suggestions=[]))
+
+    agent = CoreAgent(provider=provider, tool_registry=registry,
+        safety_guard=guard, tool_gap_detector=gap_detector)
+    await agent.handle_message("do something", "user", "ch")
+    gap_detector.check_and_resolve.assert_called_once()
