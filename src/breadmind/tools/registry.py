@@ -14,6 +14,7 @@ MAX_OUTPUT_SIZE: int = 50_000
 class ToolResult:
     success: bool
     output: str
+    not_found: bool = False
 
 
 def tool(description: str):
@@ -256,4 +257,4 @@ class ToolRegistry:
 
             return result
 
-        return ToolResult(success=False, output=f"Tool not found: {name}")
+        return ToolResult(success=False, output=f"Tool not found: {name}", not_found=True)
