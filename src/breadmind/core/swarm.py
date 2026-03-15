@@ -301,6 +301,10 @@ class SwarmManager:
         self._team_builder = team_builder
         self._skill_store = skill_store
         self._task_complete_count = 0
+        self._retriever = None
+
+    def set_retriever(self, retriever):
+        self._retriever = retriever
 
     def set_message_handler(self, handler):
         self._message_handler = handler
@@ -465,6 +469,16 @@ class SwarmManager:
                                         logger.info(f"Detected {len(patterns)} skill patterns from recent tasks")
                                 except Exception as e:
                                     logger.error(f"Pattern detection failed: {e}")
+                        if self._retriever:
+                            try:
+                                await self._retriever.index_task_result(
+                                    role=task.role,
+                                    task_desc=task.description,
+                                    result_summary=(task.result[:200] if task.result else task.error[:200]),
+                                    success=(task.status == "completed"),
+                                )
+                            except Exception as e:
+                                logger.error(f"Failed to index task result: {e}")
 
                 await asyncio.gather(*[run_task(t) for t in ready])
 

@@ -39,6 +39,10 @@ class SkillStore:
         self._tracker = tracker
         self._skills: dict[str, Skill] = {}
         self._lock = asyncio.Lock()
+        self._retriever = None
+
+    def set_retriever(self, retriever):
+        self._retriever = retriever
 
     async def add_skill(
         self,
@@ -61,6 +65,11 @@ class SkillStore:
                 source=source,
             )
             self._skills[name] = skill
+            if self._retriever:
+                try:
+                    await self._retriever.index_skill(skill)
+                except Exception as e:
+                    logger.warning(f"Failed to index skill '{name}': {e}")
             return skill
 
     async def update_skill(self, name: str, **kwargs) -> None:
@@ -86,6 +95,12 @@ class SkillStore:
     async def find_matching_skills(
         self, query: str, limit: int = 3
     ) -> list[Skill]:
+        if self._retriever:
+            try:
+                scored = await self._retriever.retrieve_skills(query, token_budget=2000, limit=limit)
+                return [s.skill for s in scored]
+            except Exception as e:
+                logger.warning(f"SmartRetriever failed, falling back to keyword matching: {e}")
         query_words = set(query.lower().split())
         scored: list[tuple[float, Skill]] = []
         for skill in self._skills.values():

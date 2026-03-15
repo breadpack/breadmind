@@ -190,6 +190,27 @@ async def run():
         search_engine=search_engine,
     )
 
+    # Memory layers and SmartRetriever
+    from breadmind.memory.episodic import EpisodicMemory
+    from breadmind.memory.semantic import SemanticMemory
+    from breadmind.memory.embedding import EmbeddingService
+    from breadmind.core.smart_retriever import SmartRetriever
+
+    episodic_memory = EpisodicMemory(db=db)
+    semantic_memory = SemanticMemory(db=db)
+    embedding_service = EmbeddingService()
+
+    smart_retriever = SmartRetriever(
+        embedding_service=embedding_service,
+        episodic_memory=episodic_memory,
+        semantic_memory=semantic_memory,
+        skill_store=skill_store,
+        db=db,
+    )
+
+    # Wire SmartRetriever into skill store
+    skill_store.set_retriever(smart_retriever)
+
     # Register expansion meta tools
     expansion_tools = create_expansion_tools(
         skill_store=skill_store,
@@ -337,6 +358,8 @@ async def run():
             swarm_manager.set_skill_store(skill_store)
             team_builder = TeamBuilder(swarm_manager, performance_tracker, skill_store, agent.handle_message)
             swarm_manager.set_team_builder(team_builder)
+            team_builder.set_retriever(smart_retriever)
+            swarm_manager.set_retriever(smart_retriever)
 
             # Periodic flush of expansion data
             async def _flush_expansion_data():
