@@ -584,7 +584,15 @@
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
                 if (data.type === 'progress') {
-                    showThinking(data.status, data.detail);
+                    if (data.status === 'approval_request') {
+                        removeThinking();
+                        try {
+                            const info = JSON.parse(data.detail);
+                            showApprovalCard(info.approval_id, info.tool, info.args);
+                        } catch(e) { console.error('Failed to parse approval_request:', e); }
+                    } else {
+                        showThinking(data.status, data.detail);
+                    }
                 }
                 else if (data.type === 'response') {
                     removeThinking();
@@ -708,6 +716,23 @@
             if (el) el.remove();
         }
 
+        function showApprovalCard(approvalId, toolName, args) {
+            const div = document.createElement('div');
+            div.className = 'message bot';
+            const time = new Date().toLocaleTimeString();
+            const argsStr = Object.entries(args || {}).map(([k,v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`).join(', ');
+            div.innerHTML = `<div class="bubble"><div class="chat-approval" id="approval-${escapeHtml(approvalId)}">
+                <div class="approval-tool-name">\uD83D\uDD12 ${escapeHtml(toolName)} 실행 승인 필요</div>
+                <div style="color:#94a3b8;font-size:12px;margin:4px 0;">${escapeHtml(argsStr)}</div>
+                <div class="approval-btns">
+                    <button class="btn-approve" onclick="chatApproval('${approvalId}','approve')">\u2705 승인</button>
+                    <button class="btn-deny" onclick="chatApproval('${approvalId}','deny')">\u274C 거부</button>
+                </div>
+            </div></div><div class="meta">BreadMind \u00B7 ${time}</div>`;
+            messagesDiv.appendChild(div);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
         function addMessage(text, type) {
             if (!text || !text.trim()) return;
             const div = document.createElement('div');
@@ -733,22 +758,25 @@
                     html = escapeHtml(displayText);
                 }
             }
-            // Detect approval request and render inline buttons
+            // Detect approval request and render inline buttons (fallback for non-WebSocket paths)
             if (type === 'bot') {
                 const approvalMatch = displayText.match(/(?:승인|[Aa]pproval)\s*ID[:\s]*([a-f0-9-]+)/);
                 if (approvalMatch) {
                     const approvalId = approvalMatch[1];
-                    const toolMatch = displayText.match(/(?:도구|[Tt]ool)\s*['"]?(\w+)['"]?/);
-                    const toolName = toolMatch ? toolMatch[1] : 'unknown';
-                    const cleanText = displayText.replace(/\(승인 ID:.*?\)/g, '').trim();
-                    try { html = marked.parse(cleanText); } catch(e) { html = escapeHtml(cleanText); }
-                    html += `<div class="chat-approval" id="approval-${approvalId}">
-                        <div class="approval-tool-name">🔒 ${escapeHtml(toolName)} 실행 승인 필요</div>
-                        <div class="approval-btns">
-                            <button class="btn-approve" onclick="chatApproval('${approvalId}','approve')">✅ 승인</button>
-                            <button class="btn-deny" onclick="chatApproval('${approvalId}','deny')">❌ 거부</button>
-                        </div>
-                    </div>`;
+                    // Skip if already rendered via WebSocket progress event
+                    if (!document.getElementById('approval-' + approvalId)) {
+                        const toolMatch = displayText.match(/(?:도구|[Tt]ool)\s*['"]?(\w+)['"]?/);
+                        const toolName = toolMatch ? toolMatch[1] : 'unknown';
+                        const cleanText = displayText.replace(/\(승인 ID:.*?\)/g, '').trim();
+                        try { html = marked.parse(cleanText); } catch(e) { html = escapeHtml(cleanText); }
+                        html += `<div class="chat-approval" id="approval-${approvalId}">
+                            <div class="approval-tool-name">\uD83D\uDD12 ${escapeHtml(toolName)} 실행 승인 필요</div>
+                            <div class="approval-btns">
+                                <button class="btn-approve" onclick="chatApproval('${approvalId}','approve')">\u2705 승인</button>
+                                <button class="btn-deny" onclick="chatApproval('${approvalId}','deny')">\u274C 거부</button>
+                            </div>
+                        </div>`;
+                    }
                 }
             }
             div.innerHTML = `<div class="bubble">${html}</div><div class="meta">${type === 'user' ? 'You' : 'BreadMind'} · ${time}</div>`;
