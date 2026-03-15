@@ -60,6 +60,17 @@ class WebApp:
         self._lock = asyncio.Lock()
         self._setup_routes()
 
+        # Restore swarm roles from DB on startup
+        @self.app.on_event("startup")
+        async def _restore_swarm_roles():
+            if self._swarm_manager and self._db:
+                try:
+                    roles_data = await self._db.get_setting("swarm_roles")
+                    if roles_data:
+                        self._swarm_manager.import_roles(roles_data)
+                except Exception:
+                    pass
+
     async def on_monitoring_event(self, event):
         """Called by monitoring engine when an event occurs."""
         event_dict = {
@@ -899,8 +910,10 @@ class WebApp:
                     else:  # empty = reset to default
                         custom.pop(key, None)
 
-            # Swarm role prompts
+            # Swarm role prompts — update SwarmManager directly
             for role_name, prompt in data.get("swarm_roles", {}).items():
+                if self._swarm_manager and prompt:
+                    self._swarm_manager.update_role(role_name, system_prompt=prompt)
                 role_key = f"swarm_role:{role_name}"
                 if prompt:
                     custom[role_key] = prompt
@@ -914,6 +927,10 @@ class WebApp:
             # Persist
             if self._db:
                 await self._db.set_setting("custom_prompts", custom)
+
+            # Persist swarm roles if updated
+            if data.get("swarm_roles") and self._swarm_manager:
+                await self._persist_swarm_roles()
 
             return {"status": "ok"}
 
@@ -1908,6 +1925,43 @@ class WebApp:
                 return {"roles": []}
             return {"roles": self._swarm_manager.get_available_roles()}
 
+        @app.post("/api/swarm/roles")
+        async def add_swarm_role(request: Request):
+            if not self._swarm_manager:
+                return JSONResponse(status_code=503, content={"error": "Swarm manager not configured"})
+            data = await request.json()
+            name = data.get("name", "").strip().lower().replace(" ", "_")
+            prompt = data.get("system_prompt", "")
+            desc = data.get("description", "")
+            if not name or not prompt:
+                return JSONResponse(status_code=400, content={"error": "name and system_prompt required"})
+            self._swarm_manager.add_role(name, prompt, desc)
+            await self._persist_swarm_roles()
+            return {"status": "ok", "role": name}
+
+        @app.put("/api/swarm/roles/{role_name}")
+        async def update_swarm_role(role_name: str, request: Request):
+            if not self._swarm_manager:
+                return JSONResponse(status_code=503, content={"error": "Swarm manager not configured"})
+            data = await request.json()
+            self._swarm_manager.update_role(
+                role_name,
+                system_prompt=data.get("system_prompt", ""),
+                description=data.get("description", ""),
+            )
+            await self._persist_swarm_roles()
+            return {"status": "ok"}
+
+        @app.delete("/api/swarm/roles/{role_name}")
+        async def delete_swarm_role(role_name: str):
+            if not self._swarm_manager:
+                return JSONResponse(status_code=503, content={"error": "Swarm manager not configured"})
+            removed = self._swarm_manager.remove_role(role_name)
+            if not removed:
+                return JSONResponse(status_code=404, content={"error": "Role not found"})
+            await self._persist_swarm_roles()
+            return {"status": "ok"}
+
         # --- Additional Messenger endpoints (WhatsApp, Gmail, Signal) ---
 
         @app.post("/api/webhook/receive/whatsapp")
@@ -2061,6 +2115,14 @@ class WebApp:
                 async with self._lock:
                     if websocket in self._connections:
                         self._connections.remove(websocket)
+
+    async def _persist_swarm_roles(self):
+        """Save all swarm roles to DB."""
+        if self._db and self._swarm_manager:
+            try:
+                await self._db.set_setting("swarm_roles", self._swarm_manager.export_roles())
+            except Exception:
+                pass
 
     async def broadcast(self, message: str):
         async with self._lock:

@@ -470,6 +470,45 @@ class SwarmManager:
 
     def get_available_roles(self) -> list[dict]:
         return [
-            {"role": name, "description": member.description}
+            {"role": name, "description": member.description, "is_default": name in DEFAULT_ROLES}
             for name, member in self._roles.items()
         ]
+
+    def add_role(self, name: str, system_prompt: str, description: str = ""):
+        self._roles[name] = SwarmMember(
+            role=name, system_prompt=system_prompt,
+            description=description or f"Custom role: {name}",
+        )
+
+    def remove_role(self, name: str) -> bool:
+        if name not in self._roles:
+            return False
+        self._roles.pop(name)
+        return True
+
+    def update_role(self, name: str, system_prompt: str = "", description: str = ""):
+        member = self._roles.get(name)
+        if member:
+            if system_prompt:
+                member.system_prompt = system_prompt
+            if description:
+                member.description = description
+        else:
+            self.add_role(name, system_prompt, description)
+
+    def export_roles(self) -> dict[str, dict]:
+        """Export all roles as serializable dict for DB persistence."""
+        return {
+            name: {"system_prompt": m.system_prompt, "description": m.description}
+            for name, m in self._roles.items()
+        }
+
+    def import_roles(self, roles_data: dict[str, dict]):
+        """Import roles from DB, replacing current set."""
+        self._roles.clear()
+        for name, data in roles_data.items():
+            self._roles[name] = SwarmMember(
+                role=name,
+                system_prompt=data.get("system_prompt", ""),
+                description=data.get("description", f"Role: {name}"),
+            )

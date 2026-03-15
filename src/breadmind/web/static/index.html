@@ -1136,8 +1136,15 @@
                 html += `</div>`;
 
                 html += `<div class="settings-section" data-stab="prompts"><h3>Swarm Role Prompts</h3>`;
-                html += `<p style="color:#64748b;font-size:12px;margin-bottom:8px;">Customize each expert role's system prompt. Leave empty to use default.</p>`;
+                html += `<p style="color:#64748b;font-size:12px;margin-bottom:8px;">Edit or add expert roles for Agent Swarm.</p>`;
                 html += `<div id="swarm-role-editors"></div>`;
+                html += `<div style="margin-top:12px;padding-top:12px;border-top:1px solid #334155;">`;
+                html += `<span style="color:#94a3b8;font-size:12px;">Add New Role</span>`;
+                html += `<div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;">`;
+                html += `<input type="text" id="new-role-name" class="setting-input" placeholder="role_name" style="width:140px;" />`;
+                html += `<input type="text" id="new-role-desc" class="setting-input" placeholder="Description" style="flex:1;" />`;
+                html += `<button class="save-btn" onclick="addSwarmRole()">Add</button>`;
+                html += `</div></div>`;
                 html += `</div>`;
 
                 html += `<div class="settings-section" data-stab="prompts"><h3>Swarm Coordinator</h3>`;
@@ -1194,13 +1201,39 @@
                         `<div style="margin-bottom:12px;">
                             <div style="display:flex;justify-content:space-between;align-items:center;">
                                 <span style="color:#e2e8f0;font-size:13px;font-weight:600;">${name}</span>
-                                <span style="color:#64748b;font-size:11px;">${escapeHtml(info.description)}</span>
+                                <div>
+                                    <span style="color:#64748b;font-size:11px;">${escapeHtml(info.description)}</span>
+                                    <button onclick="deleteSwarmRole('${name}')" style="background:none;border:none;color:#fca5a5;cursor:pointer;font-size:12px;margin-left:8px;">Delete</button>
+                                </div>
                             </div>
                             <textarea class="prompt-editor" id="prompt-role-${name}" style="min-height:100px;margin-top:4px;">${escapeHtml(info.system_prompt)}</textarea>
                         </div>`
                     ).join('');
                 }
             } catch(e) {}
+        }
+
+        async function addSwarmRole() {
+            const name = document.getElementById('new-role-name').value.trim().toLowerCase().replace(/\s+/g, '_');
+            const desc = document.getElementById('new-role-desc').value.trim();
+            if (!name) { showToast('Role name required', 'error'); return; }
+            const resp = await fetch('/api/swarm/roles', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({name, system_prompt: `You are a ${name} expert.\n\nProvide analysis and recommendations.`, description: desc || name}),
+            });
+            if (resp.ok) {
+                showToast('Role added', 'success');
+                document.getElementById('new-role-name').value = '';
+                document.getElementById('new-role-desc').value = '';
+                loadPrompts();
+            } else { const d = await resp.json(); showToast(d.error || 'Failed', 'error'); }
+        }
+
+        async function deleteSwarmRole(name) {
+            if (!confirm('Delete role "' + name + '"?')) return;
+            const resp = await fetch('/api/swarm/roles/' + encodeURIComponent(name), {method: 'DELETE'});
+            if (resp.ok) { showToast('Role deleted', 'success'); loadPrompts(); }
+            else { const d = await resp.json(); showToast(d.error || 'Failed', 'error'); }
         }
 
         async function savePrompts() {
