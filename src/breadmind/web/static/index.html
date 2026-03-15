@@ -83,7 +83,11 @@
         .no-events { text-align: center; color: #64748b; padding: 40px; font-size: 14px; }
 
         /* Settings tab */
-        .settings { flex: 1; overflow-y: auto; padding: 20px; max-width: 800px; }
+        .settings { flex: 1; overflow-y: auto; padding: 20px; max-width: 900px; }
+        .sub-tab { background: transparent; border: 1px solid #334155; color: #94a3b8; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; white-space: nowrap; }
+        .sub-tab:hover { color: #e2e8f0; border-color: #475569; }
+        .sub-tab.active { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+        .prompt-editor { width: 100%; min-height: 120px; background: #0f172a; border: 1px solid #334155; border-radius: 6px; color: #e2e8f0; font-family: monospace; font-size: 12px; padding: 10px; resize: vertical; }
         .settings h2 { font-size: 18px; margin-bottom: 20px; }
         .settings-section { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
         .settings-section h3 { font-size: 14px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 14px; padding-bottom: 8px; border-bottom: 1px solid #334155; }
@@ -415,9 +419,16 @@
         </div>
         <!-- Settings Tab -->
         <div class="tab-content" id="tab-settings">
-            <div class="settings">
-                <h2>Configuration</h2>
-                <div id="settingsContent"><div class="settings-section"><h3>Loading...</h3></div></div>
+            <div class="settings" style="display:flex;flex-direction:column;height:100%;overflow:hidden;">
+                <div style="display:flex;gap:4px;padding:8px 16px;background:#1e293b;border-bottom:1px solid #334155;flex-shrink:0;overflow-x:auto;">
+                    <button class="sub-tab active" onclick="switchSettingsTab('general')" id="stab-general">General</button>
+                    <button class="sub-tab" onclick="switchSettingsTab('prompts')" id="stab-prompts">Prompts</button>
+                    <button class="sub-tab" onclick="switchSettingsTab('safety')" id="stab-safety">Safety</button>
+                    <button class="sub-tab" onclick="switchSettingsTab('messenger')" id="stab-messenger">Messenger</button>
+                    <button class="sub-tab" onclick="switchSettingsTab('agents')" id="stab-agents">Agents</button>
+                    <button class="sub-tab" onclick="switchSettingsTab('system')" id="stab-system">System</button>
+                </div>
+                <div id="settingsContent" style="flex:1;overflow-y:auto;padding:16px;"><div class="settings-section"><h3>Loading...</h3></div></div>
             </div>
         </div>
     </div>
@@ -731,7 +742,7 @@
                 let html = '';
 
                 // Agent Persona
-                html += `<div class="settings-section"><h3>Agent Persona</h3>`;
+                html += `<div class="settings-section" data-stab="general"><h3>Agent Persona</h3>`;
                 html += `<div class="setting-row"><span class="setting-label">Name</span>
                     <input type="text" class="setting-input" id="persona-name" value="BreadMind" /></div>`;
                 html += `<div class="setting-row"><span class="setting-label">Personality</span>
@@ -763,7 +774,7 @@
                 html += `</div>`;
 
                 // Token Usage
-                html += `<div class="settings-section"><h3>Token Usage</h3>`;
+                html += `<div class="settings-section" data-stab="general"><h3>Token Usage</h3>`;
                 const u = usage.usage || {};
                 if (Object.keys(u).length > 0) {
                     html += `<div class="usage-grid">`;
@@ -778,7 +789,7 @@
                 html += `</div>`;
 
                 // Audit Log
-                html += `<div class="settings-section"><h3>Recent Audit Log</h3>`;
+                html += `<div class="settings-section" data-stab="general"><h3>Recent Audit Log</h3>`;
                 const entries = (audit.entries || []).slice(0, 20);
                 if (entries.length > 0) {
                     html += `<div class="audit-list">`;
@@ -795,7 +806,7 @@
                 html += `</div>`;
 
                 // Tool Metrics
-                html += `<div class="settings-section"><h3>Tool Metrics</h3>`;
+                html += `<div class="settings-section" data-stab="general"><h3>Tool Metrics</h3>`;
                 const m = metrics.metrics || {};
                 const toolEntries = Object.entries(m);
                 if (toolEntries.length > 0) {
@@ -814,7 +825,7 @@
                 html += `</div>`;
 
                 // Pending Approvals
-                html += `<div class="settings-section"><h3>Pending Approvals</h3>`;
+                html += `<div class="settings-section" data-stab="safety"><h3>Pending Approvals</h3>`;
                 const apps = approvals.approvals || [];
                 if (apps.length > 0) {
                     apps.forEach(a => {
@@ -835,7 +846,7 @@
 
                 // API Keys
                 const keys = apiKeys.keys || {};
-                html += `<div class="settings-section"><h3>API Keys</h3>`;
+                html += `<div class="settings-section" data-stab="general"><h3>API Keys</h3>`;
                 ['ANTHROPIC_API_KEY', 'GEMINI_API_KEY', 'OPENAI_API_KEY'].forEach(keyName => {
                     const info = keys[keyName] || {set: false, masked: ''};
                     const dotClass = info.set ? 'set' : 'not-set';
@@ -853,7 +864,7 @@
                 html += `</div>`;
 
                 // LLM Provider (editable)
-                html += `<div class="settings-section"><h3>LLM Provider</h3>`;
+                html += `<div class="settings-section" data-stab="general"><h3>LLM Provider</h3>`;
                 const llm = config.llm || {};
                 const providers = ['claude', 'gemini', 'ollama', 'cli'];
                 html += `<div class="setting-row"><span class="setting-label">Provider</span>
@@ -873,7 +884,7 @@
                 html += `</div>`;
 
                 // Agent Timeouts
-                html += `<div class="settings-section"><h3>Agent Timeouts</h3>`;
+                html += `<div class="settings-section" data-stab="general"><h3>Agent Timeouts</h3>`;
                 html += `<div class="setting-row"><span class="setting-label">Tool Timeout (sec)</span>
                     <input type="number" id="timeout-tool" class="setting-input" min="1" style="width:80px;" /></div>`;
                 html += `<div class="setting-row"><span class="setting-label">Chat Timeout (sec)</span>
@@ -884,7 +895,7 @@
                 html += `</div>`;
 
                 // Memory
-                html += `<div class="settings-section"><h3>Memory</h3>`;
+                html += `<div class="settings-section" data-stab="general"><h3>Memory</h3>`;
                 html += `<div class="setting-row"><span class="setting-label">Max Messages/Session</span>
                     <input type="number" id="mem-max-messages" class="setting-input" min="1" style="width:80px;" /></div>`;
                 html += `<div class="setting-row"><span class="setting-label">Session Timeout (min)</span>
@@ -895,7 +906,7 @@
                 html += `</div>`;
 
                 // MCP (editable)
-                html += `<div class="settings-section"><h3>MCP Configuration</h3>`;
+                html += `<div class="settings-section" data-stab="general"><h3>MCP Configuration</h3>`;
                 const mcp = config.mcp || {};
                 html += `<div class="setting-row"><span class="setting-label">Auto Discover</span>
                     <label class="toggle-switch"><input type="checkbox" id="input-auto-discover" ${mcp.auto_discover ? 'checked' : ''}><span class="toggle-slider"></span></label></div>`;
@@ -908,7 +919,7 @@
                 html += `</div>`;
 
                 // Safety Rules (editable)
-                html += `<div class="settings-section"><h3>Safety Rules</h3>`;
+                html += `<div class="settings-section" data-stab="safety"><h3>Safety Rules</h3>`;
 
                 // Blacklist
                 html += `<div class="safety-subsection">`;
@@ -957,7 +968,7 @@
                 window._safetyData = safety;
 
                 // Monitoring Rules (editable)
-                html += `<div class="settings-section"><h3>Monitoring Rules</h3>`;
+                html += `<div class="settings-section" data-stab="safety"><h3>Monitoring Rules</h3>`;
                 html += `<div id="monitoring-rules-editor"></div>`;
                 html += `<h4 style="color:#94a3b8;font-size:13px;margin:12px 0 8px;">Loop Protector</h4>`;
                 html += `<div class="setting-row"><span class="setting-label">Cooldown (min)</span>
@@ -968,7 +979,7 @@
                 html += `</div>`;
 
                 // Scheduler
-                html += `<div class="settings-section">`;
+                html += `<div class="settings-section" data-stab="agents">`;
                 html += `<h3>Scheduler</h3>`;
                 html += `<h4 style="color:#94a3b8;font-size:13px;margin:0 0 8px;">Cron Jobs</h4>`;
                 html += `<div id="cron-jobs-list"></div>`;
@@ -990,7 +1001,7 @@
                 html += `</div>`;
 
                 // Sub-agents
-                html += `<div class="settings-section">`;
+                html += `<div class="settings-section" data-stab="agents">`;
                 html += `<h3>Sub-agents</h3>`;
                 html += `<div id="subagent-status" style="color:#94a3b8;font-size:12px;margin-bottom:8px;"></div>`;
                 html += `<div id="subagent-tasks-list"></div>`;
@@ -1001,7 +1012,7 @@
                 html += `</div>`;
 
                 // Agent Swarms
-                html += `<div class="settings-section">`;
+                html += `<div class="settings-section" data-stab="agents">`;
                 html += `<h3>Agent Swarms</h3>`;
                 html += `<div id="swarm-status" style="color:#94a3b8;font-size:12px;margin-bottom:8px;"></div>`;
                 html += `<div id="swarm-list"></div>`;
@@ -1013,7 +1024,7 @@
                 html += `</div>`;
 
                 // Container Isolation
-                html += `<div class="settings-section">`;
+                html += `<div class="settings-section" data-stab="agents">`;
                 html += `<h3>Container Isolation</h3>`;
                 html += `<div id="container-status" style="color:#94a3b8;font-size:12px;margin-bottom:8px;">Checking Docker...</div>`;
                 html += `<div id="container-list"></div>`;
@@ -1025,7 +1036,7 @@
                 html += `</div>`;
 
                 // Webhooks
-                html += `<div class="settings-section">`;
+                html += `<div class="settings-section" data-stab="agents">`;
                 html += `<h3>Webhooks</h3>`;
                 html += `<div id="webhook-endpoints-list"></div>`;
                 html += `<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">`;
@@ -1045,12 +1056,12 @@
                 html += `</div>`;
 
                 // Messenger Connections
-                html += `<div class="settings-section"><h3>Messenger Connections</h3>`;
+                html += `<div class="settings-section" data-stab="messenger"><h3>Messenger Connections</h3>`;
                 html += `<div id="messenger-platforms-container"><div class="no-data">Loading messenger platforms...</div></div>`;
                 html += `</div>`;
 
                 // Tool Security
-                html += `<div class="settings-section"><h3>Tool Security</h3>`;
+                html += `<div class="settings-section" data-stab="safety"><h3>Tool Security</h3>`;
                 html += `<div class="setting-row" style="flex-direction:column;align-items:flex-start;">
                     <span class="setting-label">Dangerous Command Patterns</span>
                     <div id="dangerous-patterns-editor"></div>
@@ -1071,7 +1082,7 @@
                 html += `</div>`;
 
                 // Logging
-                html += `<div class="settings-section"><h3>Logging</h3>`;
+                html += `<div class="settings-section" data-stab="system"><h3>Logging</h3>`;
                 html += `<div class="setting-row"><span class="setting-label">Level</span>
                     <select id="log-level" class="setting-select">
                         <option value="DEBUG">DEBUG</option>
@@ -1084,7 +1095,7 @@
                 html += `</div>`;
 
                 // System Info
-                html += `<div class="settings-section"><h3>System Info</h3>`;
+                html += `<div class="settings-section" data-stab="system"><h3>System Info</h3>`;
                 html += `<div class="setting-row"><span class="setting-label">Version</span><span class="setting-value" id="sys-version">v0.1.0</span></div>`;
                 html += `<div class="setting-row"><span class="setting-label">Latest</span><span class="setting-value" id="sys-latest">checking...</span></div>`;
                 html += `<button class="save-btn" id="sys-update-btn" style="display:none;margin-top:8px;" onclick="applyUpdate()">Update Now</button>`;
@@ -1099,7 +1110,7 @@
                 html += `</div>`;
 
                 // Database (read-only)
-                html += `<div class="settings-section"><h3>Database</h3>`;
+                html += `<div class="settings-section" data-stab="system"><h3>Database</h3>`;
                 if (config.database) {
                     html += row('Host', config.database.host);
                     html += row('Port', config.database.port);
@@ -1107,17 +1118,100 @@
                 }
                 html += `</div>`;
 
+                // Prompts tab
+                html += `<div class="settings-section" data-stab="prompts"><h3>Main System Prompt</h3>`;
+                html += `<p style="color:#64748b;font-size:12px;margin-bottom:8px;">Override the default persona system prompt. Leave empty to use the persona preset.</p>`;
+                html += `<textarea class="prompt-editor" id="prompt-main"></textarea>`;
+                html += `<div class="section-footer"><button class="save-btn" onclick="savePrompts()">Save All Prompts</button></div>`;
+                html += `</div>`;
+
+                html += `<div class="settings-section" data-stab="prompts"><h3>Swarm Role Prompts</h3>`;
+                html += `<p style="color:#64748b;font-size:12px;margin-bottom:8px;">Customize each expert role's system prompt. Leave empty to use default.</p>`;
+                html += `<div id="swarm-role-editors"></div>`;
+                html += `</div>`;
+
+                html += `<div class="settings-section" data-stab="prompts"><h3>Swarm Coordinator</h3>`;
+                html += `<p style="color:#64748b;font-size:12px;margin-bottom:8px;">Decompose prompt (how goals are split into tasks):</p>`;
+                html += `<textarea class="prompt-editor" id="prompt-decompose" style="min-height:80px;"></textarea>`;
+                html += `<p style="color:#64748b;font-size:12px;margin:12px 0 8px;">Aggregate prompt (how results are combined):</p>`;
+                html += `<textarea class="prompt-editor" id="prompt-aggregate" style="min-height:80px;"></textarea>`;
+                html += `<div class="section-footer"><button class="save-btn" onclick="savePrompts()">Save All Prompts</button></div>`;
+                html += `</div>`;
+
+                html += `<div class="settings-section" data-stab="prompts"><h3>MCP Install Assistant</h3>`;
+                html += `<p style="color:#64748b;font-size:12px;margin-bottom:8px;">System prompt for MCP server analysis:</p>`;
+                html += `<textarea class="prompt-editor" id="prompt-mcp-install" style="min-height:60px;"></textarea>`;
+                html += `<div class="section-footer"><button class="save-btn" onclick="savePrompts()">Save All Prompts</button></div>`;
+                html += `</div>`;
+
                 c.innerHTML = html;
                 loadSafetyEditors(window._safetyData);
                 loadPersona();
                 loadNewSettingsData(timeoutsData, memoryData, monRules, messengerData, toolSecData, messengerPlatforms);
-                // Load model list for current provider
                 const curProvider = (config.llm || {}).default_provider || 'claude';
                 const curModel = (config.llm || {}).default_model || '';
                 loadModelsForProvider(curProvider, curModel);
-                // Check for updates when settings tab opens
                 checkForUpdate();
+                loadPrompts();
+                switchSettingsTab(_currentSettingsTab || 'general');
             });
+        }
+
+        let _currentSettingsTab = 'general';
+
+        function switchSettingsTab(tab) {
+            _currentSettingsTab = tab;
+            document.querySelectorAll('.sub-tab').forEach(b => b.classList.toggle('active', b.id === 'stab-' + tab));
+            document.querySelectorAll('#settingsContent .settings-section').forEach(s => {
+                s.style.display = s.dataset.stab === tab ? '' : 'none';
+            });
+        }
+
+        async function loadPrompts() {
+            try {
+                const resp = await fetch('/api/config/prompts');
+                const data = await resp.json();
+                document.getElementById('prompt-main').value = data.main_system_prompt || '';
+                document.getElementById('prompt-decompose').value = data.swarm_decompose || '';
+                document.getElementById('prompt-aggregate').value = data.swarm_aggregate || '';
+                document.getElementById('prompt-mcp-install').value = data.mcp_install || '';
+
+                // Render swarm role editors
+                const container = document.getElementById('swarm-role-editors');
+                if (container && data.swarm_roles) {
+                    container.innerHTML = Object.entries(data.swarm_roles).map(([name, info]) =>
+                        `<div style="margin-bottom:12px;">
+                            <div style="display:flex;justify-content:space-between;align-items:center;">
+                                <span style="color:#e2e8f0;font-size:13px;font-weight:600;">${name}</span>
+                                <span style="color:#64748b;font-size:11px;">${escapeHtml(info.description)}</span>
+                            </div>
+                            <textarea class="prompt-editor" id="prompt-role-${name}" style="min-height:100px;margin-top:4px;">${escapeHtml(info.system_prompt)}</textarea>
+                        </div>`
+                    ).join('');
+                }
+            } catch(e) {}
+        }
+
+        async function savePrompts() {
+            const payload = {
+                main_system_prompt: document.getElementById('prompt-main').value,
+                swarm_decompose: document.getElementById('prompt-decompose').value,
+                swarm_aggregate: document.getElementById('prompt-aggregate').value,
+                mcp_install: document.getElementById('prompt-mcp-install').value,
+                swarm_roles: {},
+            };
+            document.querySelectorAll('[id^="prompt-role-"]').forEach(el => {
+                const role = el.id.replace('prompt-role-', '');
+                payload.swarm_roles[role] = el.value;
+            });
+            try {
+                const resp = await fetch('/api/config/prompts', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload),
+                });
+                if (resp.ok) showToast('Prompts saved', 'success');
+                else showToast('Failed to save', 'error');
+            } catch(e) { showToast('Network error', 'error'); }
         }
 
         // --- Safety editors state ---

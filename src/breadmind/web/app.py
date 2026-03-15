@@ -835,6 +835,88 @@ class WebApp:
             """Check if settings are DB-persisted."""
             return {"db_connected": self._db is not None}
 
+        # --- Prompt management ---
+
+        @app.get("/api/config/prompts")
+        async def get_prompts():
+            """Get all configurable prompts."""
+            from breadmind.core.swarm import DEFAULT_ROLES
+            from breadmind.mcp.install_assistant import INSTALL_SYSTEM_PROMPT, ANALYZE_PROMPT, TROUBLESHOOT_PROMPT
+
+            # Load custom overrides from DB
+            custom = {}
+            if self._db:
+                try:
+                    saved = await self._db.get_setting("custom_prompts")
+                    if saved:
+                        custom = saved
+                except Exception:
+                    pass
+
+            roles = {}
+            for name, member in DEFAULT_ROLES.items():
+                roles[name] = {
+                    "description": member.description,
+                    "system_prompt": custom.get(f"swarm_role:{name}", member.system_prompt),
+                    "is_custom": f"swarm_role:{name}" in custom,
+                }
+
+            return {
+                "main_system_prompt": custom.get("main_system_prompt", ""),
+                "swarm_roles": roles,
+                "swarm_decompose": custom.get("swarm_decompose", ""),
+                "swarm_aggregate": custom.get("swarm_aggregate", ""),
+                "mcp_install": custom.get("mcp_install", INSTALL_SYSTEM_PROMPT),
+                "mcp_analyze": custom.get("mcp_analyze", ANALYZE_PROMPT),
+                "mcp_troubleshoot": custom.get("mcp_troubleshoot", TROUBLESHOOT_PROMPT),
+                "setup_recommend": custom.get("setup_recommend", ""),
+            }
+
+        @app.post("/api/config/prompts")
+        async def update_prompts(request: Request):
+            """Update custom prompts. Empty string = use default."""
+            data = await request.json()
+
+            # Load existing
+            custom = {}
+            if self._db:
+                try:
+                    saved = await self._db.get_setting("custom_prompts")
+                    if saved:
+                        custom = saved
+                except Exception:
+                    pass
+
+            # Update only provided keys
+            valid_keys = [
+                "main_system_prompt", "swarm_decompose", "swarm_aggregate",
+                "mcp_install", "mcp_analyze", "mcp_troubleshoot", "setup_recommend",
+            ]
+            for key in valid_keys:
+                if key in data:
+                    if data[key]:  # non-empty = custom
+                        custom[key] = data[key]
+                    else:  # empty = reset to default
+                        custom.pop(key, None)
+
+            # Swarm role prompts
+            for role_name, prompt in data.get("swarm_roles", {}).items():
+                role_key = f"swarm_role:{role_name}"
+                if prompt:
+                    custom[role_key] = prompt
+                else:
+                    custom.pop(role_key, None)
+
+            # Apply main system prompt to agent
+            if "main_system_prompt" in data and data["main_system_prompt"] and self._agent:
+                self._agent.set_system_prompt(data["main_system_prompt"])
+
+            # Persist
+            if self._db:
+                await self._db.set_setting("custom_prompts", custom)
+
+            return {"status": "ok"}
+
         # --- MCP Store endpoints ---
 
         @app.get("/api/mcp/search")
