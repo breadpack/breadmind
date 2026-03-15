@@ -132,7 +132,7 @@ class WorkingMemory:
         return [
             {"role": m.role, "content": m.content or ""}
             for m in session.messages
-            if m.role in ("user", "assistant")
+            if m.role in ("user", "assistant") and (m.content and m.content.strip())
         ]
 
     async def _persist_session(self, session):

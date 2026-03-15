@@ -180,6 +180,8 @@
 
         #tab-store { display:none; padding:20px; }
         #tab-store.active { display:flex; flex-direction:column; height:calc(100vh - 80px); }
+        #tab-skills { display:none; padding:20px; }
+        #tab-skills.active { display:flex; flex-direction:column; height:calc(100vh - 80px); }
 
         .store-content { display:flex; gap:16px; flex:1; overflow:hidden; }
         .store-left { width:45%; overflow-y:auto; }
@@ -243,6 +245,26 @@
         .btn-retry { background:#3b82f6; color:white; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; }
 
         .loading, .empty { color:#64748b; text-align:center; padding:20px; }
+
+        /* Chat approval inline */
+        .chat-approval { background:#1e293b; border:1px solid #334155; border-radius:8px; padding:12px 16px; margin-top:8px; }
+        .chat-approval .approval-tool-name { font-weight:600; color:#fbbf24; font-size:13px; margin-bottom:6px; }
+        .chat-approval .approval-btns { display:flex; gap:8px; margin-top:8px; }
+        .chat-approval .approval-btns button { padding:6px 16px; border:none; border-radius:6px; cursor:pointer; font-size:12px; font-weight:600; }
+        .chat-approval .btn-approve { background:#166534; color:#86efac; }
+        .chat-approval .btn-approve:hover { background:#15803d; }
+        .chat-approval .btn-deny { background:#7f1d1d; color:#fca5a5; }
+        .chat-approval .btn-deny:hover { background:#991b1b; }
+        .chat-approval .approval-done { color:#64748b; font-size:12px; font-style:italic; }
+
+        /* Thinking indicator */
+        .thinking-indicator { display:flex; align-items:center; gap:8px; padding:10px 16px; }
+        .thinking-indicator .dots { display:flex; gap:4px; }
+        .thinking-indicator .dots span { width:8px; height:8px; background:#3b82f6; border-radius:50%; animation:thinking-bounce 1.4s infinite ease-in-out both; }
+        .thinking-indicator .dots span:nth-child(1) { animation-delay:-0.32s; }
+        .thinking-indicator .dots span:nth-child(2) { animation-delay:-0.16s; }
+        .thinking-indicator .label { color:#64748b; font-size:12px; }
+        @keyframes thinking-bounce { 0%,80%,100%{transform:scale(0);opacity:0.4} 40%{transform:scale(1);opacity:1} }
 
         /* Messenger Connection Cards */
         .messenger-card { background:#0f1923; border:1px solid #1e293b; border-radius:10px; padding:16px; margin-bottom:12px; }
@@ -422,6 +444,7 @@
         <div class="tab active" onclick="switchTab('chat')">Chat</div>
         <div class="tab" onclick="switchTab('monitoring')">Monitoring <span class="count" id="eventCount">0</span></div>
         <div class="tab" onclick="switchTab('store')">MCP Store</div>
+        <div class="tab" onclick="switchTab('skills')">Skill Store</div>
         <div class="tab" onclick="switchTab('settings')">Settings</div>
     </div>
     <div class="main">
@@ -502,6 +525,25 @@
                 </div>
             </div>
         </div>
+        <!-- Skill Store Tab -->
+        <div class="tab-content" id="tab-skills">
+            <div class="store-search">
+                <input type="text" id="skill-search-input" placeholder="Search AI skills..." />
+                <button onclick="searchSkills()">Search</button>
+            </div>
+            <div class="store-content">
+                <div class="store-left">
+                    <div id="skill-categories"></div>
+                    <div id="skill-results"></div>
+                </div>
+                <div class="store-right">
+                    <h3>Skill Details</h3>
+                    <div id="skill-detail">
+                        <div class="install-welcome">Select a skill to view details</div>
+                    </div>
+                </div>
+            </div>
+        </div>
         <!-- Settings Tab -->
         <div class="tab-content" id="tab-settings">
             <div class="settings" style="display:flex;flex-direction:column;height:100%;overflow:hidden;">
@@ -541,7 +583,11 @@
             ws.onclose = () => { document.getElementById('statusDot').className = 'dot disconnected'; document.getElementById('statusText').textContent = 'Disconnected'; setTimeout(connect, 3000); };
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
-                if (data.type === 'response') {
+                if (data.type === 'progress') {
+                    showThinking(data.status, data.detail);
+                }
+                else if (data.type === 'response') {
+                    removeThinking();
                     addMessage(data.message, 'bot');
                     sendBtn.disabled = false; sendBtn.textContent = 'Send';
                     loadSessions(); // Refresh session list (title may have been set)
@@ -611,13 +657,14 @@
         }
 
         function switchTab(name) {
-            document.querySelectorAll('.tab').forEach((t, i) => { t.classList.toggle('active', ['chat','monitoring','store','settings'][i] === name); });
+            document.querySelectorAll('.tab').forEach((t, i) => { t.classList.toggle('active', ['chat','monitoring','store','skills','settings'][i] === name); });
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
             document.getElementById('tab-' + name).classList.add('active');
             location.hash = name;
             if (name === 'settings') loadSettings();
             if (name === 'monitoring') loadEvents();
             if (name === 'store') { loadFeatured(); loadInstalledServers(); }
+            if (name === 'skills') { loadSkillsFeatured(); }
         }
 
         function sendMessage() {
@@ -629,7 +676,33 @@
             sendBtn.disabled = true; sendBtn.textContent = '...';
         }
 
+        function showThinking(status, detail) {
+            let label = '생각하는 중...';
+            if (status === 'tool_call' && detail) {
+                label = '🔧 ' + detail;
+            } else if (status === 'thinking') {
+                label = '💭 생각하는 중...';
+            }
+            const el = document.getElementById('thinking-msg');
+            if (el) {
+                el.querySelector('.label').textContent = label;
+            } else {
+                const div = document.createElement('div');
+                div.className = 'message bot';
+                div.id = 'thinking-msg';
+                div.innerHTML = '<div class="thinking-indicator"><div class="dots"><span></span><span></span><span></span></div><span class="label">' + escapeHtml(label) + '</span></div>';
+                messagesDiv.appendChild(div);
+            }
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function removeThinking() {
+            const el = document.getElementById('thinking-msg');
+            if (el) el.remove();
+        }
+
         function addMessage(text, type) {
+            if (!text || !text.trim()) return;
             const div = document.createElement('div');
             div.className = `message ${type}`;
             const time = new Date().toLocaleTimeString();
@@ -651,6 +724,24 @@
                     html = marked.parse(displayText);
                 } catch(e) {
                     html = escapeHtml(displayText);
+                }
+            }
+            // Detect approval request and render inline buttons
+            if (type === 'bot') {
+                const approvalMatch = displayText.match(/(?:승인|[Aa]pproval)\s*ID[:\s]*([a-f0-9-]+)/);
+                if (approvalMatch) {
+                    const approvalId = approvalMatch[1];
+                    const toolMatch = displayText.match(/(?:도구|[Tt]ool)\s*['"]?(\w+)['"]?/);
+                    const toolName = toolMatch ? toolMatch[1] : 'unknown';
+                    const cleanText = displayText.replace(/\(승인 ID:.*?\)/g, '').trim();
+                    try { html = marked.parse(cleanText); } catch(e) { html = escapeHtml(cleanText); }
+                    html += `<div class="chat-approval" id="approval-${approvalId}">
+                        <div class="approval-tool-name">🔒 ${escapeHtml(toolName)} 실행 승인 필요</div>
+                        <div class="approval-btns">
+                            <button class="btn-approve" onclick="chatApproval('${approvalId}','approve')">✅ 승인</button>
+                            <button class="btn-deny" onclick="chatApproval('${approvalId}','deny')">❌ 거부</button>
+                        </div>
+                    </div>`;
                 }
             }
             div.innerHTML = `<div class="bubble">${html}</div><div class="meta">${type === 'user' ? 'You' : 'BreadMind'} · ${time}</div>`;
@@ -859,7 +950,8 @@
                 fetch('/api/config/messenger').then(r => r.json()).catch(() => ({allowed_users:{slack:[],discord:[],telegram:[]}})),
                 fetch('/api/config/tool-security').then(r => r.json()).catch(() => ({security:{}})),
                 fetch('/api/messenger/platforms').then(r => r.json()).catch(() => ({platforms:{}})),
-            ]).then(([config, safety, monitoring, usage, audit, metrics, approvals, apiKeys, timeoutsData, memoryData, monRules, messengerData, toolSecData, messengerPlatforms]) => {
+                fetch('/api/config/markets').then(r => r.json()).catch(() => ({markets:[]})),
+            ]).then(([config, safety, monitoring, usage, audit, metrics, approvals, apiKeys, timeoutsData, memoryData, monRules, messengerData, toolSecData, messengerPlatforms, marketsData]) => {
                 const c = document.getElementById('settingsContent');
                 let html = '';
 
@@ -1034,10 +1126,40 @@
                     <label class="toggle-switch"><input type="checkbox" id="input-auto-discover" ${mcp.auto_discover ? 'checked' : ''}><span class="toggle-slider"></span></label></div>`;
                 html += `<div class="setting-row"><span class="setting-label">Max Restart Attempts</span>
                     <input type="number" class="setting-input" id="input-max-restart" value="${mcp.max_restart_attempts || 3}" min="0"></div>`;
-                html += `<div class="setting-row"><span class="setting-label">Registries</span><div class="tag-list">`;
-                (mcp.registries || []).forEach(r => { html += `<span class="tag">${r.name} (${r.type}) ${r.enabled ? '\u2713' : '\u2717'}</span>`; });
-                html += `</div></div>`;
                 html += `<div class="section-footer"><button class="save-btn" id="btn-mcp" onclick="saveMcp()">Save</button></div>`;
+                html += `</div>`;
+
+                // Skill Markets & Registries (unified)
+                html += `<div class="settings-section" data-stab="general"><h3>Skill Markets & Registries</h3>`;
+                const markets = marketsData.markets || [];
+                if (markets.length > 0) {
+                    markets.forEach(m => {
+                        const statusCls = m.enabled ? 'enabled' : 'disabled';
+                        html += `<div class="setting-row" style="justify-content:space-between;">
+                            <div style="flex:1;">
+                                <span class="setting-label" style="width:auto;">${escapeHtml(m.name)}</span>
+                                <span style="color:#64748b;font-size:11px;margin-left:8px;">${escapeHtml(m.type)}${m.url ? ' | ' + escapeHtml(m.url) : ''}</span>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:8px;">
+                                <label class="toggle-switch"><input type="checkbox" ${m.enabled ? 'checked' : ''} onchange="toggleMarket('${escapeHtml(m.name)}', this.checked)"><span class="toggle-slider"></span></label>
+                                <button style="background:#7f1d1d;color:#fca5a5;border:none;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:11px;" onclick="deleteMarket('${escapeHtml(m.name)}')">Remove</button>
+                            </div>
+                        </div>`;
+                    });
+                } else {
+                    html += `<div class="no-data">No skill markets configured.</div>`;
+                }
+                html += `<div style="margin-top:12px;display:flex;gap:8px;align-items:center;">
+                    <input type="text" id="market-name" placeholder="Name" class="setting-input" style="width:120px;" />
+                    <select id="market-type" class="setting-select" style="width:130px;">
+                        <option value="skills_sh">skills.sh</option>
+                        <option value="skillsmp">SkillsMP</option>
+                        <option value="clawhub">ClewHub</option>
+                        <option value="mcp_registry">MCP Registry</option>
+                    </select>
+                    <input type="text" id="market-url" placeholder="URL (optional)" class="setting-input" style="flex:1;" />
+                    <button class="save-btn" onclick="addMarket()">Add</button>
+                </div>`;
                 html += `</div>`;
 
                 // Safety Rules (editable)
@@ -2368,6 +2490,145 @@
                 .then(r => r.json())
                 .then(() => { loadSettings(); })
                 .catch(err => { console.error('Approval action failed:', err); });
+        }
+
+        // ── Skill Market Management ──
+        async function toggleMarket(name, enabled) {
+            try {
+                await fetch('/api/config/markets/toggle', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({name, enabled}),
+                });
+                showToast(name + (enabled ? ' enabled' : ' disabled'), 'success');
+            } catch(e) { showToast('Failed to toggle market', 'error'); }
+        }
+
+        async function deleteMarket(name) {
+            try {
+                await fetch('/api/config/markets/' + encodeURIComponent(name), {method: 'DELETE'});
+                showToast(name + ' removed', 'success');
+                loadSettings();
+            } catch(e) { showToast('Failed to remove market', 'error'); }
+        }
+
+        async function addMarket() {
+            const name = document.getElementById('market-name').value.trim();
+            const type = document.getElementById('market-type').value;
+            const url = document.getElementById('market-url').value.trim();
+            if (!name) { showToast('Name is required', 'error'); return; }
+            try {
+                const resp = await fetch('/api/config/markets', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({name, type, url, enabled: true}),
+                });
+                if (resp.ok) {
+                    showToast(name + ' added', 'success');
+                    document.getElementById('market-name').value = '';
+                    document.getElementById('market-url').value = '';
+                    loadSettings();
+                } else { showToast('Failed to add market', 'error'); }
+            } catch(e) { showToast('Failed to add market', 'error'); }
+        }
+
+        // ── Skill Store ──
+        async function loadSkillsFeatured() {
+            const container = document.getElementById('skill-categories');
+            const resultsContainer = document.getElementById('skill-results');
+            resultsContainer.innerHTML = '';
+            container.innerHTML = '<div class="loading">Loading skills...</div>';
+            try {
+                const resp = await fetch('/api/skills/featured');
+                const data = await resp.json();
+                const cats = data.categories || [];
+                if (cats.length === 0) {
+                    container.innerHTML = '<div class="empty">No skills available.</div>';
+                    return;
+                }
+                let html = '<div class="cat-buttons">';
+                cats.forEach(c => {
+                    html += '<button class="cat-btn" onclick="filterSkillCategory(\'' + escapeHtml(c.name) + '\')">' + c.icon + ' ' + escapeHtml(c.name) + '</button>';
+                });
+                html += '</div>';
+                cats.forEach(c => {
+                    html += '<div class="cat-section" data-scat="' + escapeHtml(c.name) + '">';
+                    html += '<h4>' + c.icon + ' ' + escapeHtml(c.name) + '</h4>';
+                    (c.skills || []).forEach(s => {
+                        html += '<div class="server-card" style="cursor:pointer;" onclick="showSkillDetail(\'' + escapeHtml(s.slug).replace(/'/g, "\\'") + '\', \'' + escapeHtml(s.name) + '\', \'' + escapeHtml(s.source) + '\', \'' + escapeHtml(s.install_command || '').replace(/'/g, "\\'") + '\', ' + (s.installs || 0) + ')">' +
+                            '<div class="server-name">' + escapeHtml(s.name) + '</div>' +
+                            '<div class="server-desc">' + escapeHtml(s.description || '') + '</div>' +
+                            '<div class="server-meta"><span class="server-source">' + escapeHtml(s.source) + '</span></div>' +
+                            '</div>';
+                    });
+                    html += '</div>';
+                });
+                container.innerHTML = html;
+            } catch(e) {
+                container.innerHTML = '<div class="empty">Failed to load skills.</div>';
+            }
+        }
+
+        function filterSkillCategory(name) {
+            document.querySelectorAll('[data-scat]').forEach(s => {
+                s.style.display = s.dataset.scat === name ? '' : 'none';
+            });
+            document.querySelectorAll('#skill-categories .cat-btn').forEach(b => {
+                const isTarget = b.textContent.includes(name);
+                if (isTarget && b.classList.contains('active')) {
+                    b.classList.remove('active');
+                    document.querySelectorAll('[data-scat]').forEach(s => s.style.display = '');
+                } else {
+                    b.classList.toggle('active', isTarget);
+                }
+            });
+        }
+
+        async function searchSkills() {
+            const query = document.getElementById('skill-search-input').value.trim();
+            if (!query) return;
+            document.getElementById('skill-categories').style.display = 'none';
+            const container = document.getElementById('skill-results');
+            container.innerHTML = '<div class="loading">Searching...</div>';
+            try {
+                const resp = await fetch('/api/skills/search?q=' + encodeURIComponent(query) + '&limit=20');
+                const data = await resp.json();
+                if (!data.results || data.results.length === 0) {
+                    container.innerHTML = '<div class="empty">No skills found for "' + escapeHtml(query) + '"</div>';
+                    return;
+                }
+                container.innerHTML = data.results.map(s =>
+                    '<div class="server-card" style="cursor:pointer;" onclick="showSkillDetail(\'' + escapeHtml(s.slug).replace(/'/g, "\\'") + '\', \'' + escapeHtml(s.name) + '\', \'' + escapeHtml(s.source) + '\', \'' + escapeHtml(s.install_command || '').replace(/'/g, "\\'") + '\', ' + (s.installs || 0) + ')">' +
+                    '<div class="server-name">' + escapeHtml(s.name) + '</div>' +
+                    '<div class="server-desc">' + escapeHtml(s.description || '') + '</div>' +
+                    '<div class="server-meta"><span class="server-source">' + escapeHtml(s.source) + '</span></div>' +
+                    '</div>'
+                ).join('');
+            } catch(e) {
+                container.innerHTML = '<div class="empty">Search failed.</div>';
+            }
+        }
+
+        function showSkillDetail(slug, name, source, installCmd, installs) {
+            const panel = document.getElementById('skill-detail');
+            panel.innerHTML = '<div style="margin-bottom:12px;"><h4 style="color:#e2e8f0;margin:0 0 4px 0;">' + escapeHtml(name) + '</h4>' +
+                '<div style="color:#64748b;font-size:12px;">' + escapeHtml(source) + (installs ? ' | ' + installs.toLocaleString() + ' installs' : '') + '</div></div>' +
+                '<div style="color:#94a3b8;font-size:13px;margin-bottom:12px;">' + escapeHtml(slug) + '</div>' +
+                (installCmd ? '<div style="margin-bottom:12px;"><div style="color:#64748b;font-size:11px;margin-bottom:4px;">Install command:</div><code style="background:#0f1923;padding:8px 12px;border-radius:6px;color:#60a5fa;font-size:12px;display:block;word-break:break-all;">' + escapeHtml(installCmd) + '</code></div>' : '') +
+                '<button onclick="navigator.clipboard.writeText(\'' + escapeHtml(installCmd || '').replace(/'/g, "\\'") + '\');showToast(\'Copied!\',\'success\')" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:13px;margin-right:8px;">Copy Install Command</button>';
+        }
+
+        // Skill search on Enter key
+        document.addEventListener('DOMContentLoaded', function() {
+            var skillInput = document.getElementById('skill-search-input');
+            if (skillInput) skillInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') searchSkills(); });
+        });
+
+        function chatApproval(id, action) {
+            const card = document.getElementById('approval-' + id);
+            if (!card) return;
+            const btns = card.querySelector('.approval-btns');
+            btns.innerHTML = '<span class="approval-done">' + (action === 'approve' ? '✅ 승인됨' : '❌ 거부됨') + '</span>';
+            fetch('/api/approvals/' + id + '/' + action, { method: 'POST' })
+                .catch(err => console.error('Approval failed:', err));
         }
 
         function row(label, value, isEnabled) {

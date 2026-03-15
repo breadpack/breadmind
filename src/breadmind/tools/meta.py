@@ -177,9 +177,112 @@ def create_expansion_tools(
                 f"{stats.success_rate:.0%} success, avg {stats.avg_duration_ms:.0f}ms")
         return "\n".join(lines)
 
+    @tool(description="Install an AI skill from skills.sh or a GitHub repository. Provide the slug in format 'owner/repo/skill-name' (e.g., 'anthropics/skills/frontend-design'). The skill's prompt template will be downloaded and stored for automatic use in relevant conversations.")
+    async def skill_install(slug: str) -> str:
+        if skill_store is None:
+            return "SkillStore not available."
+        import aiohttp
+        parts = slug.strip().split("/")
+        if len(parts) < 3:
+            return f"Error: Invalid slug format '{slug}'. Expected 'owner/repo/skill-name'."
+        owner = parts[0]
+        repo = parts[1]
+        skill_name = "/".join(parts[2:])
+
+        # Try multiple path patterns
+        paths = [
+            f"skills/{skill_name}/SKILL.md",
+            f"{skill_name}/SKILL.md",
+            f"skills/{skill_name}.md",
+        ]
+        content = None
+        async with aiohttp.ClientSession() as session:
+            for path in paths:
+                url = f"https://raw.githubusercontent.com/{owner}/{repo}/main/{path}"
+                try:
+                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                        if resp.status == 200:
+                            content = await resp.text()
+                            break
+                except Exception:
+                    continue
+
+        if not content:
+            return f"Error: Could not find SKILL.md for '{slug}'. Tried paths: {', '.join(paths)}"
+
+        # Parse YAML frontmatter
+        description = ""
+        prompt_template = content
+        trigger_keywords = []
+        if content.startswith("---"):
+            parts_md = content.split("---", 2)
+            if len(parts_md) >= 3:
+                import yaml
+                try:
+                    meta = yaml.safe_load(parts_md[1])
+                    if isinstance(meta, dict):
+                        description = meta.get("description", "")
+                        skill_name_from_meta = meta.get("name", skill_name)
+                        if skill_name_from_meta:
+                            skill_name = skill_name_from_meta
+                except Exception:
+                    pass
+                prompt_template = parts_md[2].strip()
+
+        # Extract keywords from description and name
+        import re
+        words = re.findall(r'[a-zA-Z0-9_-]+', f"{skill_name} {description}".lower())
+        trigger_keywords = list(set(w for w in words if len(w) > 2))[:15]
+
+        # Store in SkillStore
+        try:
+            existing = await skill_store.get_skill(skill_name)
+            if existing:
+                await skill_store.update_skill(
+                    skill_name,
+                    description=description,
+                    prompt_template=prompt_template,
+                    trigger_keywords=trigger_keywords,
+                )
+                action = "Updated"
+            else:
+                await skill_store.add_skill(
+                    name=skill_name,
+                    description=description,
+                    prompt_template=prompt_template,
+                    steps=[],
+                    trigger_keywords=trigger_keywords,
+                    source=f"skills.sh:{slug}",
+                )
+                action = "Installed"
+
+            # Persist to DB
+            await skill_store.flush_to_db()
+
+            return (
+                f"{action} skill '{skill_name}' from {owner}/{repo}.\n"
+                f"Description: {description[:200]}\n"
+                f"Keywords: {', '.join(trigger_keywords[:10])}\n"
+                f"The skill will be automatically applied when relevant topics are discussed."
+            )
+        except Exception as e:
+            return f"Error installing skill: {e}"
+
+    @tool(description="Uninstall a previously installed AI skill by name.")
+    async def skill_uninstall(name: str) -> str:
+        if skill_store is None:
+            return "SkillStore not available."
+        removed = await skill_store.remove_skill(name)
+        if removed:
+            await skill_store.flush_to_db()
+            return f"Skill '{name}' uninstalled."
+        return f"Skill '{name}' not found."
+
     return {
         "skill_manage": skill_manage,
         "performance_report": performance_report,
+        "skill_install": skill_install,
+        "skill_uninstall": skill_uninstall,
     }
 
 

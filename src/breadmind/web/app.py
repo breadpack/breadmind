@@ -20,7 +20,7 @@ class WebApp:
                  mcp_store=None, safety_guard=None, working_memory=None, message_router=None,
                  scheduler=None, subagent_manager=None, webhook_manager=None, auth=None,
                  container_executor=None, swarm_manager=None,
-                 skill_store=None, performance_tracker=None):
+                 skill_store=None, performance_tracker=None, search_engine=None):
         self.app = FastAPI(title="BreadMind", version="0.1.0")
         self._message_handler = message_handler
         self._tool_registry = tool_registry
@@ -44,6 +44,7 @@ class WebApp:
         self._swarm_manager = swarm_manager
         self._skill_store = skill_store
         self._performance_tracker = performance_tracker
+        self._search_engine = search_engine
 
         # CORS middleware
         if config and hasattr(config, 'security'):
@@ -466,6 +467,74 @@ class WebApp:
                 self._safety_guard.update_user_permissions(permissions, admins)
             if self._db:
                 await self._db.set_setting("safety_permissions", {"user_permissions": permissions, "admin_users": admins})
+            return {"status": "ok"}
+
+        # ── Skill Market Management ──
+
+        @app.get("/api/config/markets")
+        async def get_markets():
+            """Get configured skill markets/registries."""
+            if not self._search_engine:
+                return {"markets": []}
+            return {
+                "markets": [
+                    {"name": r.name, "type": r.type, "enabled": r.enabled, "url": r.url or ""}
+                    for r in self._search_engine.get_registries()
+                ]
+            }
+
+        @app.post("/api/config/markets")
+        async def update_markets(request: Request):
+            """Add or update a skill market."""
+            data = await request.json()
+            if not self._search_engine:
+                return {"status": "error", "error": "Search engine not available"}
+            from breadmind.tools.registry_search import RegistryConfig
+            config = RegistryConfig(
+                name=data.get("name", ""),
+                type=data.get("type", "skills_sh"),
+                enabled=data.get("enabled", True),
+                url=data.get("url", ""),
+            )
+            if not config.name:
+                return {"status": "error", "error": "name is required"}
+            self._search_engine.add_registry(config)
+            # Persist
+            if self._db:
+                markets = [
+                    {"name": r.name, "type": r.type, "enabled": r.enabled, "url": r.url or ""}
+                    for r in self._search_engine.get_registries()
+                ]
+                await self._db.set_setting("skill_markets", markets)
+            return {"status": "ok"}
+
+        @app.post("/api/config/markets/toggle")
+        async def toggle_market(request: Request):
+            """Enable/disable a skill market."""
+            data = await request.json()
+            name = data.get("name", "")
+            enabled = data.get("enabled", True)
+            if self._search_engine:
+                self._search_engine.toggle_registry(name, enabled)
+                if self._db:
+                    markets = [
+                        {"name": r.name, "type": r.type, "enabled": r.enabled, "url": r.url or ""}
+                        for r in self._search_engine.get_registries()
+                    ]
+                    await self._db.set_setting("skill_markets", markets)
+            return {"status": "ok"}
+
+        @app.delete("/api/config/markets/{name}")
+        async def delete_market(name: str):
+            """Remove a skill market."""
+            if self._search_engine:
+                self._search_engine.remove_registry(name)
+                if self._db:
+                    markets = [
+                        {"name": r.name, "type": r.type, "enabled": r.enabled, "url": r.url or ""}
+                        for r in self._search_engine.get_registries()
+                    ]
+                    await self._db.set_setting("skill_markets", markets)
             return {"status": "ok"}
 
         @app.get("/api/monitoring/events")
@@ -959,6 +1028,8 @@ class WebApp:
             if not self._mcp_store:
                 return {"results": []}
             results = await self._mcp_store.search(q, limit=limit)
+            # Exclude skill-only sources from MCP search
+            results = [r for r in results if r.get("source") not in ("skills.sh", "skillsmp")]
             if source:
                 results = [r for r in results if r.get("source") == source]
             return {"results": results}
@@ -981,6 +1052,8 @@ class WebApp:
             import asyncio
             async def fetch_category(cat):
                 results = await self._mcp_store.search(cat["query"], limit=4)
+                # Exclude skill-only sources from MCP store
+                results = [r for r in results if r.get("source") not in ("skills.sh", "skillsmp")]
                 if source:
                     results = [r for r in results if r.get("source") == source]
                 return {**cat, "servers": results}
@@ -988,6 +1061,63 @@ class WebApp:
             filled = await asyncio.gather(*tasks)
             # Only return categories that have results
             return {"categories": [c for c in filled if c.get("servers")]}
+
+        # --- Skill Store endpoints ---
+
+        @app.get("/api/skills/search")
+        async def skill_search(q: str = "", limit: int = 10):
+            """Search skills from skill markets (skills.sh etc.)."""
+            if not self._search_engine:
+                return {"results": []}
+            results = await self._search_engine.search(q, limit=limit)
+            # Filter to skill-type sources only (not MCP)
+            skill_sources = {"skills_sh", "skillsmp"}
+            filtered = [
+                {"name": r.name, "slug": r.slug, "description": r.description,
+                 "source": r.source, "install_command": r.install_command, "installs": r.installs}
+                for r in results if r.source in skill_sources or any(
+                    reg.type in skill_sources for reg in self._search_engine.get_registries()
+                    if reg.name == r.source
+                )
+            ]
+            return {"results": filtered}
+
+        @app.get("/api/skills/featured")
+        async def skill_featured():
+            """Return featured skills by category from skill markets."""
+            if not self._search_engine:
+                return {"categories": []}
+            categories = [
+                {"name": "Frontend", "icon": "\U0001f3a8", "queries": ["react", "css", "frontend", "design"]},
+                {"name": "Backend", "icon": "\u2699\ufe0f", "queries": ["api", "server", "backend", "database"]},
+                {"name": "DevOps", "icon": "\U0001f680", "queries": ["docker", "kubernetes", "deploy", "ci"]},
+                {"name": "AI & ML", "icon": "\U0001f916", "queries": ["ai", "llm", "machine learning"]},
+                {"name": "Testing", "icon": "\U0001f9ea", "queries": ["test", "quality", "lint"]},
+                {"name": "Security", "icon": "\U0001f512", "queries": ["security", "auth", "crypto"]},
+                {"name": "Best Practices", "icon": "\U0001f4da", "queries": ["best-practices", "review", "guidelines"]},
+                {"name": "Cloud", "icon": "\u2601\ufe0f", "queries": ["aws", "azure", "cloud", "gcp"]},
+            ]
+            import asyncio
+            skill_sources = {"skills.sh", "skillsmp"}
+            async def fetch_cat(cat):
+                all_results = []
+                seen = set()
+                for q in cat["queries"]:
+                    results = await self._search_engine.search(q, limit=4)
+                    for r in results:
+                        if r.source in skill_sources and r.name not in seen:
+                            seen.add(r.name)
+                            all_results.append({
+                                "name": r.name, "slug": r.slug, "description": r.description,
+                                "source": r.source, "install_command": r.install_command,
+                                "installs": r.installs,
+                            })
+                # Sort by installs, take top 4
+                all_results.sort(key=lambda x: x.get("installs", 0), reverse=True)
+                return {**cat, "skills": all_results[:4]}
+            tasks = [fetch_cat(c) for c in categories]
+            filled = await asyncio.gather(*tasks)
+            return {"categories": [c for c in filled if c.get("skills")]}
 
         @app.get("/api/mcp/server-detail")
         async def mcp_detail(source: str = "", slug: str = ""):
@@ -2168,24 +2298,46 @@ class WebApp:
                         continue
 
                     user_message = msg.get("message", "")
-                    channel = f"web:{current_session}"
+                    # Use session ID directly as channel to avoid
+                    # nested "web:web:web:..." from user:channel concatenation
+                    channel = current_session
 
                     if self._message_handler:
                         # Auto-title: use first message as title
+                        sid = f"web:{current_session}"
                         if self._working_memory:
                             session = self._working_memory.get_or_create_session(
-                                f"web:{current_session}", user="web", channel=channel,
+                                sid, user="web", channel=channel,
                             )
                             if not session.metadata.get("title") and user_message:
                                 self._working_memory.set_session_title(
-                                    f"web:{current_session}",
+                                    sid,
                                     user_message[:50],
                                 )
 
-                        if asyncio.iscoroutinefunction(self._message_handler):
-                            response = await self._message_handler(user_message, user="web", channel=channel)
-                        else:
-                            response = self._message_handler(user_message, user="web", channel=channel)
+                        # Set up progress callback for real-time status
+                        async def _progress(status: str, detail: str = ""):
+                            try:
+                                await websocket.send_text(json.dumps({
+                                    "type": "progress",
+                                    "status": status,
+                                    "detail": detail,
+                                    "session_id": current_session,
+                                }))
+                            except Exception:
+                                pass
+
+                        if self._agent and hasattr(self._agent, "set_progress_callback"):
+                            self._agent.set_progress_callback(_progress)
+
+                        try:
+                            if asyncio.iscoroutinefunction(self._message_handler):
+                                response = await self._message_handler(user_message, user="web", channel=channel)
+                            else:
+                                response = self._message_handler(user_message, user="web", channel=channel)
+                        finally:
+                            if self._agent and hasattr(self._agent, "set_progress_callback"):
+                                self._agent.set_progress_callback(None)
                     else:
                         response = "No message handler configured."
 

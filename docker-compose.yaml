@@ -1,11 +1,13 @@
 # BreadMind - AI Infrastructure Agent
-# Quick start: cp .env.example .env && docker compose up -d
+# Native (recommended): docker compose up -d postgres && breadmind --web
+# Full Docker:          docker compose --profile full up -d
 
 services:
   breadmind:
     build: .
     container_name: breadmind
     restart: unless-stopped
+    profiles: ["full"]
     environment:
       DB_HOST: postgres
       DB_PORT: "5432"

@@ -294,7 +294,6 @@ require_approval:
   - mcp_uninstall
   - pve_create_vm
   - k8s_apply_manifest
-  - shell_exec
 "@ | Set-Content $safetyPath -Encoding UTF8
         Write-Ok "Created $safetyPath"
     }
