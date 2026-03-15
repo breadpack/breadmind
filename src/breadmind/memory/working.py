@@ -19,10 +19,12 @@ class WorkingMemory:
         self,
         max_messages_per_session: int = 50,
         session_timeout_minutes: int = 30,
+        db=None,
     ):
         self._sessions: dict[str, ConversationSession] = {}
         self._max_messages = max_messages_per_session
         self._session_timeout_minutes = session_timeout_minutes
+        self._db = db
 
     def get_or_create_session(self, session_id: str, user: str = "", channel: str = "") -> ConversationSession:
         session = self._sessions.get(session_id)
@@ -50,6 +52,12 @@ class WorkingMemory:
             session.last_active = datetime.now(timezone.utc)
             if len(session.messages) > self._max_messages:
                 session.messages = session.messages[-self._max_messages:]
+            if self._db:
+                try:
+                    import asyncio
+                    asyncio.create_task(self._persist_session(session))
+                except Exception:
+                    pass
 
     def get_messages(self, session_id: str) -> list[LLMMessage]:
         session = self._sessions.get(session_id)
@@ -125,3 +133,78 @@ class WorkingMemory:
             for m in session.messages
             if m.role in ("user", "assistant")
         ]
+
+    async def _persist_session(self, session):
+        """Save session to DB."""
+        if not self._db:
+            return
+        try:
+            messages = [
+                {"role": m.role, "content": m.content or "",
+                 "name": getattr(m, 'name', None),
+                 "tool_call_id": getattr(m, 'tool_call_id', None)}
+                for m in session.messages
+                if m.role in ("user", "assistant")
+            ]
+            title = session.metadata.get("title", "")
+            await self._db.save_conversation(
+                session_id=session.session_id,
+                user=session.user,
+                channel=session.channel,
+                title=title,
+                messages=messages,
+                created_at=session.created_at,
+                last_active=session.last_active,
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to persist session: {e}")
+
+    async def load_session_from_db(self, session_id: str) -> bool:
+        """Load a session from DB into working memory. Returns True if found."""
+        if not self._db:
+            return False
+        try:
+            data = await self._db.load_conversation(session_id)
+            if not data:
+                return False
+            session = self.get_or_create_session(
+                session_id, user=data.get("user", ""), channel=data.get("channel", ""))
+            session.metadata["title"] = data.get("title", "")
+            for msg_data in data.get("messages", []):
+                msg = LLMMessage(role=msg_data["role"], content=msg_data.get("content", ""))
+                session.messages.append(msg)
+            # Trim to max
+            if len(session.messages) > self._max_messages:
+                session.messages = session.messages[-self._max_messages:]
+            return True
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to load session: {e}")
+            return False
+
+    async def list_all_sessions(self, user: str = "") -> list[dict]:
+        """List sessions from both memory and DB."""
+        summaries = self.list_session_summaries(user)
+        memory_ids = {s["session_id"] for s in summaries}
+
+        if self._db:
+            try:
+                db_sessions = await self._db.list_conversations(user=user)
+                for s in db_sessions:
+                    if s["session_id"] not in memory_ids:
+                        summaries.append({
+                            "session_id": s["session_id"],
+                            "user": s.get("user_id", ""),
+                            "channel": s.get("channel", ""),
+                            "title": s.get("title", ""),
+                            "message_count": 0,
+                            "created_at": s["created_at"].isoformat() if s.get("created_at") else "",
+                            "last_active": s["last_active"].isoformat() if s.get("last_active") else "",
+                            "from_db": True,
+                        })
+            except Exception:
+                pass
+
+        summaries.sort(key=lambda s: s.get("last_active", ""), reverse=True)
+        return summaries

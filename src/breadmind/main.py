@@ -30,7 +30,7 @@ except ImportError:
     MetricsCollector = None
 
 try:
-    from breadmind.core.context import ContextBuilder
+    from breadmind.memory.context_builder import ContextBuilder
 except ImportError:
     ContextBuilder = None
 
@@ -239,7 +239,7 @@ async def run():
         print(f"  MCP Store: not available ({e})")
 
     # Initialize working memory
-    working_memory = WorkingMemory()
+    working_memory = WorkingMemory(db=db)
 
     # Initialize monitoring engine
     monitoring_engine = MonitoringEngine()
@@ -274,12 +274,26 @@ async def run():
         except Exception:
             pass
 
+    # Wire ContextBuilder if available (must be before agent creation)
+    context_builder = None
+    if ContextBuilder is not None:
+        try:
+            context_builder = ContextBuilder(
+                working_memory=working_memory,
+                episodic_memory=episodic_memory,
+                semantic_memory=semantic_memory,
+                max_context_tokens=4000,
+            )
+        except Exception:
+            pass
+
     agent_kwargs = dict(
         provider=provider,
         tool_registry=registry,
         safety_guard=guard,
         max_turns=config.llm.tool_call_max_turns,
         tool_gap_detector=tool_gap_detector,
+        context_builder=context_builder,
     )
     if audit_logger is not None:
         agent_kwargs["audit_logger"] = audit_logger
@@ -289,14 +303,6 @@ async def run():
     # Wire metrics_collector to registry if supported
     if metrics_collector is not None and hasattr(registry, 'set_metrics_collector'):
         registry.set_metrics_collector(metrics_collector)
-
-    # Wire ContextBuilder if available
-    context_builder = None
-    if ContextBuilder is not None:
-        try:
-            context_builder = ContextBuilder(agent=agent)
-        except Exception:
-            pass
 
     builtin_count = len([t for t in registry.get_all_definitions() if registry.get_tool_source(t.name) == "builtin"])
     print("BreadMind v0.1.0 - AI Infrastructure Agent")
@@ -383,6 +389,23 @@ async def run():
                         logger.error(f"Expansion data flush error: {e}")
 
             asyncio.create_task(_flush_expansion_data())
+
+            # Periodic memory promotion (working → episodic → semantic)
+            async def _auto_promote_memory():
+                while True:
+                    await asyncio.sleep(600)  # Every 10 minutes
+                    if context_builder:
+                        try:
+                            result = await context_builder.auto_promote(message_threshold=8)
+                            if result["episodic_notes"] > 0 or result["semantic_entities"] > 0:
+                                logger.info(
+                                    f"Memory promotion: {result['episodic_notes']} notes, "
+                                    f"{result['semantic_entities']} entities"
+                                )
+                        except Exception as e:
+                            logger.error(f"Memory promotion failed: {e}")
+
+            asyncio.create_task(_auto_promote_memory())
 
             web_app = WebApp(
                 message_handler=agent.handle_message,

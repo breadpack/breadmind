@@ -33,6 +33,7 @@ class CoreAgent:
         audit_logger: AuditLogger | None = None,
         summarizer: object | None = None,
         tool_gap_detector: ToolGapDetector | None = None,
+        context_builder: object | None = None,
     ):
         self._provider = provider
         self._tools = tool_registry
@@ -46,6 +47,7 @@ class CoreAgent:
         self._audit_logger = audit_logger
         self._summarizer = summarizer
         self._tool_gap_detector = tool_gap_detector
+        self._context_builder = context_builder
         self._pending_approvals: dict[str, dict] = {}
 
     async def update_provider(self, provider: LLMProvider):
@@ -164,6 +166,18 @@ class CoreAgent:
             self._working_memory.add_message(session_id, user_msg)
         else:
             messages = [system_msg, user_msg]
+
+        # Enrich context with episodic/semantic memory if available
+        if self._context_builder:
+            try:
+                enrichment = await self._context_builder.build_context(session_id, message)
+                # Extract only the enrichment system messages (not conversation history)
+                context_msgs = [m for m in enrichment if m.role == "system" and m.content and m.content != self._system_prompt]
+                if context_msgs:
+                    # Insert context after system prompt, before conversation history
+                    messages = [messages[0]] + context_msgs + messages[1:]
+            except Exception as e:
+                logger.warning(f"ContextBuilder enrichment failed: {e}")
 
         tools = self._tools.get_all_definitions()
 

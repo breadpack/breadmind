@@ -530,3 +530,129 @@ async def test_promote_to_semantic_no_semantic():
     cb = ContextBuilder(wm)
     entities = await cb.promote_to_semantic()
     assert entities == []
+
+
+# =========================================================================
+# Working Memory - DB Persistence
+# =========================================================================
+
+class TestWorkingMemoryPersistence:
+    @pytest.mark.asyncio
+    async def test_persist_and_load_session(self):
+        mock_db = AsyncMock()
+        mock_db.save_conversation = AsyncMock()
+        mock_db.load_conversation = AsyncMock(return_value={
+            "session_id": "test:1",
+            "user": "testuser",
+            "channel": "web",
+            "title": "Test Session",
+            "messages": [
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "hi there"},
+            ],
+        })
+        mock_db.list_conversations = AsyncMock(return_value=[])
+
+        wm = WorkingMemory(db=mock_db)
+        loaded = await wm.load_session_from_db("test:1")
+        assert loaded is True
+        msgs = wm.get_messages("test:1")
+        assert len(msgs) == 2
+        assert msgs[0].content == "hello"
+
+    @pytest.mark.asyncio
+    async def test_list_all_sessions_includes_db(self):
+        mock_db = AsyncMock()
+        mock_db.list_conversations = AsyncMock(return_value=[
+            {"session_id": "db:1", "user_id": "", "channel": "web",
+             "title": "Old Session", "created_at": datetime.now(timezone.utc),
+             "last_active": datetime.now(timezone.utc)},
+        ])
+
+        wm = WorkingMemory(db=mock_db)
+        # Add an in-memory session
+        wm.get_or_create_session("mem:1", user="u", channel="c")
+        sessions = await wm.list_all_sessions()
+        ids = [s["session_id"] for s in sessions]
+        assert "mem:1" in ids
+        assert "db:1" in ids
+
+    @pytest.mark.asyncio
+    async def test_load_nonexistent_session(self):
+        mock_db = AsyncMock()
+        mock_db.load_conversation = AsyncMock(return_value=None)
+
+        wm = WorkingMemory(db=mock_db)
+        loaded = await wm.load_session_from_db("nonexistent")
+        assert loaded is False
+
+    @pytest.mark.asyncio
+    async def test_no_db_graceful(self):
+        wm = WorkingMemory()  # No DB
+        loaded = await wm.load_session_from_db("test")
+        assert loaded is False
+
+
+# =========================================================================
+# Auto Promote
+# =========================================================================
+
+class TestAutoPromote:
+    @pytest.mark.asyncio
+    async def test_auto_promote_creates_episodic_note(self):
+        wm = WorkingMemory()
+        em = EpisodicMemory()
+        cb = ContextBuilder(working_memory=wm, episodic_memory=em)
+
+        # Create a session with enough messages
+        wm.get_or_create_session("test:promote", user="u", channel="c")
+        for i in range(12):
+            wm.add_message("test:promote", LLMMessage(role="user", content=f"message {i}"))
+            wm.add_message("test:promote", LLMMessage(role="assistant", content=f"reply {i}"))
+
+        result = await cb.auto_promote(message_threshold=10)
+        assert result["episodic_notes"] >= 1
+
+        # Verify episodic note was created
+        notes = await em.get_all_notes()
+        assert len(notes) >= 1
+
+    @pytest.mark.asyncio
+    async def test_auto_promote_skips_short_sessions(self):
+        wm = WorkingMemory()
+        em = EpisodicMemory()
+        cb = ContextBuilder(working_memory=wm, episodic_memory=em)
+
+        # Create a session with few messages
+        wm.get_or_create_session("test:short", user="u", channel="c")
+        wm.add_message("test:short", LLMMessage(role="user", content="hello"))
+        wm.add_message("test:short", LLMMessage(role="assistant", content="hi"))
+
+        result = await cb.auto_promote(message_threshold=10)
+        assert result["episodic_notes"] == 0
+
+    @pytest.mark.asyncio
+    async def test_auto_promote_semantic_extraction(self):
+        wm = WorkingMemory()
+        em = EpisodicMemory()
+        sm = SemanticMemory()
+        cb = ContextBuilder(working_memory=wm, episodic_memory=em, semantic_memory=sm)
+
+        # Create a session mentioning infrastructure
+        wm.get_or_create_session("test:infra", user="u", channel="c")
+        for i in range(12):
+            wm.add_message("test:infra", LLMMessage(
+                role="user", content=f"Check pod-nginx on node 192.168.1.{i}"))
+            wm.add_message("test:infra", LLMMessage(
+                role="assistant", content=f"Pod is running on 192.168.1.{i}"))
+
+        result = await cb.auto_promote(message_threshold=10)
+        assert result["episodic_notes"] >= 1
+        # Semantic entities should be created from IP addresses
+        assert result["semantic_entities"] >= 0
+
+    @pytest.mark.asyncio
+    async def test_auto_promote_no_working_memory(self):
+        cb = ContextBuilder(working_memory=None)
+        result = await cb.auto_promote()
+        assert result == {"episodic_notes": 0, "semantic_entities": 0}
