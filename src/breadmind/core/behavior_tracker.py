@@ -17,6 +17,8 @@ _MAX_PROMPT_LENGTH = 2000
 _NEGATIVE_PATTERNS = [
     "그게 아니라", "아닌데", "왜 안 해", "직접 해", "도구를 써",
     "실행해줘", "확인해봐", "안 되잖아", "다시 해", "틀렸",
+    "질문하지 말고", "물어보지 말고", "묻지 말고", "그냥 해",
+    "알아서 해", "스스로 해", "왜 물어봐",
 ]
 _POSITIVE_PATTERNS = [
     "고마워", "잘했어", "좋아", "완벽", "정확해", "감사",
@@ -31,18 +33,33 @@ class BehaviorTracker:
         set_behavior_prompt: Callable[[str], None],
         add_notification: Callable[[str], None],
         db: Database | None = None,
+        on_prompt_updated: Callable[[str, str], Any] | None = None,
     ):
         self._provider = provider
         self._get_behavior_prompt = get_behavior_prompt
         self._set_behavior_prompt = set_behavior_prompt
         self._add_notification = add_notification
         self._db = db
+        self._on_prompt_updated = on_prompt_updated
         self._lock = asyncio.Lock()
 
     def _should_analyze(self, messages: list[LLMMessage]) -> bool:
         user_msgs = [m for m in messages if m.role == "user"]
-        total = len(messages)
-        return len(user_msgs) >= 2 and total >= 4
+        tool_msgs = [m for m in messages if m.role == "tool"]
+        has_negative = any(
+            any(p in (m.content or "").lower() for p in _NEGATIVE_PATTERNS)
+            for m in messages if m.role == "user" and m.content
+        )
+        # Analyze if: multi-turn conversation OR meaningful single-turn with tools
+        # OR negative feedback detected (always worth analyzing)
+        if has_negative:
+            return True
+        if len(user_msgs) >= 2:
+            return True
+        # Single user message but had tool interactions (typical BreadMind usage)
+        if len(user_msgs) >= 1 and len(tool_msgs) >= 1:
+            return True
+        return False
 
     def _extract_metrics(self, messages: list[LLMMessage]) -> dict[str, Any]:
         tool_calls: list[dict] = []
@@ -50,6 +67,7 @@ class BehaviorTracker:
         tool_failure = 0
         text_only = True
         user_messages: list[str] = []
+        assistant_messages: list[str] = []
         has_negative = False
         has_positive = False
 
@@ -62,10 +80,13 @@ class BehaviorTracker:
                 if any(p in content_lower for p in _POSITIVE_PATTERNS):
                     has_positive = True
 
-            if msg.role == "assistant" and msg.tool_calls:
-                text_only = False
-                for tc in msg.tool_calls:
-                    tool_calls.append({"name": tc.name, "args_keys": list(tc.arguments.keys())})
+            if msg.role == "assistant":
+                if msg.content:
+                    assistant_messages.append(msg.content[:200])
+                if msg.tool_calls:
+                    text_only = False
+                    for tc in msg.tool_calls:
+                        tool_calls.append({"name": tc.name, "args_keys": list(tc.arguments.keys())})
 
             if msg.role == "tool" and msg.content:
                 if "[success=True]" in msg.content:
@@ -80,11 +101,20 @@ class BehaviorTracker:
             "text_only_response": text_only,
             "tool_calls": tool_calls,
             "user_messages": user_messages[:10],
+            "assistant_messages": assistant_messages[:10],
             "negative_feedback": has_negative,
             "positive_feedback": has_positive,
         }
 
     def _build_analysis_prompt(self, current_prompt: str, metrics: dict) -> str:
+        assistant_section = ""
+        if metrics.get("assistant_messages"):
+            assistant_section = (
+                f"- Agent responses:\n"
+                + "\n".join(f"  - {m}" for m in metrics["assistant_messages"])
+                + "\n"
+            )
+
         return (
             "You are an AI prompt engineer. Analyze the following conversation metrics "
             "and improve the behavior prompt if needed.\n\n"
@@ -98,9 +128,16 @@ class BehaviorTracker:
             f"- Positive user feedback detected: {metrics['positive_feedback']}\n"
             f"- User messages:\n"
             + "\n".join(f"  - {m}" for m in metrics["user_messages"])
-            + "\n\n"
+            + "\n"
+            + assistant_section
+            + "\n"
             "## Instructions\n"
-            "If the current prompt is working well (tools used appropriately, no negative feedback), "
+            "Analyze whether the agent behaved optimally. Look for these anti-patterns:\n"
+            "- Agent asked unnecessary clarifying questions instead of investigating with tools\n"
+            "- Agent gave text-only advice instead of executing actions\n"
+            "- Agent asked for confirmation on non-destructive operations\n"
+            "- Agent failed to use available tools when they could have answered the question\n\n"
+            "If the current prompt is working well AND no anti-patterns detected, "
             "respond with exactly: NO_CHANGE\n\n"
             "If improvements are needed, respond in this exact format:\n"
             "REASON: one-line summary of what changed\n"
@@ -111,7 +148,10 @@ class BehaviorTracker:
             "- Do not add system-specific tool names\n"
             "- Focus on universal behavioral patterns\n"
             "- Preserve existing rules that are working\n"
-            "- Only add or modify rules that address observed issues"
+            "- Only add or modify rules that address observed issues\n"
+            "- CRITICAL: Always preserve the 'Autonomous Problem Solving' section. "
+            "The agent must solve problems autonomously and only ask users when "
+            "tool-based investigation is exhausted and the decision genuinely requires user input."
         )
 
     def _parse_response(self, content: str) -> tuple[str | None, str | None]:
@@ -163,6 +203,7 @@ class BehaviorTracker:
 
             reason, new_prompt = self._parse_response(response.content)
             if reason is None or new_prompt is None:
+                logger.debug("Behavior analysis result: NO_CHANGE")
                 return None
 
             if len(new_prompt) > _MAX_PROMPT_LENGTH:
@@ -186,6 +227,15 @@ class BehaviorTracker:
             self._add_notification(
                 f"[BreadMind] 행동 프롬프트가 개선되었습니다: {reason}"
             )
+
+            # Notify UI via broadcast callback
+            if self._on_prompt_updated is not None:
+                try:
+                    result = self._on_prompt_updated(new_prompt, reason)
+                    if asyncio.iscoroutine(result):
+                        await result
+                except Exception:
+                    logger.exception("Failed to broadcast behavior prompt update")
 
             logger.info(f"Behavior prompt improved: {reason}")
             return {"reason": reason, "prompt": new_prompt}
