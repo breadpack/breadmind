@@ -1885,6 +1885,26 @@ class WebApp:
             except Exception as e:
                 return HTMLResponse(f"<html><body><h1>Error</h1><p>{e}</p></body></html>")
 
+        # --- Session management ---
+
+        @app.get("/api/sessions")
+        async def list_sessions():
+            if self._working_memory:
+                return {"sessions": self._working_memory.list_session_summaries(user="web")}
+            return {"sessions": []}
+
+        @app.get("/api/sessions/{session_id}/messages")
+        async def get_session_messages(session_id: str):
+            if self._working_memory:
+                return {"messages": self._working_memory.get_session_messages(f"web:{session_id}")}
+            return {"messages": []}
+
+        @app.delete("/api/sessions/{session_id}")
+        async def delete_session(session_id: str):
+            if self._working_memory:
+                self._working_memory.clear_session(f"web:{session_id}")
+            return {"status": "ok"}
+
         @app.websocket("/ws/chat")
         async def websocket_chat(websocket: WebSocket):
             # Auth check for WebSocket
@@ -1895,21 +1915,61 @@ class WebApp:
             await websocket.accept()
             async with self._lock:
                 self._connections.append(websocket)
+            current_session = "default"
             try:
                 while True:
                     data = await websocket.receive_text()
                     msg = json.loads(data)
+
+                    # Handle session switching
+                    if msg.get("type") == "switch_session":
+                        current_session = msg.get("session_id", "default")
+                        # Send session history
+                        if self._working_memory:
+                            messages = self._working_memory.get_session_messages(f"web:{current_session}")
+                            await websocket.send_text(json.dumps({
+                                "type": "session_history",
+                                "session_id": current_session,
+                                "messages": messages,
+                            }))
+                        continue
+
+                    if msg.get("type") == "new_session":
+                        import uuid
+                        current_session = str(uuid.uuid4())[:8]
+                        await websocket.send_text(json.dumps({
+                            "type": "session_created",
+                            "session_id": current_session,
+                        }))
+                        continue
+
                     user_message = msg.get("message", "")
+                    channel = f"web:{current_session}"
 
                     if self._message_handler:
+                        # Auto-title: use first message as title
+                        if self._working_memory:
+                            session = self._working_memory.get_or_create_session(
+                                f"web:{current_session}", user="web", channel=channel,
+                            )
+                            if not session.metadata.get("title") and user_message:
+                                self._working_memory.set_session_title(
+                                    f"web:{current_session}",
+                                    user_message[:50],
+                                )
+
                         if asyncio.iscoroutinefunction(self._message_handler):
-                            response = await self._message_handler(user_message, user="web", channel="web")
+                            response = await self._message_handler(user_message, user="web", channel=channel)
                         else:
-                            response = self._message_handler(user_message, user="web", channel="web")
+                            response = self._message_handler(user_message, user="web", channel=channel)
                     else:
                         response = "No message handler configured."
 
-                    await websocket.send_text(json.dumps({"type": "response", "message": response}))
+                    await websocket.send_text(json.dumps({
+                        "type": "response",
+                        "message": response,
+                        "session_id": current_session,
+                    }))
             except WebSocketDisconnect:
                 async with self._lock:
                     if websocket in self._connections:

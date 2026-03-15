@@ -340,6 +340,13 @@
         <div class="tab-content active" id="tab-chat">
             <div class="container">
                 <div class="sidebar">
+                    <div class="section">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                            <h2 style="margin:0;">Sessions</h2>
+                            <button onclick="newSession()" style="background:#3b82f6;border:none;color:#fff;padding:2px 8px;border-radius:4px;cursor:pointer;font-size:11px;">+ New</button>
+                        </div>
+                        <div id="sessionList"><div class="tool-item" style="color:#64748b">Loading...</div></div>
+                    </div>
                     <div class="section"><h2>Tools</h2><div id="toolList"><div class="tool-item">Loading...</div></div></div>
                     <div class="section"><h2>MCP Servers</h2><div id="serverList"><div class="tool-item">Loading...</div></div></div>
                 </div>
@@ -419,6 +426,7 @@
         let ws;
         let allEvents = [];
         let currentFilter = 'all';
+        let currentSessionId = 'default';
         const messagesDiv = document.getElementById('messages');
         const input = document.getElementById('messageInput');
         const sendBtn = document.getElementById('sendBtn');
@@ -430,15 +438,71 @@
             ws.onclose = () => { document.getElementById('statusDot').className = 'dot disconnected'; document.getElementById('statusText').textContent = 'Disconnected'; setTimeout(connect, 3000); };
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
-                if (data.type === 'response') { addMessage(data.message, 'bot'); sendBtn.disabled = false; sendBtn.textContent = 'Send'; }
+                if (data.type === 'response') {
+                    addMessage(data.message, 'bot');
+                    sendBtn.disabled = false; sendBtn.textContent = 'Send';
+                    loadSessions(); // Refresh session list (title may have been set)
+                }
+                else if (data.type === 'session_history') {
+                    // Replace chat with session history
+                    messagesDiv.innerHTML = '';
+                    if (data.messages && data.messages.length > 0) {
+                        data.messages.forEach(m => addMessage(m.content, m.role === 'user' ? 'user' : 'bot'));
+                    } else {
+                        addMessage('Start a new conversation!', 'bot');
+                    }
+                }
+                else if (data.type === 'session_created') {
+                    currentSessionId = data.session_id;
+                    messagesDiv.innerHTML = '';
+                    addMessage('New session started.', 'bot');
+                    loadSessions();
+                }
                 else if (data.type === 'notification') addMessage(data.message, 'bot');
                 else if (data.type === 'monitoring_event') addMonitoringEvent(data.event);
                 else if (data.type === 'update_available') { showUpdateBanner(data.event.current, data.event.latest, ''); }
                 else if (data.type === 'messenger_connected') {
-                    addMessage('✅ ' + (data.event && data.event.platform || 'Messenger') + ' 연동이 완료되었습니다!', 'bot');
+                    addMessage((data.event && data.event.platform || 'Messenger') + ' connected!', 'bot');
                     showToast((data.event && data.event.platform || 'Messenger') + ' connected!', 'success');
                 }
             };
+        }
+
+        // ── Session management ──
+        async function loadSessions() {
+            try {
+                const resp = await fetch('/api/sessions');
+                const data = await resp.json();
+                const list = document.getElementById('sessionList');
+                if (!data.sessions || data.sessions.length === 0) {
+                    list.innerHTML = '<div class="tool-item" style="color:#64748b;font-size:11px;">No sessions yet</div>';
+                    return;
+                }
+                list.innerHTML = data.sessions.map(s => {
+                    const sid = s.session_id.replace('web:', '');
+                    const isActive = sid === currentSessionId;
+                    const title = s.title || 'Untitled';
+                    const time = new Date(s.last_active).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+                    return `<div class="tool-item" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;${isActive ? 'background:#334155;border-radius:4px;' : ''}" onclick="switchSession('${sid}')">
+                        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;${isActive ? 'color:#60a5fa;' : ''}">${escapeHtml(title)}</span>
+                        <span style="font-size:10px;color:#64748b;margin-left:4px;flex-shrink:0;">${time}</span>
+                    </div>`;
+                }).join('');
+            } catch(e) {}
+        }
+
+        function switchSession(sessionId) {
+            currentSessionId = sessionId;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'switch_session', session_id: sessionId }));
+            }
+            loadSessions(); // Update active highlight
+        }
+
+        function newSession() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'new_session' }));
+            }
         }
 
         function switchTab(name) {
@@ -454,7 +518,7 @@
             const text = input.value.trim();
             if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
             addMessage(text, 'user');
-            ws.send(JSON.stringify({ message: text }));
+            ws.send(JSON.stringify({ message: text, session_id: currentSessionId }));
             input.value = '';
             sendBtn.disabled = true; sendBtn.textContent = '...';
         }
@@ -2560,6 +2624,7 @@
         }).catch(() => {});
 
         connect();
+        loadSessions();
     </script>
 </body>
 </html>

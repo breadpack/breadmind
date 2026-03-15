@@ -94,7 +94,34 @@ class WorkingMemory:
             "session_id": session.session_id,
             "user": session.user,
             "channel": session.channel,
+            "title": session.metadata.get("title", ""),
             "message_count": len(session.messages),
             "created_at": session.created_at.isoformat(),
             "last_active": session.last_active.isoformat(),
         }
+
+    def list_session_summaries(self, user: str = "") -> list[dict]:
+        """Return summaries of all sessions, optionally filtered by user."""
+        sessions = sorted(
+            self._sessions.values(),
+            key=lambda s: s.last_active, reverse=True,
+        )
+        if user:
+            sessions = [s for s in sessions if s.user == user]
+        return [self.get_session_summary(s.session_id) for s in sessions]
+
+    def set_session_title(self, session_id: str, title: str):
+        session = self._sessions.get(session_id)
+        if session:
+            session.metadata["title"] = title
+
+    def get_session_messages(self, session_id: str) -> list[dict]:
+        """Return messages in a serializable format."""
+        session = self._sessions.get(session_id)
+        if not session:
+            return []
+        return [
+            {"role": m.role, "content": m.content or ""}
+            for m in session.messages
+            if m.role in ("user", "assistant")
+        ]
