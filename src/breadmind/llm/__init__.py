@@ -6,6 +6,7 @@ from .base import (
     TokenUsage,
     ToolDefinition,
 )
+from .factory import create_provider
 
 __all__ = [
     "LLMProvider",
@@ -14,4 +15,5 @@ __all__ = [
     "ToolCall",
     "TokenUsage",
     "ToolDefinition",
+    "create_provider",
 ]

@@ -66,6 +66,13 @@ class CLIProvider(LLMProvider):
         except FileNotFoundError:
             return False
 
+    async def close(self) -> None:
+        """서브프로세스 기반이므로 별도 정리가 필요 없다."""
+
+    @property
+    def model_name(self) -> str:
+        return self._name
+
     def _build_prompt(
         self,
         messages: list[LLMMessage],

@@ -21,6 +21,7 @@ class SafetyGuard:
         for actions in self._blacklist.values():
             self._flat_blacklist.update(actions)
         self._cooldowns: dict[str, datetime] = {}
+        self._cooldown_check_count: int = 0
         self._user_permissions: dict[str, list[str]] = user_permissions or {}
         self._admin_users: list[str] = admin_users or []
 
@@ -71,6 +72,10 @@ class SafetyGuard:
 
     def check_cooldown(self, target: str, action: str, cooldown_minutes: int = 10) -> bool:
         """Returns True if action is allowed (not in cooldown)."""
+        self._cooldown_check_count += 1
+        if self._cooldown_check_count % 100 == 0:
+            self._cleanup_expired_cooldowns(cooldown_minutes)
+
         key = f"{target}:{action}"
         now = datetime.now(timezone.utc)
         last = self._cooldowns.get(key)
@@ -78,3 +83,14 @@ class SafetyGuard:
             return False
         self._cooldowns[key] = now
         return True
+
+    def _cleanup_expired_cooldowns(self, default_cooldown_minutes: int = 10) -> None:
+        """Remove expired cooldown entries."""
+        now = datetime.now(timezone.utc)
+        threshold = default_cooldown_minutes * 60
+        expired = [
+            k for k, v in self._cooldowns.items()
+            if (now - v).total_seconds() >= threshold
+        ]
+        for k in expired:
+            del self._cooldowns[k]

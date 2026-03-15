@@ -117,6 +117,14 @@ class LLMProvider(ABC):
     async def health_check(self) -> bool:
         ...
 
+    async def close(self) -> None:
+        """리소스를 정리한다. 서브클래스에서 필요시 override한다."""
+
+    @property
+    def model_name(self) -> str:
+        """현재 사용 중인 모델 이름을 반환한다."""
+        return "unknown"
+
 
 class FallbackProvider(LLMProvider):
     """Wraps multiple providers with automatic failover."""

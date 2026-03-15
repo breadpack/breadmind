@@ -137,6 +137,13 @@ class ClaudeProvider(LLMProvider):
         except Exception:
             return False
 
+    async def close(self) -> None:
+        await self._client.close()
+
+    @property
+    def model_name(self) -> str:
+        return self._default_model
+
     def _convert_messages(
         self, messages: list[LLMMessage]
     ) -> tuple[str | None, list[dict]]:

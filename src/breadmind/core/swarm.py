@@ -37,32 +37,105 @@ class SwarmMember:
 DEFAULT_ROLES: dict[str, SwarmMember] = {
     "k8s_expert": SwarmMember(
         role="k8s_expert",
-        system_prompt="You are a Kubernetes expert. Analyze cluster state, pod health, node resources, and deployments. Use kubectl and Kubernetes MCP tools.",
+        system_prompt=(
+            "You are a Kubernetes cluster expert responsible for comprehensive cluster health analysis.\n"
+            "Your primary objective is to diagnose issues and report actionable findings.\n\n"
+            "Check items:\n"
+            "1. Node status — check for NotReady, SchedulingDisabled, or resource pressure conditions.\n"
+            "2. Pod health — identify CrashLoopBackOff, ImagePullBackOff, OOMKilled, and pending pods.\n"
+            "3. Resource usage — compare CPU/memory requests vs limits vs actual utilization per node.\n"
+            "4. Deployments & ReplicaSets — verify desired vs available replicas, rollout status.\n"
+            "5. Events — surface recent warning-level cluster events.\n\n"
+            "Use Kubernetes MCP tools: pods_list, pods_get, pods_log, nodes_top, pods_top,\n"
+            "resources_list, resources_get, events_list, namespaces_list.\n\n"
+            "Output format: classify each finding as [Critical], [Warning], or [OK] with a one-line summary."
+        ),
         description="Kubernetes cluster analysis and management",
     ),
     "proxmox_expert": SwarmMember(
         role="proxmox_expert",
-        system_prompt="You are a Proxmox expert. Analyze VM/LXC states, resource usage, storage, and cluster health. Use Proxmox API tools.",
+        system_prompt=(
+            "You are a Proxmox virtualization expert responsible for hypervisor and guest health analysis.\n"
+            "Your primary objective is to ensure all VMs and LXC containers are running optimally.\n\n"
+            "Check items:\n"
+            "1. VM/LXC status — identify stopped, paused, or unresponsive guests.\n"
+            "2. Resource allocation — check CPU, memory, and disk over-commitment ratios.\n"
+            "3. Storage health — verify available space on each storage pool and detect thin-provision risks.\n"
+            "4. Backup status — confirm recent backups exist and check for failed backup jobs.\n"
+            "5. Cluster/node health — review node status, HA group configuration, and quorum.\n\n"
+            "Use Proxmox MCP tools: proxmox_get_vms, proxmox_get_vm_status, proxmox_get_nodes,\n"
+            "proxmox_get_node_status, proxmox_get_storage, proxmox_list_backups,\n"
+            "proxmox_get_cluster_status, proxmox_list_snapshots_vm, proxmox_list_snapshots_lxc.\n\n"
+            "Output format: classify each finding as [Critical], [Warning], or [OK] with a one-line summary."
+        ),
         description="Proxmox virtualization management",
     ),
     "openwrt_expert": SwarmMember(
         role="openwrt_expert",
-        system_prompt="You are an OpenWrt/network expert. Analyze network configuration, firewall rules, routing, and connectivity. Use OpenWrt tools.",
+        system_prompt=(
+            "You are an OpenWrt and network infrastructure expert.\n"
+            "Your primary objective is to ensure network connectivity, security, and proper configuration.\n\n"
+            "Check items:\n"
+            "1. Network interfaces — verify WAN/LAN link status, IP assignments, and VLAN configuration.\n"
+            "2. Firewall rules — check for overly permissive rules, missing input drops, and port forwards.\n"
+            "3. DHCP leases — review active leases, static assignments, and pool exhaustion.\n"
+            "4. DNS configuration — verify upstream resolvers, local DNS entries, and rebind protection.\n"
+            "5. System health — check uptime, CPU/memory usage, and kernel log for errors.\n\n"
+            "Use OpenWrt MCP tools: network_status, system_status, read_log, reboot, set_led_state.\n\n"
+            "Output format: classify each finding as [Critical], [Warning], or [OK] with a one-line summary."
+        ),
         description="Network and OpenWrt management",
     ),
     "security_analyst": SwarmMember(
         role="security_analyst",
-        system_prompt="You are a security analyst. Check for vulnerabilities, misconfigurations, exposed services, and compliance issues.",
+        system_prompt=(
+            "You are a security analyst responsible for infrastructure security posture assessment.\n"
+            "Your primary objective is to identify vulnerabilities, misconfigurations, and compliance gaps.\n\n"
+            "Check items:\n"
+            "1. RBAC & access control — review Kubernetes RBAC bindings, Proxmox user permissions,\n"
+            "   and service accounts with excessive privileges.\n"
+            "2. Firewall & network exposure — identify services exposed to the internet, missing network\n"
+            "   policies, and insecure port forwards.\n"
+            "3. Certificate expiration — check TLS certificates for upcoming expiry (< 30 days).\n"
+            "4. Known CVEs — flag containers running images with known critical vulnerabilities.\n"
+            "5. Authentication — verify MFA enforcement, default credentials, and API key rotation.\n\n"
+            "Use all available MCP tool categories (Kubernetes, Proxmox, OpenWrt) to cross-reference\n"
+            "security findings across the infrastructure stack.\n\n"
+            "Output format: classify each finding as [Critical], [Warning], or [OK] with a one-line summary."
+        ),
         description="Security analysis and vulnerability assessment",
     ),
     "performance_analyst": SwarmMember(
         role="performance_analyst",
-        system_prompt="You are a performance analyst. Analyze resource utilization, bottlenecks, optimization opportunities, and capacity planning.",
+        system_prompt=(
+            "You are a performance analyst responsible for resource utilization and capacity planning.\n"
+            "Your primary objective is to identify bottlenecks, waste, and forecast capacity needs.\n\n"
+            "Check items:\n"
+            "1. CPU trends — identify sustained high usage (> 80%) or idle waste across nodes and VMs.\n"
+            "2. Memory pressure — detect OOM risks, swap usage, and over-committed memory.\n"
+            "3. Disk I/O & storage — find slow volumes, high IOPS queues, and storage nearing capacity.\n"
+            "4. Network throughput — identify saturated links, high latency, and packet loss.\n"
+            "5. Capacity planning — project when resources will be exhausted based on current growth.\n\n"
+            "Use Kubernetes MCP tools (nodes_top, pods_top, nodes_stats_summary) and Proxmox MCP\n"
+            "tools (proxmox_get_node_status, proxmox_get_vm_status) for data collection.\n\n"
+            "Output format: classify each finding as [Critical], [Warning], or [OK] with a one-line summary.\n"
+            "Include optimization recommendations with estimated resource savings where possible."
+        ),
         description="Performance analysis and optimization",
     ),
     "general": SwarmMember(
         role="general",
-        system_prompt="You are a general infrastructure assistant. Analyze the given task and provide detailed results.",
+        system_prompt=(
+            "You are a general-purpose infrastructure assistant and the fallback analyst.\n"
+            "Your primary objective is to handle tasks that do not fit a specialized role.\n\n"
+            "Check items:\n"
+            "1. Interpret the task description and gather relevant data from any available MCP tools.\n"
+            "2. Cross-reference findings across Kubernetes, Proxmox, and OpenWrt where applicable.\n"
+            "3. Provide a clear, structured analysis even when the domain is ambiguous.\n\n"
+            "Use any available MCP tool category as needed (Kubernetes, Proxmox, OpenWrt).\n\n"
+            "Output format: classify each finding as [Critical], [Warning], or [OK] with a one-line summary.\n"
+            "When unsure of severity, default to [Warning] and explain your reasoning."
+        ),
         description="General-purpose analysis (fallback)",
     ),
 }
@@ -97,7 +170,8 @@ class SwarmCoordinator:
             f"Example:\n"
             f"TASK|k8s_expert|Check pod health and resource usage|none\n"
             f"TASK|proxmox_expert|Check VM resource usage|none\n"
-            f"TASK|performance_analyst|Compare and analyze both results|1,2\n"
+            f"TASK|performance_analyst|Compare and analyze both results|1,2\n\n"
+            f"Output ONLY the TASK lines, no other text."
         )
 
         if self._message_handler:
@@ -157,7 +231,7 @@ class SwarmCoordinator:
 
         return tasks
 
-    async def aggregate(self, goal: str, results: dict[str, str]) -> str:
+    async def aggregate(self, goal: str, results: dict[str, str], task_roles: dict[str, str] | None = None) -> str:
         """Aggregate results from multiple tasks into a final answer."""
         aggregate_prompt = (
             f"You are aggregating results from multiple expert agents.\n\n"
@@ -165,9 +239,24 @@ class SwarmCoordinator:
             f"Results from each subtask:\n"
         )
         for task_id, result in results.items():
-            aggregate_prompt += f"\n--- {task_id} ---\n{result}\n"
+            role_label = f" (role: {task_roles[task_id]})" if task_roles and task_id in task_roles else ""
+            aggregate_prompt += f"\n--- {task_id}{role_label} ---\n{result}\n"
 
-        aggregate_prompt += "\nProvide a comprehensive, unified analysis based on all the above results."
+        aggregate_prompt += (
+            "\nProvide a comprehensive, unified analysis using the following structure:\n\n"
+            "## Executive Summary\n"
+            "A 2-3 sentence high-level overview of the overall infrastructure state.\n\n"
+            "## Key Findings\n"
+            "Group findings by severity. For each finding, include which role/agent reported it.\n\n"
+            "### Critical\n"
+            "- [role] Finding description and impact\n\n"
+            "### Warning\n"
+            "- [role] Finding description and potential risk\n\n"
+            "### OK\n"
+            "- [role] Verified healthy items (brief)\n\n"
+            "## Recommended Actions\n"
+            "Numbered list of prioritized actions, most urgent first.\n"
+        )
 
         if self._message_handler:
             try:
@@ -190,6 +279,8 @@ class SwarmCoordinator:
 class SwarmManager:
     """Manage agent swarms for multi-agent collaboration."""
 
+    _MAX_SWARMS = 100
+
     def __init__(self, message_handler=None, custom_roles: dict[str, SwarmMember] | None = None):
         self._message_handler = message_handler
         self._coordinator = SwarmCoordinator(message_handler=message_handler)
@@ -198,6 +289,7 @@ class SwarmManager:
         if custom_roles:
             self._roles.update(custom_roles)
         self._lock = asyncio.Lock()
+        self._bg_tasks: set[asyncio.Task] = set()
 
     def set_message_handler(self, handler):
         self._message_handler = handler
@@ -209,11 +301,32 @@ class SwarmManager:
         swarm = SwarmResult(id=swarm_id, goal=goal)
 
         async with self._lock:
+            # Evict oldest completed/failed swarms if at capacity
+            while len(self._swarms) >= self._MAX_SWARMS:
+                evict_id = self._find_oldest_finished_swarm()
+                if evict_id is not None:
+                    del self._swarms[evict_id]
+                else:
+                    # All swarms are still running — allow overshoot rather than block
+                    break
             self._swarms[swarm_id] = swarm
 
-        # Start execution in background
-        asyncio.create_task(self._execute_swarm(swarm, roles))
+        # Start execution in background and track the task
+        task = asyncio.create_task(self._execute_swarm(swarm, roles))
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
         return swarm
+
+    def _find_oldest_finished_swarm(self) -> str | None:
+        """Return the id of the oldest completed or failed swarm, or None."""
+        oldest_id: str | None = None
+        oldest_time: datetime | None = None
+        for sid, sr in self._swarms.items():
+            if sr.status in ("completed", "failed"):
+                if oldest_time is None or sr.created_at < oldest_time:
+                    oldest_time = sr.created_at
+                    oldest_id = sid
+        return oldest_id
 
     async def _execute_swarm(self, swarm: SwarmResult, roles: list[str] | None = None):
         """Execute a swarm: decompose -> dispatch -> aggregate."""
@@ -237,6 +350,7 @@ class SwarmManager:
 
             # Phase 2: Execute tasks respecting dependencies
             results: dict[str, str] = {}
+            task_roles: dict[str, str] = {t.id: t.role for t in tasks}
             completed_ids: set[str] = set()
 
             while len(completed_ids) < len(tasks):
@@ -303,7 +417,9 @@ class SwarmManager:
 
             # Phase 3: Aggregate results
             if results:
-                swarm.final_result = await self._coordinator.aggregate(swarm.goal, results)
+                swarm.final_result = await self._coordinator.aggregate(
+                    swarm.goal, results, task_roles=task_roles
+                )
             else:
                 swarm.final_result = "No tasks completed successfully."
 

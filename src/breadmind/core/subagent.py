@@ -23,12 +23,15 @@ class SubAgentTask:
 class SubAgentManager:
     """Manage sub-agent spawning for task delegation."""
 
+    _MAX_TASKS = 500
+
     def __init__(self, agent_factory=None):
         """agent_factory: callable that creates a new agent instance for isolated execution."""
         self._agent_factory = agent_factory
         self._tasks: dict[str, SubAgentTask] = {}
         self._lock = asyncio.Lock()
         self._message_handler = None  # Set externally
+        self._bg_tasks: set[asyncio.Task] = set()
 
     def set_message_handler(self, handler):
         """Set the message handler for sub-agent execution."""
@@ -45,10 +48,25 @@ class SubAgentManager:
         )
         async with self._lock:
             self._tasks[task_id] = sa_task
+            self._cleanup_old_tasks()
 
         # Execute in background
-        asyncio.create_task(self._execute(sa_task))
+        bg = asyncio.create_task(self._execute(sa_task))
+        self._bg_tasks.add(bg)
+        bg.add_done_callback(self._bg_tasks.discard)
         return sa_task
+
+    def _cleanup_old_tasks(self) -> None:
+        """Remove oldest completed/failed tasks when exceeding _MAX_TASKS."""
+        if len(self._tasks) <= self._MAX_TASKS:
+            return
+        finished = sorted(
+            (t for t in self._tasks.values() if t.status in ("completed", "failed")),
+            key=lambda t: t.created_at,
+        )
+        to_remove = len(self._tasks) - self._MAX_TASKS
+        for t in finished[:to_remove]:
+            del self._tasks[t.id]
 
     async def _execute(self, sa_task: SubAgentTask):
         """Execute sub-agent task."""

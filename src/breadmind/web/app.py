@@ -163,9 +163,9 @@ class WebApp:
             # Hot-swap the agent's LLM provider so chat works immediately
             if self._agent and self._config:
                 try:
-                    from breadmind.main import create_provider
+                    from breadmind.llm.factory import create_provider
                     new_provider = create_provider(self._config)
-                    self._agent.update_provider(new_provider)
+                    await self._agent.update_provider(new_provider)
                 except Exception as e:
                     logger.warning(f"Failed to hot-swap provider: {e}")
 
@@ -190,7 +190,7 @@ class WebApp:
             # (the main agent may still use the old/fallback provider)
             handler = self._message_handler
             try:
-                from breadmind.main import create_provider
+                from breadmind.llm.factory import create_provider
                 if self._config:
                     provider = create_provider(self._config)
                     from breadmind.llm.base import LLMMessage
@@ -525,69 +525,11 @@ class WebApp:
             return {"keys": keys}
 
         async def _validate_api_key(key_name: str, value: str) -> dict:
-            """Validate an API key by making a lightweight request to the provider."""
-            import aiohttp
-            try:
-                if key_name == "ANTHROPIC_API_KEY":
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(
-                            "https://api.anthropic.com/v1/models",
-                            headers={"x-api-key": value, "anthropic-version": "2023-06-01"},
-                            timeout=aiohttp.ClientTimeout(total=10),
-                        ) as resp:
-                            if resp.status == 200:
-                                return {"valid": True, "reason": ""}
-                            elif resp.status == 401:
-                                return {"valid": False, "reason": "Invalid API key (401 Unauthorized)"}
-                            else:
-                                return {"valid": False, "reason": f"Unexpected response: HTTP {resp.status}"}
-
-                elif key_name == "GEMINI_API_KEY":
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(
-                            f"https://generativelanguage.googleapis.com/v1beta/models?key={value}",
-                            timeout=aiohttp.ClientTimeout(total=10),
-                        ) as resp:
-                            if resp.status == 200:
-                                return {"valid": True, "reason": ""}
-                            elif resp.status == 400 or resp.status == 403:
-                                return {"valid": False, "reason": "Invalid API key"}
-                            else:
-                                return {"valid": False, "reason": f"Unexpected response: HTTP {resp.status}"}
-
-                elif key_name == "OPENAI_API_KEY":
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(
-                            "https://api.openai.com/v1/models",
-                            headers={"Authorization": f"Bearer {value}"},
-                            timeout=aiohttp.ClientTimeout(total=10),
-                        ) as resp:
-                            if resp.status == 200:
-                                return {"valid": True, "reason": ""}
-                            elif resp.status == 401:
-                                return {"valid": False, "reason": "Invalid API key (401 Unauthorized)"}
-                            else:
-                                return {"valid": False, "reason": f"Unexpected response: HTTP {resp.status}"}
-
-                elif key_name == "XAI_API_KEY":
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(
-                            "https://api.x.ai/v1/models",
-                            headers={"Authorization": f"Bearer {value}"},
-                            timeout=aiohttp.ClientTimeout(total=10),
-                        ) as resp:
-                            if resp.status == 200:
-                                return {"valid": True, "reason": ""}
-                            elif resp.status == 401:
-                                return {"valid": False, "reason": "Invalid API key (401 Unauthorized)"}
-                            else:
-                                return {"valid": False, "reason": f"Unexpected response: HTTP {resp.status}"}
-
-                return {"valid": True, "reason": ""}  # Unknown key type, skip validation
-            except aiohttp.ClientError as e:
-                return {"valid": False, "reason": f"Connection error: {e}"}
-            except asyncio.TimeoutError:
-                return {"valid": False, "reason": "Validation request timed out"}
+            """Validate an API key using the unified validator."""
+            from breadmind.core.setup_wizard import validate_api_key
+            result = await validate_api_key(key_name, value)
+            # Normalize field name for backward compat
+            return {"valid": result.get("valid", False), "reason": result.get("error", "")}
 
         @app.post("/api/config/api-keys")
         async def update_api_key(request: Request):
@@ -694,14 +636,19 @@ class WebApp:
                 except Exception as e:
                     logger.warning(f"Failed to persist LLM settings to DB: {e}")
 
-            # Hot-swap agent provider if provider or model changed
-            if self._agent and self._config and (provider is not None or model is not None):
-                try:
-                    from breadmind.main import create_provider as _create_provider
-                    new_provider = _create_provider(self._config)
-                    self._agent.update_provider(new_provider)
-                except Exception as e:
-                    logger.warning(f"Failed to hot-swap provider: {e}")
+            # Hot-swap agent provider and sync settings
+            if self._agent and self._config:
+                if provider is not None or model is not None:
+                    try:
+                        from breadmind.llm.factory import create_provider as _create_provider
+                        new_provider = _create_provider(self._config)
+                        await self._agent.update_provider(new_provider)
+                    except Exception as e:
+                        logger.warning(f"Failed to hot-swap provider: {e}")
+                if max_turns is not None:
+                    self._agent.update_max_turns(self._config.llm.tool_call_max_turns)
+                if timeout is not None:
+                    self._agent.update_timeouts(tool_timeout=self._config.llm.tool_call_timeout_seconds)
 
             return {"status": "ok", "persisted": self._db is not None}
 

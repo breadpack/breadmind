@@ -100,3 +100,10 @@ class OllamaProvider(LLMProvider):
                     return resp.status == 200
         except Exception:
             return False
+
+    async def close(self) -> None:
+        """매 호출마다 세션을 생성하므로 별도 정리가 필요 없다."""
+
+    @property
+    def model_name(self) -> str:
+        return self._default_model

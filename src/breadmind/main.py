@@ -4,11 +4,10 @@ import logging
 import os
 import signal
 import sys
-from breadmind.config import load_config, load_safety_config, get_default_config_dir, set_env_file_path
+from breadmind.config import load_config, load_safety_config, get_default_config_dir, set_env_file_path, load_env_file
 from breadmind.core.agent import CoreAgent
 from breadmind.core.safety import SafetyGuard
-from breadmind.llm.claude import ClaudeProvider
-from breadmind.llm.ollama import OllamaProvider
+from breadmind.llm.factory import create_provider
 from breadmind.memory.working import WorkingMemory
 from breadmind.monitoring.engine import MonitoringEngine
 from breadmind.tools.registry import ToolRegistry
@@ -33,42 +32,6 @@ try:
 except ImportError:
     ContextBuilder = None
 
-
-def create_provider(config):
-    provider_name = config.llm.default_provider
-    if provider_name == "claude":
-        import os
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        if not api_key:
-            print("Warning: ANTHROPIC_API_KEY not set, falling back to ollama")
-            return OllamaProvider()
-        return ClaudeProvider(api_key=api_key, default_model=config.llm.default_model)
-    elif provider_name == "gemini":
-        import os
-        api_key = os.environ.get("GEMINI_API_KEY", "")
-        if not api_key:
-            print("Warning: GEMINI_API_KEY not set, falling back to ollama")
-            return OllamaProvider()
-        from breadmind.llm.gemini import GeminiProvider
-        return GeminiProvider(api_key=api_key, default_model=config.llm.default_model)
-    elif provider_name == "grok":
-        import os
-        api_key = os.environ.get("XAI_API_KEY", "")
-        if not api_key:
-            print("Warning: XAI_API_KEY not set, falling back to ollama")
-            return OllamaProvider()
-        from breadmind.llm.grok import GrokProvider
-        return GrokProvider(api_key=api_key, default_model=config.llm.default_model)
-    elif provider_name == "cli":
-        from breadmind.llm.cli import CLIProvider
-        model = config.llm.default_model or "claude -p"
-        # Parse command from model string (e.g. "claude -p" → command="claude", args=["-p"])
-        parts = model.split()
-        return CLIProvider(command=parts[0], args=parts[1:], name="cli")
-    elif provider_name == "ollama":
-        return OllamaProvider()
-    else:
-        return OllamaProvider()
 
 
 def _find_free_port(preferred: int, max_attempts: int = 10) -> int:
@@ -121,13 +84,7 @@ async def run():
     # Load and set .env file path based on resolved config dir
     env_file = os.path.join(config_dir, ".env")
     set_env_file_path(env_file)
-    if os.path.exists(env_file):
-        with open(env_file, encoding="utf-8-sig") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, value = line.split("=", 1)
-                    os.environ.setdefault(key.strip(), value.strip())
+    load_env_file(env_file)
 
     # Configure logging
     log_level = args.log_level or config.logging.level

@@ -74,6 +74,13 @@ class EnvironmentInfo:
         return "\n".join(lines)
 
 
+ENV_KEY_TO_PROVIDER = {
+    "ANTHROPIC_API_KEY": "claude",
+    "GEMINI_API_KEY": "gemini",
+    "OPENAI_API_KEY": "openai",
+    "XAI_API_KEY": "grok",
+}
+
 PROVIDER_OPTIONS = [
     {"id": "gemini", "name": "Google Gemini", "env_key": "GEMINI_API_KEY",
      "models": ["gemini-2.5-flash", "gemini-2.5-pro"], "free_tier": True,
@@ -81,6 +88,9 @@ PROVIDER_OPTIONS = [
     {"id": "claude", "name": "Anthropic Claude", "env_key": "ANTHROPIC_API_KEY",
      "models": ["claude-sonnet-4-6", "claude-haiku-4-5"], "free_tier": False,
      "signup_url": "https://console.anthropic.com/settings/keys"},
+    {"id": "openai", "name": "OpenAI", "env_key": "OPENAI_API_KEY",
+     "models": ["gpt-4o", "gpt-4o-mini"], "free_tier": False,
+     "signup_url": "https://platform.openai.com/api-keys"},
     {"id": "grok", "name": "xAI Grok", "env_key": "XAI_API_KEY",
      "models": ["grok-3", "grok-3-mini"], "free_tier": False,
      "signup_url": "https://console.x.ai/"},
@@ -115,9 +125,23 @@ async def mark_setup_complete(db):
         await db.set_setting("setup_completed", {"completed": True})
 
 
-async def validate_api_key(provider_id: str, api_key: str) -> dict:
-    """Validate an API key by making a lightweight API call."""
+async def validate_api_key(provider_or_key: str, api_key: str) -> dict:
+    """Validate an API key by making a lightweight API call.
+
+    Args:
+        provider_or_key: Either a provider id (e.g. "gemini", "claude") or an
+            environment variable name (e.g. "GEMINI_API_KEY", "ANTHROPIC_API_KEY").
+        api_key: The API key value to validate.
+
+    Returns:
+        ``{"valid": True, "error": ""}`` on success, or
+        ``{"valid": False, "error": "<reason>"}`` on failure.
+    """
     import aiohttp
+
+    # Resolve env key name to provider id if needed
+    provider_id = ENV_KEY_TO_PROVIDER.get(provider_or_key, provider_or_key)
+
     try:
         if provider_id == "gemini":
             async with aiohttp.ClientSession() as session:
@@ -126,8 +150,8 @@ async def validate_api_key(provider_id: str, api_key: str) -> dict:
                     timeout=aiohttp.ClientTimeout(total=10),
                 ) as resp:
                     if resp.status == 200:
-                        return {"valid": True}
-                    return {"valid": False, "error": f"Invalid key (HTTP {resp.status})"}
+                        return {"valid": True, "error": ""}
+                    return {"valid": False, "error": f"Invalid API key (HTTP {resp.status})"}
 
         elif provider_id == "claude":
             async with aiohttp.ClientSession() as session:
@@ -137,8 +161,23 @@ async def validate_api_key(provider_id: str, api_key: str) -> dict:
                     timeout=aiohttp.ClientTimeout(total=10),
                 ) as resp:
                     if resp.status == 200:
-                        return {"valid": True}
-                    return {"valid": False, "error": f"Invalid key (HTTP {resp.status})"}
+                        return {"valid": True, "error": ""}
+                    if resp.status == 401:
+                        return {"valid": False, "error": "Invalid API key (401 Unauthorized)"}
+                    return {"valid": False, "error": f"Unexpected response: HTTP {resp.status}"}
+
+        elif provider_id == "openai":
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    "https://api.openai.com/v1/models",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status == 200:
+                        return {"valid": True, "error": ""}
+                    if resp.status == 401:
+                        return {"valid": False, "error": "Invalid API key (401 Unauthorized)"}
+                    return {"valid": False, "error": f"Unexpected response: HTTP {resp.status}"}
 
         elif provider_id == "grok":
             async with aiohttp.ClientSession() as session:
@@ -148,8 +187,10 @@ async def validate_api_key(provider_id: str, api_key: str) -> dict:
                     timeout=aiohttp.ClientTimeout(total=10),
                 ) as resp:
                     if resp.status == 200:
-                        return {"valid": True}
-                    return {"valid": False, "error": f"Invalid key (HTTP {resp.status})"}
+                        return {"valid": True, "error": ""}
+                    if resp.status == 401:
+                        return {"valid": False, "error": "Invalid API key (401 Unauthorized)"}
+                    return {"valid": False, "error": f"Unexpected response: HTTP {resp.status}"}
 
         elif provider_id == "ollama":
             async with aiohttp.ClientSession() as session:
@@ -158,14 +199,14 @@ async def validate_api_key(provider_id: str, api_key: str) -> dict:
                     timeout=aiohttp.ClientTimeout(total=5),
                 ) as resp:
                     if resp.status == 200:
-                        return {"valid": True}
+                        return {"valid": True, "error": ""}
                     return {"valid": False, "error": "Ollama not responding"}
 
-        return {"valid": True}
+        return {"valid": True, "error": ""}  # Unknown provider, skip validation
     except aiohttp.ClientError as e:
         return {"valid": False, "error": f"Connection error: {e}"}
     except asyncio.TimeoutError:
-        return {"valid": False, "error": "Connection timed out"}
+        return {"valid": False, "error": "Validation request timed out"}
 
 
 async def discover_environment() -> EnvironmentInfo:

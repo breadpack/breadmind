@@ -83,6 +83,13 @@ class GrokProvider(LLMProvider):
         except Exception:
             return False
 
+    async def close(self) -> None:
+        await self._client.close()
+
+    @property
+    def model_name(self) -> str:
+        return self._default_model
+
     def _convert_messages(self, messages: list[LLMMessage]) -> list[dict]:
         result: list[dict] = []
         for msg in messages:

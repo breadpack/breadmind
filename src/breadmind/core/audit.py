@@ -21,6 +21,8 @@ class AuditEntry:
 class AuditLogger:
     """Structured audit logging for all agent actions."""
 
+    _MAX_ENTRIES = 1000
+
     def __init__(self, db=None):
         self._db = db
         self._entries: list[AuditEntry] = []  # in-memory buffer
@@ -37,6 +39,9 @@ class AuditLogger:
             result=result,
         )
         self._entries.append(entry)
+        if len(self._entries) > self._MAX_ENTRIES:
+            half = len(self._entries) // 2
+            self._entries = self._entries[half:]
         logger.info(json.dumps(asdict(entry)))
         return entry
 
@@ -58,7 +63,7 @@ class AuditLogger:
             details={
                 "tool_name": tool_name,
                 "arguments": arguments,
-                "result": result,
+                "result": result[:1000] if isinstance(result, str) and len(result) > 1000 else result,
                 "duration_ms": duration_ms,
             },
             result="success" if success else "error",

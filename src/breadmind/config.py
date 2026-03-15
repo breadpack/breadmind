@@ -225,13 +225,25 @@ def set_env_file_path(path: str):
 
 def _get_or_create_master_key() -> bytes:
     """Get master encryption key from env, or generate and save one."""
+    global _env_file_path
     key_str = os.environ.get("BREADMIND_MASTER_KEY", "")
     if key_str:
         return key_str.encode()
     # Auto-generate and save to .env
     from cryptography.fernet import Fernet
     new_key = Fernet.generate_key()
-    save_env_var("BREADMIND_MASTER_KEY", new_key.decode())
+    # Use config dir, not project root
+    if _env_file_path:
+        save_env_var("BREADMIND_MASTER_KEY", new_key.decode())
+    else:
+        # Fallback to default config dir
+        default_path = os.path.join(get_default_config_dir(), ".env")
+        Path(default_path).parent.mkdir(parents=True, exist_ok=True)
+        # Temporarily set path, save, then restore
+        old_path = _env_file_path
+        _env_file_path = default_path
+        save_env_var("BREADMIND_MASTER_KEY", new_key.decode())
+        _env_file_path = old_path
     return new_key
 
 
@@ -268,9 +280,23 @@ def save_env_var(key: str, value: str):
                 break
     if not found:
         lines.append(f"{key}={value}")
-    env_path.write_text("\n".join(lines) + "\n")
+    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     # Also set in current process
     os.environ[key] = value
+
+
+def load_env_file(path: str):
+    """Load environment variables from a .env file.
+    Uses setdefault so existing env vars are not overwritten."""
+    env_path = Path(path)
+    if not env_path.exists():
+        return
+    for line in env_path.read_text(encoding="utf-8-sig").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip())
 
 
 async def save_api_key_to_db(db, key_name: str, plaintext_value: str):
@@ -326,6 +352,26 @@ async def apply_db_settings(config: AppConfig, db) -> None:
 
         # Load encrypted API keys
         await load_api_keys_from_db(db)
+
+        # Safety settings restoration
+        safety_blacklist = await db.get_setting("safety_blacklist")
+        # safety_approval = await db.get_setting("safety_approval")
+        # safety_permissions = await db.get_setting("safety_permissions")
+        # These values have no direct config field, so they are left
+        # for callers that need them via db.get_setting() directly.
+
+        # Messenger token restoration
+        for token_key in ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "DISCORD_BOT_TOKEN",
+                          "TELEGRAM_BOT_TOKEN", "WHATSAPP_TWILIO_ACCOUNT_SID",
+                          "WHATSAPP_TWILIO_AUTH_TOKEN", "GMAIL_CLIENT_ID",
+                          "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN",
+                          "SIGNAL_PHONE_NUMBER"]:
+            try:
+                data = await db.get_setting(f"messenger_token:{token_key}")
+                if data and "value" in data:
+                    os.environ.setdefault(token_key, data["value"])
+            except Exception:
+                pass
     except Exception:
         pass  # DB not available, use file-based config
 
