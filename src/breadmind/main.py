@@ -51,6 +51,12 @@ def create_provider(config):
             return OllamaProvider()
         from breadmind.llm.gemini import GeminiProvider
         return GeminiProvider(api_key=api_key, default_model=config.llm.default_model)
+    elif provider_name == "cli":
+        from breadmind.llm.cli import CLIProvider
+        model = config.llm.default_model or "claude -p"
+        # Parse command from model string (e.g. "claude -p" → command="claude", args=["-p"])
+        parts = model.split()
+        return CLIProvider(command=parts[0], args=parts[1:], name="cli")
     elif provider_name == "ollama":
         return OllamaProvider()
     else:
