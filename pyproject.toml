@@ -28,6 +28,14 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0",
 ]
+container = [
+    "docker>=7.0",
+]
+messenger = [
+    "twilio>=9.0",
+    "google-api-python-client>=2.100.0",
+    "google-auth-oauthlib>=1.2.0",
+]
 embeddings = [
     "sentence-transformers>=3.0.0",
 ]

@@ -123,8 +123,8 @@ class MessageRouter:
                 "enabled": getattr(gw, '_enabled', True),
                 "allowed_users": self._allowed_users.get(name, []),
             }
-        # Always include all 3 platforms even if no gateway
-        for p in ["slack", "discord", "telegram"]:
+        # Always include all platforms even if no gateway
+        for p in ["slack", "discord", "telegram", "whatsapp", "gmail", "signal"]:
             if p not in result:
                 result[p] = {"connected": False, "enabled": False, "allowed_users": self._allowed_users.get(p, [])}
         return result
@@ -147,6 +147,20 @@ class MessageRouter:
             ]},
             "telegram": {"fields": [
                 {"name": "bot_token", "label": "Bot Token", "placeholder": "123456:ABC-DEF... from @BotFather", "secret": True},
+            ]},
+            "whatsapp": {"fields": [
+                {"name": "account_sid", "label": "Twilio Account SID", "placeholder": "AC...", "secret": True},
+                {"name": "auth_token", "label": "Twilio Auth Token", "placeholder": "Auth token", "secret": True},
+                {"name": "from_number", "label": "WhatsApp Number", "placeholder": "whatsapp:+14155238886", "secret": False},
+            ]},
+            "gmail": {"fields": [
+                {"name": "client_id", "label": "OAuth Client ID", "placeholder": "xxx.apps.googleusercontent.com", "secret": True},
+                {"name": "client_secret", "label": "OAuth Client Secret", "placeholder": "GOCSPX-...", "secret": True},
+                {"name": "refresh_token", "label": "Refresh Token", "placeholder": "1//...", "secret": True},
+            ]},
+            "signal": {"fields": [
+                {"name": "phone_number", "label": "Phone Number", "placeholder": "+1234567890", "secret": False},
+                {"name": "signal_cli_path", "label": "signal-cli Path", "placeholder": "signal-cli", "secret": False},
             ]},
         }
         return configs.get(platform, {"fields": []})

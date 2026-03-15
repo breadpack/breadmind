@@ -17,6 +17,7 @@ class SubAgentTask:
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     completed_at: datetime | None = None
     model: str | None = None
+    container_isolated: bool = False
 
 
 class SubAgentManager:
@@ -33,12 +34,14 @@ class SubAgentManager:
         """Set the message handler for sub-agent execution."""
         self._message_handler = handler
 
-    async def spawn(self, task: str, parent_id: str = None, model: str = None) -> SubAgentTask:
+    async def spawn(self, task: str, parent_id: str = None, model: str = None,
+                    container_isolated: bool = False) -> SubAgentTask:
         """Spawn a new sub-agent to handle a task asynchronously."""
         task_id = str(uuid.uuid4())[:8]
         sa_task = SubAgentTask(
             id=task_id, parent_id=parent_id, task=task,
             status="pending", model=model,
+            container_isolated=container_isolated,
         )
         async with self._lock:
             self._tasks[task_id] = sa_task
@@ -51,6 +54,24 @@ class SubAgentManager:
         """Execute sub-agent task."""
         sa_task.status = "running"
         try:
+            # Container-isolated execution
+            if sa_task.container_isolated:
+                try:
+                    from breadmind.core.container import ContainerExecutor
+                    executor = ContainerExecutor()
+                    result = await executor.run_subagent(sa_task.task)
+                    if result.error:
+                        sa_task.result = f"Container error: {result.error}"
+                        sa_task.status = "failed"
+                    else:
+                        sa_task.result = result.stdout
+                        sa_task.status = "completed"
+                except Exception as e:
+                    sa_task.result = f"Container isolation failed: {e}"
+                    sa_task.status = "failed"
+                    logger.error(f"Sub-agent {sa_task.id} container execution failed: {e}")
+                return
+
             if self._message_handler:
                 if asyncio.iscoroutinefunction(self._message_handler):
                     result = await self._message_handler(

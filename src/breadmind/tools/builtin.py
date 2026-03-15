@@ -133,14 +133,30 @@ def _validate_path(path: str) -> Path:
     return p
 
 
-@tool(description="Execute a shell command locally or via SSH. Use host='localhost' for local commands.")
+@tool(description="Execute a shell command locally, via SSH, or in an isolated Docker container. Use host='localhost' for local commands. Set container=True for Docker isolation.")
 async def shell_exec(command: str, host: str = "localhost", timeout: int = 30,
                      port: int = 22, username: str = None,
-                     key_file: str = None) -> str:
+                     key_file: str = None, container: bool = False,
+                     image: str = None) -> str:
     # Check if command is allowed (whitelist + blacklist)
     allowed, reason = _is_command_allowed(command)
     if not allowed:
         return f"Error: Command blocked - {reason}: {command}"
+
+    # Container isolation mode
+    if container and host == "localhost":
+        try:
+            from breadmind.core.container import ContainerExecutor
+            executor = ContainerExecutor()
+            result = await executor.run_command(command, image=image, timeout=timeout)
+            if result.error:
+                return f"Container error: {result.error}"
+            output = result.stdout
+            if result.exit_code != 0:
+                output += f"\nExit code: {result.exit_code}"
+            return output.strip() if output else "(no output)"
+        except Exception as e:
+            return f"Container execution failed: {e}"
 
     if host == "localhost":
         try:
@@ -257,15 +273,36 @@ async def file_write(path: str, content: str, encoding: str = "utf-8") -> str:
         return f"Error writing file: {e}"
 
 
-@tool(description="Connect a messenger platform (slack, discord, telegram). Returns a URL that the user's browser will automatically open for OAuth authorization. Use when user asks to connect/integrate a messenger.")
+@tool(description="Connect a messenger platform (slack, discord, telegram, whatsapp, gmail, signal). Returns a URL that the user's browser will automatically open for OAuth authorization. Use when user asks to connect/integrate a messenger.")
 async def messenger_connect(platform: str) -> str:
     """Generate connection URL for a messenger platform."""
     platform = platform.lower().strip()
-    valid = {"slack", "discord", "telegram"}
+    valid = {"slack", "discord", "telegram", "whatsapp", "gmail", "signal"}
     if platform not in valid:
         return f"Invalid platform '{platform}'. Choose from: {', '.join(valid)}"
 
-    if platform == "slack":
+    if platform == "whatsapp":
+        sid = os.environ.get("WHATSAPP_TWILIO_ACCOUNT_SID", "")
+        if sid:
+            return "WhatsApp (Twilio)이 설정되어 있습니다. Settings 페이지에서 Webhook URL을 Twilio 콘솔에 등록해주세요."
+        else:
+            return "[OPEN_URL]https://console.twilio.com/[/OPEN_URL] Twilio 콘솔을 열었습니다. WhatsApp Sandbox를 설정하고 Account SID, Auth Token을 Settings 페이지에서 입력해주세요."
+
+    elif platform == "gmail":
+        client_id = os.environ.get("GMAIL_CLIENT_ID", "")
+        if client_id:
+            port = os.environ.get("BREADMIND_PORT", "8082")
+            redirect_uri = f"http://localhost:{port}/api/messenger/gmail/oauth-callback"
+            scopes = "https://www.googleapis.com/auth/gmail.modify"
+            url = f"https://accounts.google.com/o/oauth2/v2/auth?client_id={client_id}&redirect_uri={redirect_uri}&response_type=code&scope={scopes}&access_type=offline&prompt=consent"
+            return f"[OPEN_URL]{url}[/OPEN_URL] Gmail OAuth 페이지를 열었습니다. Google 계정 접근을 허용해주세요."
+        else:
+            return "[OPEN_URL]https://console.cloud.google.com/apis/credentials[/OPEN_URL] Google Cloud Console을 열었습니다. OAuth 2.0 Client ID를 만들고 Client ID, Client Secret을 Settings 페이지에서 입력해주세요."
+
+    elif platform == "signal":
+        return "Signal은 signal-cli를 사용합니다. signal-cli를 설치하고 (https://github.com/AsamK/signal-cli) 전화번호를 등록한 후, Settings 페이지에서 전화번호를 입력해주세요."
+
+    elif platform == "slack":
         client_id = os.environ.get("SLACK_CLIENT_ID", "")
         if client_id:
             port = os.environ.get("BREADMIND_PORT", "8082")

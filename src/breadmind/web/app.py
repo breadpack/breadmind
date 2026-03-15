@@ -18,7 +18,8 @@ class WebApp:
                  config=None, monitoring_engine=None, safety_config=None,
                  agent=None, audit_logger=None, metrics_collector=None, database=None,
                  mcp_store=None, safety_guard=None, working_memory=None, message_router=None,
-                 scheduler=None, subagent_manager=None, webhook_manager=None, auth=None):
+                 scheduler=None, subagent_manager=None, webhook_manager=None, auth=None,
+                 container_executor=None, swarm_manager=None):
         self.app = FastAPI(title="BreadMind", version="0.1.0")
         self._message_handler = message_handler
         self._tool_registry = tool_registry
@@ -38,6 +39,8 @@ class WebApp:
         self._subagent_manager = subagent_manager
         self._webhook_manager = webhook_manager
         self._auth = auth
+        self._container_executor = container_executor
+        self._swarm_manager = swarm_manager
 
         # CORS middleware
         if config and hasattr(config, 'security'):
@@ -989,11 +992,28 @@ class WebApp:
                 "telegram": {"name": "Telegram", "icon": "\u2708\ufe0f", "fields": [
                     {"name": "bot_token", "label": "Bot Token", "placeholder": "From @BotFather", "secret": True},
                 ]},
+                "whatsapp": {"name": "WhatsApp", "icon": "\U0001f4f1", "fields": [
+                    {"name": "account_sid", "label": "Twilio Account SID", "placeholder": "AC...", "secret": True},
+                    {"name": "auth_token", "label": "Twilio Auth Token", "placeholder": "Auth token", "secret": True},
+                    {"name": "from_number", "label": "WhatsApp Number", "placeholder": "whatsapp:+14155238886", "secret": False},
+                ]},
+                "gmail": {"name": "Gmail", "icon": "\u2709\ufe0f", "fields": [
+                    {"name": "client_id", "label": "OAuth Client ID", "placeholder": "xxx.apps.googleusercontent.com", "secret": True},
+                    {"name": "client_secret", "label": "OAuth Client Secret", "placeholder": "GOCSPX-...", "secret": True},
+                    {"name": "refresh_token", "label": "Refresh Token", "placeholder": "1//...", "secret": True},
+                ]},
+                "signal": {"name": "Signal", "icon": "\U0001f4e8", "fields": [
+                    {"name": "phone_number", "label": "Phone Number", "placeholder": "+1234567890", "secret": False},
+                    {"name": "signal_cli_path", "label": "signal-cli Path", "placeholder": "signal-cli", "secret": False},
+                ]},
             }
             token_keys = {
                 "slack": ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"],
                 "discord": ["DISCORD_BOT_TOKEN"],
                 "telegram": ["TELEGRAM_BOT_TOKEN"],
+                "whatsapp": ["WHATSAPP_TWILIO_ACCOUNT_SID", "WHATSAPP_TWILIO_AUTH_TOKEN"],
+                "gmail": ["GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET"],
+                "signal": ["SIGNAL_PHONE_NUMBER"],
             }
             for platform, cfg in configs.items():
                 tokens_set = all(bool(os.environ.get(k, "")) for k in token_keys.get(platform, []))
@@ -1017,7 +1037,7 @@ class WebApp:
         async def set_messenger_token(platform: str, request: Request):
             """Save messenger platform tokens."""
             data = await request.json()
-            valid_platforms = {"slack", "discord", "telegram"}
+            valid_platforms = {"slack", "discord", "telegram", "whatsapp", "gmail", "signal"}
             if platform not in valid_platforms:
                 return JSONResponse(status_code=400, content={"error": f"Invalid platform: {platform}"})
 
@@ -1025,6 +1045,9 @@ class WebApp:
                 "slack": {"bot_token": "SLACK_BOT_TOKEN", "app_token": "SLACK_APP_TOKEN"},
                 "discord": {"bot_token": "DISCORD_BOT_TOKEN"},
                 "telegram": {"bot_token": "TELEGRAM_BOT_TOKEN"},
+                "whatsapp": {"account_sid": "WHATSAPP_TWILIO_ACCOUNT_SID", "auth_token": "WHATSAPP_TWILIO_AUTH_TOKEN", "from_number": "WHATSAPP_FROM_NUMBER"},
+                "gmail": {"client_id": "GMAIL_CLIENT_ID", "client_secret": "GMAIL_CLIENT_SECRET", "refresh_token": "GMAIL_REFRESH_TOKEN"},
+                "signal": {"phone_number": "SIGNAL_PHONE_NUMBER", "signal_cli_path": "SIGNAL_CLI_PATH"},
             }
 
             saved = {}
@@ -1044,7 +1067,7 @@ class WebApp:
         @app.post("/api/messenger/{platform}/test")
         async def test_messenger(platform: str):
             """Send a test message to verify connection."""
-            valid_platforms = {"slack", "discord", "telegram"}
+            valid_platforms = {"slack", "discord", "telegram", "whatsapp", "gmail", "signal"}
             if platform not in valid_platforms:
                 return JSONResponse(status_code=400, content={"error": f"Invalid platform: {platform}"})
             if not self._message_router:
@@ -1097,6 +1120,39 @@ class WebApp:
                     {"step": 2, "text": "Send /newbot and follow the prompts"},
                     {"step": 3, "text": "Copy the HTTP API token (e.g., 123456:ABC-DEF...)"},
                     {"step": 4, "text": "Paste the token in the Bot Token field above"},
+                ]}
+
+            elif platform == "whatsapp":
+                return {"url": "https://console.twilio.com/", "steps": [
+                    {"step": 1, "text": "Go to Twilio Console", "link": "https://console.twilio.com/"},
+                    {"step": 2, "text": "Enable WhatsApp Sandbox under Messaging"},
+                    {"step": 3, "text": "Copy Account SID and Auth Token"},
+                    {"step": 4, "text": "Note your WhatsApp Sandbox number (whatsapp:+14155238886)"},
+                    {"step": 5, "text": "Set webhook URL to: http://<your-host>/api/webhook/receive/whatsapp"},
+                ]}
+
+            elif platform == "gmail":
+                client_id = os.environ.get("GMAIL_CLIENT_ID", "")
+                if not client_id:
+                    return {"url": None, "steps": [
+                        {"step": 1, "text": "Go to Google Cloud Console", "link": "https://console.cloud.google.com/apis/credentials"},
+                        {"step": 2, "text": "Create OAuth 2.0 Client ID (Web application)"},
+                        {"step": 3, "text": "Add redirect URI: http://localhost:<port>/api/messenger/gmail/oauth-callback"},
+                        {"step": 4, "text": "Enable Gmail API in your project"},
+                        {"step": 5, "text": "Enter Client ID and Client Secret here, then click Connect"},
+                    ]}
+                port = self._config.web.port if self._config else 8080
+                redirect_uri = f"http://localhost:{port}/api/messenger/gmail/oauth-callback"
+                scopes = "https://www.googleapis.com/auth/gmail.modify"
+                url = f"https://accounts.google.com/o/oauth2/v2/auth?client_id={client_id}&redirect_uri={redirect_uri}&response_type=code&scope={scopes}&access_type=offline&prompt=consent"
+                return {"url": url, "steps": []}
+
+            elif platform == "signal":
+                return {"url": "https://github.com/AsamK/signal-cli", "steps": [
+                    {"step": 1, "text": "Install signal-cli", "link": "https://github.com/AsamK/signal-cli"},
+                    {"step": 2, "text": "Register your phone number: signal-cli -a +NUMBER register"},
+                    {"step": 3, "text": "Verify with SMS code: signal-cli -a +NUMBER verify CODE"},
+                    {"step": 4, "text": "Enter your phone number in the field above"},
                 ]}
 
             return JSONResponse(status_code=400, content={"error": "Invalid platform"})
@@ -1547,6 +1603,145 @@ class WebApp:
             if not self._webhook_manager:
                 return {"events": []}
             return {"events": self._webhook_manager.get_event_log()}
+
+        # --- Container endpoints ---
+
+        @app.get("/api/container/status")
+        async def container_status():
+            if not self._container_executor:
+                return {"status": {"docker_available": False, "running_containers": 0, "containers": []}}
+            return {"status": self._container_executor.get_status()}
+
+        @app.get("/api/container/list")
+        async def container_list():
+            if not self._container_executor:
+                return {"containers": []}
+            return {"containers": self._container_executor.list_containers()}
+
+        @app.post("/api/container/run")
+        async def container_run(request: Request):
+            if not self._container_executor:
+                return JSONResponse(status_code=503, content={"error": "Container executor not configured"})
+            data = await request.json()
+            result = await self._container_executor.run_command(
+                command=data.get("command", ""),
+                image=data.get("image"),
+                timeout=data.get("timeout", 30),
+                env=data.get("env"),
+            )
+            return {
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "exit_code": result.exit_code,
+                "container_id": result.container_id,
+                "error": result.error,
+            }
+
+        @app.post("/api/container/cleanup")
+        async def container_cleanup():
+            if not self._container_executor:
+                return JSONResponse(status_code=503, content={"error": "Container executor not configured"})
+            await self._container_executor.cleanup()
+            return {"status": "ok"}
+
+        # --- Swarm endpoints ---
+
+        @app.post("/api/swarm/spawn")
+        async def spawn_swarm(request: Request):
+            if not self._swarm_manager:
+                return JSONResponse(status_code=503, content={"error": "Swarm manager not configured"})
+            data = await request.json()
+            result = await self._swarm_manager.spawn_swarm(
+                goal=data.get("goal", ""),
+                roles=data.get("roles"),
+            )
+            return {"status": "ok", "swarm_id": result.id}
+
+        @app.get("/api/swarm/list")
+        async def list_swarms():
+            if not self._swarm_manager:
+                return {"swarms": []}
+            return {"swarms": self._swarm_manager.list_swarms()}
+
+        @app.get("/api/swarm/{swarm_id}")
+        async def get_swarm(swarm_id: str):
+            if not self._swarm_manager:
+                return JSONResponse(status_code=503, content={"error": "Swarm manager not configured"})
+            swarm = self._swarm_manager.get_swarm(swarm_id)
+            if not swarm:
+                return JSONResponse(status_code=404, content={"error": "Swarm not found"})
+            return {"swarm": swarm}
+
+        @app.get("/api/swarm/status")
+        async def swarm_status():
+            if not self._swarm_manager:
+                return {"status": {"total": 0, "pending": 0, "running": 0, "completed": 0, "failed": 0}}
+            return {"status": self._swarm_manager.get_status()}
+
+        @app.get("/api/swarm/roles")
+        async def swarm_roles():
+            if not self._swarm_manager:
+                return {"roles": []}
+            return {"roles": self._swarm_manager.get_available_roles()}
+
+        # --- Additional Messenger endpoints (WhatsApp, Gmail, Signal) ---
+
+        @app.post("/api/webhook/receive/whatsapp")
+        async def receive_whatsapp_webhook(request: Request):
+            """Handle incoming WhatsApp messages via Twilio webhook."""
+            if not self._message_router:
+                return JSONResponse(status_code=503, content={"error": "Messenger not configured"})
+            gw = self._message_router._gateways.get("whatsapp")
+            if not gw:
+                return JSONResponse(status_code=503, content={"error": "WhatsApp gateway not configured"})
+            form_data = dict(await request.form())
+            if hasattr(gw, 'handle_incoming_webhook'):
+                await gw.handle_incoming_webhook(form_data)
+            return {"status": "ok"}
+
+        @app.get("/api/messenger/gmail/oauth-callback")
+        async def gmail_oauth_callback(code: str = "", error: str = ""):
+            """Handle Gmail OAuth callback."""
+            if error:
+                return HTMLResponse(f"<html><body><h1>Gmail OAuth Error</h1><p>{error}</p></body></html>")
+            if not code:
+                return HTMLResponse("<html><body><h1>Missing code</h1></body></html>")
+            import aiohttp
+            client_id = os.environ.get("GMAIL_CLIENT_ID", "")
+            client_secret = os.environ.get("GMAIL_CLIENT_SECRET", "")
+            if not client_id or not client_secret:
+                return HTMLResponse("<html><body><h1>Gmail OAuth not configured</h1></body></html>")
+            try:
+                port = self._config.web.port if self._config else 8080
+                redirect_uri = f"http://localhost:{port}/api/messenger/gmail/oauth-callback"
+                async with aiohttp.ClientSession() as session:
+                    async with session.post("https://oauth2.googleapis.com/token", data={
+                        "code": code,
+                        "client_id": client_id,
+                        "client_secret": client_secret,
+                        "redirect_uri": redirect_uri,
+                        "grant_type": "authorization_code",
+                    }) as resp:
+                        data = await resp.json()
+                        if "refresh_token" in data:
+                            os.environ["GMAIL_REFRESH_TOKEN"] = data["refresh_token"]
+                            if self._db:
+                                try:
+                                    await self._db.set_setting("messenger_token:GMAIL_REFRESH_TOKEN",
+                                                               {"value": data["refresh_token"]})
+                                except Exception:
+                                    pass
+                            await self.broadcast_event({"type": "messenger_connected", "platform": "gmail"})
+                            return HTMLResponse(
+                                "<html><body style='background:#0d1117;color:#e2e8f0;font-family:sans-serif;text-align:center;padding:60px;'>"
+                                "<h1>Gmail Connected!</h1><p>Refresh token saved. You can close this window.</p>"
+                                "<script>setTimeout(function(){window.close();},3000);</script></body></html>"
+                            )
+                        else:
+                            err = data.get("error_description", data.get("error", "unknown"))
+                            return HTMLResponse(f"<html><body><h1>Gmail OAuth Failed</h1><p>{err}</p></body></html>")
+            except Exception as e:
+                return HTMLResponse(f"<html><body><h1>Error</h1><p>{e}</p></body></html>")
 
         @app.websocket("/ws/chat")
         async def websocket_chat(websocket: WebSocket):

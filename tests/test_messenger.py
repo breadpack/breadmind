@@ -126,3 +126,160 @@ async def test_broadcast(router):
     await router.broadcast("alert!", channels={"slack": "C1", "discord": "C2"})
     assert ("C1", "alert!") in gw1.sent_messages
     assert ("C2", "alert!") in gw2.sent_messages
+
+
+# --- WhatsApp Gateway tests ---
+
+class TestWhatsAppGateway:
+    @pytest.fixture
+    def whatsapp_gw(self):
+        from breadmind.messenger.whatsapp_gw import WhatsAppGateway
+        return WhatsAppGateway(
+            account_sid="test_sid",
+            auth_token="test_token",
+            from_number="whatsapp:+14155238886",
+        )
+
+    def test_init(self, whatsapp_gw):
+        assert whatsapp_gw._account_sid == "test_sid"
+        assert whatsapp_gw._from_number == "whatsapp:+14155238886"
+        assert whatsapp_gw._connected is False
+
+    @pytest.mark.asyncio
+    async def test_stop(self, whatsapp_gw):
+        whatsapp_gw._connected = True
+        await whatsapp_gw.stop()
+        assert whatsapp_gw._connected is False
+        assert whatsapp_gw._client is None
+
+    @pytest.mark.asyncio
+    async def test_ask_approval(self, whatsapp_gw):
+        whatsapp_gw._client = MagicMock()
+        action_id = await whatsapp_gw.ask_approval("whatsapp:+1234", "test_action", {"key": "val"})
+        assert len(action_id) == 8
+
+    @pytest.mark.asyncio
+    async def test_handle_incoming_approval(self, whatsapp_gw):
+        handler = AsyncMock(return_value="approved")
+        whatsapp_gw._on_message = handler
+        whatsapp_gw._client = MagicMock()
+        await whatsapp_gw.handle_incoming_webhook({
+            "Body": "approve abc123",
+            "From": "whatsapp:+1234",
+        })
+        handler.assert_called_once()
+        call_args = handler.call_args[0][0]
+        assert call_args.is_approval is True
+        assert call_args.approved is True
+
+    @pytest.mark.asyncio
+    async def test_handle_incoming_regular(self, whatsapp_gw):
+        handler = AsyncMock(return_value="response")
+        whatsapp_gw._on_message = handler
+        whatsapp_gw._client = MagicMock()
+        await whatsapp_gw.handle_incoming_webhook({
+            "Body": "hello",
+            "From": "whatsapp:+1234",
+        })
+        handler.assert_called_once()
+        call_args = handler.call_args[0][0]
+        assert call_args.is_approval is False
+
+
+# --- Gmail Gateway tests ---
+
+class TestGmailGateway:
+    @pytest.fixture
+    def gmail_gw(self):
+        from breadmind.messenger.gmail_gw import GmailGateway
+        return GmailGateway(
+            client_id="test_id",
+            client_secret="test_secret",
+            refresh_token="test_token",
+        )
+
+    def test_init(self, gmail_gw):
+        assert gmail_gw._client_id == "test_id"
+        assert gmail_gw._poll_interval == 30
+        assert gmail_gw._connected is False
+
+    @pytest.mark.asyncio
+    async def test_stop(self, gmail_gw):
+        gmail_gw._connected = True
+        await gmail_gw.stop()
+        assert gmail_gw._connected is False
+        assert gmail_gw._service is None
+
+    @pytest.mark.asyncio
+    async def test_ask_approval(self, gmail_gw):
+        gmail_gw._service = MagicMock()
+        gmail_gw._user_email = "test@example.com"
+        mock_send = MagicMock()
+        mock_send.execute.return_value = {}
+        gmail_gw._service.users.return_value.messages.return_value.send.return_value = mock_send
+        action_id = await gmail_gw.ask_approval("user@example.com", "test_action", {"key": "val"})
+        assert len(action_id) == 8
+
+
+# --- Signal Gateway tests ---
+
+class TestSignalGateway:
+    @pytest.fixture
+    def signal_gw(self):
+        from breadmind.messenger.signal_gw import SignalGateway
+        return SignalGateway(phone_number="+1234567890")
+
+    def test_init(self, signal_gw):
+        assert signal_gw._phone_number == "+1234567890"
+        assert signal_gw._signal_cli == "signal-cli"
+        assert signal_gw._connected is False
+
+    @pytest.mark.asyncio
+    async def test_stop(self, signal_gw):
+        signal_gw._connected = True
+        await signal_gw.stop()
+        assert signal_gw._connected is False
+
+    @pytest.mark.asyncio
+    async def test_process_message(self, signal_gw):
+        handler = AsyncMock(return_value=None)
+        signal_gw._on_message = handler
+        data = {
+            "envelope": {
+                "sourceNumber": "+9876543210",
+                "dataMessage": {"message": "hello signal"},
+            }
+        }
+        await signal_gw._process_message(data)
+        handler.assert_called_once()
+        call_args = handler.call_args[0][0]
+        assert call_args.text == "hello signal"
+        assert call_args.platform == "signal"
+
+    @pytest.mark.asyncio
+    async def test_process_approval_message(self, signal_gw):
+        handler = AsyncMock(return_value=None)
+        signal_gw._on_message = handler
+        data = {
+            "envelope": {
+                "sourceNumber": "+9876543210",
+                "dataMessage": {"message": "approve abc123"},
+            }
+        }
+        await signal_gw._process_message(data)
+        call_args = handler.call_args[0][0]
+        assert call_args.is_approval is True
+        assert call_args.approved is True
+
+    @pytest.mark.asyncio
+    async def test_skip_own_messages(self, signal_gw):
+        handler = AsyncMock()
+        signal_gw._on_message = handler
+        data = {
+            "envelope": {
+                "sourceNumber": "+1234567890",  # same as phone_number
+                "dataMessage": {"message": "self message"},
+            }
+        }
+        await signal_gw._process_message(data)
+        handler.assert_not_called()

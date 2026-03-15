@@ -901,6 +901,30 @@
                 html += `</div>`;
                 html += `</div>`;
 
+                // Agent Swarms
+                html += `<div class="settings-section">`;
+                html += `<h3>Agent Swarms</h3>`;
+                html += `<div id="swarm-status" style="color:#94a3b8;font-size:12px;margin-bottom:8px;"></div>`;
+                html += `<div id="swarm-list"></div>`;
+                html += `<div style="display:flex;gap:8px;margin-top:8px;">`;
+                html += `<input type="text" id="swarm-goal" class="setting-input" placeholder="Goal for the swarm team..." style="flex:1;" />`;
+                html += `<button class="save-btn" onclick="spawnSwarm()">Launch Swarm</button>`;
+                html += `</div>`;
+                html += `<div id="swarm-roles" style="margin-top:8px;"></div>`;
+                html += `</div>`;
+
+                // Container Isolation
+                html += `<div class="settings-section">`;
+                html += `<h3>Container Isolation</h3>`;
+                html += `<div id="container-status" style="color:#94a3b8;font-size:12px;margin-bottom:8px;">Checking Docker...</div>`;
+                html += `<div id="container-list"></div>`;
+                html += `<div style="display:flex;gap:8px;margin-top:8px;">`;
+                html += `<input type="text" id="container-cmd" class="setting-input" placeholder="Command to run in container..." style="flex:1;" />`;
+                html += `<button class="save-btn" onclick="runContainer()">Run</button>`;
+                html += `</div>`;
+                html += `<div id="container-output" style="display:none;margin-top:8px;background:#0f172a;border:1px solid #334155;border-radius:6px;padding:8px;font-family:monospace;font-size:12px;max-height:200px;overflow-y:auto;white-space:pre-wrap;"></div>`;
+                html += `</div>`;
+
                 // Webhooks
                 html += `<div class="settings-section">`;
                 html += `<h3>Webhooks</h3>`;
@@ -1274,9 +1298,11 @@
             const baseDirEl = document.getElementById('tool-base-dir');
             if (baseDirEl) baseDirEl.value = sec.base_directory || '';
 
-            // Load Scheduler, Sub-agents, Webhooks
+            // Load Scheduler, Sub-agents, Swarms, Containers, Webhooks
             loadScheduler();
             loadSubagents();
+            loadSwarms();
+            loadContainerStatus();
             loadWebhooks();
         }
 
@@ -1402,6 +1428,113 @@
                 showToast('Sub-agent spawned', 'success');
                 document.getElementById('subagent-task').value = '';
                 setTimeout(loadSubagents, 1000);
+            }
+        }
+
+        // ── Agent Swarms ──
+        async function loadSwarms() {
+            try {
+                const [statusResp, listResp, rolesResp] = await Promise.all([
+                    fetch('/api/swarm/status'),
+                    fetch('/api/swarm/list'),
+                    fetch('/api/swarm/roles'),
+                ]);
+                const statusData = await statusResp.json();
+                const listData = await listResp.json();
+                const rolesData = await rolesResp.json();
+                const s = statusData.status;
+                document.getElementById('swarm-status').innerHTML =
+                    'Total: ' + s.total + ' | Running: <span style="color:#34d399;">' + s.running +
+                    '</span> | Completed: ' + s.completed + ' | Failed: <span style="color:#fca5a5;">' + s.failed + '</span>';
+
+                const container = document.getElementById('swarm-list');
+                if (listData.swarms.length === 0) {
+                    container.innerHTML = '<div class="no-data" style="font-size:12px;color:#64748b;">No swarms launched yet.</div>';
+                } else {
+                    container.innerHTML = listData.swarms.slice(0,10).map(sw => {
+                        const statusColor = sw.status === 'completed' ? '#34d399' : sw.status === 'running' ? '#60a5fa' : sw.status === 'failed' ? '#fca5a5' : '#94a3b8';
+                        let tasksSummary = sw.tasks ? sw.tasks.map(t => '<span style="color:#94a3b8;font-size:11px;">[' + t.role + ':' + t.status + ']</span>').join(' ') : '';
+                        return '<div class="setting-row" style="font-size:12px;flex-direction:column;align-items:flex-start;gap:4px;">' +
+                            '<div><span style="color:' + statusColor + ';">● ' + sw.status + '</span> ' +
+                            '<span style="color:#e2e8f0;">' + escapeHtml(sw.goal).substring(0,60) + '</span></div>' +
+                            '<div>' + tasksSummary + '</div>' +
+                            (sw.final_result ? '<div style="color:#94a3b8;font-size:11px;max-height:60px;overflow:hidden;">' + escapeHtml(sw.final_result).substring(0,200) + '...</div>' : '') +
+                            '</div>';
+                    }).join('');
+                }
+
+                // Show available roles
+                const rolesEl = document.getElementById('swarm-roles');
+                if (rolesData.roles && rolesData.roles.length > 0) {
+                    rolesEl.innerHTML = '<span style="color:#64748b;font-size:11px;">Roles: </span>' +
+                        rolesData.roles.map(r => '<span class="detail-badge" style="font-size:10px;">' + r.role + '</span>').join(' ');
+                }
+            } catch(e) {}
+        }
+
+        async function spawnSwarm() {
+            const goal = document.getElementById('swarm-goal').value.trim();
+            if (!goal) return;
+            const resp = await fetch('/api/swarm/spawn', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({goal})
+            });
+            if (resp.ok) {
+                showToast('Swarm launched', 'success');
+                document.getElementById('swarm-goal').value = '';
+                setTimeout(loadSwarms, 2000);
+            }
+        }
+
+        // ── Container Isolation ──
+        async function loadContainerStatus() {
+            try {
+                const resp = await fetch('/api/container/status');
+                const data = await resp.json();
+                const s = data.status;
+                const statusEl = document.getElementById('container-status');
+                statusEl.innerHTML = 'Docker: <span style="color:' + (s.docker_available ? '#34d399' : '#fca5a5') + ';">' +
+                    (s.docker_available ? 'Available' : 'Not available') + '</span> | ' +
+                    'Image: ' + s.default_image + ' | Running: ' + s.running_containers;
+
+                const listEl = document.getElementById('container-list');
+                if (s.containers && s.containers.length > 0) {
+                    listEl.innerHTML = s.containers.map(c =>
+                        '<div class="setting-row" style="font-size:12px;">' +
+                        '<span style="color:#34d399;">●</span> ' + c.id + ' ' +
+                        '<span class="detail-badge">' + c.type + '</span> ' +
+                        '<span style="color:#94a3b8;">' + c.status + '</span>' +
+                        '</div>'
+                    ).join('');
+                } else {
+                    listEl.innerHTML = '';
+                }
+            } catch(e) {
+                document.getElementById('container-status').innerHTML = '<span style="color:#fca5a5;">Failed to check Docker status</span>';
+            }
+        }
+
+        async function runContainer() {
+            const cmd = document.getElementById('container-cmd').value.trim();
+            if (!cmd) return;
+            const outputEl = document.getElementById('container-output');
+            outputEl.style.display = 'block';
+            outputEl.textContent = 'Running...';
+            try {
+                const resp = await fetch('/api/container/run', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({command: cmd})
+                });
+                const data = await resp.json();
+                if (data.error) {
+                    outputEl.innerHTML = '<span style="color:#fca5a5;">Error: ' + escapeHtml(data.error) + '</span>';
+                } else {
+                    outputEl.textContent = data.stdout || '(no output)';
+                    if (data.exit_code !== 0) outputEl.textContent += '\nExit code: ' + data.exit_code;
+                }
+                loadContainerStatus();
+            } catch(e) {
+                outputEl.innerHTML = '<span style="color:#fca5a5;">Request failed</span>';
             }
         }
 
