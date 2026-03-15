@@ -490,6 +490,36 @@ class SwarmManager:
             else:
                 swarm.final_result = "No tasks completed successfully."
 
+            # Phase 3.5: Self-reflection — extract lessons learned
+            if self._message_handler and swarm.final_result:
+                try:
+                    reflection_prompt = (
+                        f"Reflect on this completed task and extract key lessons learned.\n\n"
+                        f"Goal: {swarm.goal}\n"
+                        f"Result summary: {swarm.final_result[:500]}\n\n"
+                        f"What are the key takeaways? What should be remembered for future similar tasks?\n"
+                        f"Respond concisely in 2-3 bullet points."
+                    )
+                    if asyncio.iscoroutinefunction(self._message_handler):
+                        reflection = await self._message_handler(
+                            reflection_prompt, user="swarm_reflection", channel=f"swarm:{swarm.id}:reflect"
+                        )
+                    else:
+                        reflection = self._message_handler(
+                            reflection_prompt, user="swarm_reflection", channel=f"swarm:{swarm.id}:reflect"
+                        )
+
+                    # Store reflection in episodic memory via retriever
+                    if self._retriever and reflection:
+                        await self._retriever.index_task_result(
+                            role="swarm_reflection",
+                            task_desc=f"Reflection on: {swarm.goal[:100]}",
+                            result_summary=str(reflection)[:500],
+                            success=True,
+                        )
+                except Exception as e:
+                    logger.warning(f"Swarm reflection failed: {e}")
+
             swarm.status = "completed"
 
         except Exception as e:

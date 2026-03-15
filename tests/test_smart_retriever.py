@@ -196,3 +196,65 @@ class TestSmartRetriever:
         assert SmartRetriever._extract_skill_name_from_tags(["other"]) is None
         assert SmartRetriever._extract_skill_name_from_tags(None) is None
         assert SmartRetriever._extract_skill_name_from_tags([]) is None
+
+
+class TestRRF:
+    def test_rrf_score(self):
+        from breadmind.core.smart_retriever import _rrf_score
+        assert _rrf_score(0) == pytest.approx(1 / 60)
+        assert _rrf_score(1) == pytest.approx(1 / 61)
+        assert _rrf_score(0) > _rrf_score(1)
+
+    def test_rrf_score_custom_k(self):
+        from breadmind.core.smart_retriever import _rrf_score
+        assert _rrf_score(0, k=10) == pytest.approx(1 / 10)
+
+
+class TestKeywordSearch:
+    def _make_retriever(self, embedding_available=False):
+        embedding = MagicMock()
+        embedding.is_available.return_value = embedding_available
+        embedding.encode = AsyncMock(
+            return_value=[0.1] * 384 if embedding_available else None,
+        )
+        embedding.cosine_similarity = MagicMock(return_value=0.8)
+
+        episodic = AsyncMock()
+        episodic.add_note = AsyncMock(
+            return_value=MagicMock(id=1, tags=[], embedding=None),
+        )
+        episodic.get_all_notes = AsyncMock(return_value=[])
+        episodic.search_by_keywords = AsyncMock(return_value=[])
+
+        semantic = AsyncMock()
+        semantic.add_entity = AsyncMock()
+        semantic.add_relation = AsyncMock()
+        semantic.find_entities = AsyncMock(return_value=[])
+        semantic.get_relations = AsyncMock(return_value=[])
+
+        skill_store = AsyncMock()
+        skill_store.get_skill = AsyncMock(return_value=None)
+        skill_store.find_matching_skills = AsyncMock(return_value=[])
+        skill_store.list_skills = AsyncMock(return_value=[])
+
+        return SmartRetriever(
+            embedding_service=embedding,
+            episodic_memory=episodic,
+            semantic_memory=semantic,
+            skill_store=skill_store,
+        )
+
+    @pytest.mark.asyncio
+    async def test_keyword_search_finds_matching_skill(self):
+        retriever = self._make_retriever()
+        skill = MagicMock()
+        skill.name = "pod_check"
+        skill.trigger_keywords = ["pod", "health", "kubernetes"]
+        skill.description = "Check pod health"
+        skill.prompt_template = "Check pods"
+        retriever._skill_store.list_skills = AsyncMock(return_value=[skill])
+        retriever._skill_store.get_skill = AsyncMock(return_value=skill)
+
+        results = await retriever._keyword_search_skills("kubernetes pod health")
+        assert len(results) >= 1
+        assert results[0][0] == "pod_check"
