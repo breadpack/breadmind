@@ -4,7 +4,14 @@ import yaml
 from dataclasses import dataclass, field
 from pathlib import Path
 
-_VALID_PROVIDERS = ("claude", "gemini", "grok", "ollama", "cli")
+def _get_valid_providers() -> tuple[str, ...]:
+    try:
+        from breadmind.llm.factory import get_valid_provider_names
+        return get_valid_provider_names()
+    except ImportError:
+        return ("claude", "gemini", "grok", "ollama", "cli")
+
+_VALID_PROVIDERS = _get_valid_providers()
 _VALID_LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 

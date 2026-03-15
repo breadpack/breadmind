@@ -103,8 +103,8 @@ class WebApp:
         @app.get("/api/setup/providers")
         async def setup_providers():
             """List available LLM providers for setup."""
-            from breadmind.core.setup_wizard import PROVIDER_OPTIONS
-            return {"providers": PROVIDER_OPTIONS}
+            from breadmind.llm.factory import get_provider_options
+            return {"providers": get_provider_options()}
 
         @app.post("/api/setup/validate")
         async def setup_validate(request: Request):
@@ -124,10 +124,12 @@ class WebApp:
             api_key = data.get("api_key", "")
             model = data.get("model", "")
 
-            from breadmind.core.setup_wizard import PROVIDER_OPTIONS, mark_setup_complete
+            from breadmind.llm.factory import get_provider_options
+            from breadmind.core.setup_wizard import mark_setup_complete
 
             # Find provider info
-            provider_info = next((p for p in PROVIDER_OPTIONS if p["id"] == provider_id), None)
+            options = get_provider_options()
+            provider_info = next((p for p in options if p["id"] == provider_id), None)
             if not provider_info:
                 return JSONResponse(status_code=400, content={"error": "Invalid provider"})
 

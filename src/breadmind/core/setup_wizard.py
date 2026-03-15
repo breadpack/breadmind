@@ -74,30 +74,26 @@ class EnvironmentInfo:
         return "\n".join(lines)
 
 
-ENV_KEY_TO_PROVIDER = {
-    "ANTHROPIC_API_KEY": "claude",
-    "GEMINI_API_KEY": "gemini",
-    "OPENAI_API_KEY": "openai",
-    "XAI_API_KEY": "grok",
-}
+def _get_env_key_to_provider() -> dict[str, str]:
+    from breadmind.llm.factory import get_env_key_to_provider_map
+    return get_env_key_to_provider_map()
 
-PROVIDER_OPTIONS = [
-    {"id": "gemini", "name": "Google Gemini", "env_key": "GEMINI_API_KEY",
-     "models": ["gemini-2.5-flash", "gemini-2.5-pro"], "free_tier": True,
-     "signup_url": "https://aistudio.google.com/apikey"},
-    {"id": "claude", "name": "Anthropic Claude", "env_key": "ANTHROPIC_API_KEY",
-     "models": ["claude-sonnet-4-6", "claude-haiku-4-5"], "free_tier": False,
-     "signup_url": "https://console.anthropic.com/settings/keys"},
-    {"id": "openai", "name": "OpenAI", "env_key": "OPENAI_API_KEY",
-     "models": ["gpt-4o", "gpt-4o-mini"], "free_tier": False,
-     "signup_url": "https://platform.openai.com/api-keys"},
-    {"id": "grok", "name": "xAI Grok", "env_key": "XAI_API_KEY",
-     "models": ["grok-3", "grok-3-mini"], "free_tier": False,
-     "signup_url": "https://console.x.ai/"},
-    {"id": "ollama", "name": "Ollama (Local)", "env_key": None,
-     "models": ["llama3.1", "mistral", "qwen2.5"], "free_tier": True,
-     "signup_url": "https://ollama.com/download"},
-]
+
+def _get_provider_options() -> list[dict]:
+    from breadmind.llm.factory import get_provider_options
+    return get_provider_options()
+
+
+# Lazy module-level constants (delegate to factory as single source of truth)
+PROVIDER_OPTIONS = None  # Populated on first access
+ENV_KEY_TO_PROVIDER = None
+
+
+def _ensure_loaded():
+    global PROVIDER_OPTIONS, ENV_KEY_TO_PROVIDER
+    if PROVIDER_OPTIONS is None:
+        PROVIDER_OPTIONS = _get_provider_options()
+        ENV_KEY_TO_PROVIDER = _get_env_key_to_provider()
 
 
 def is_first_run(db) -> bool:
@@ -140,6 +136,7 @@ async def validate_api_key(provider_or_key: str, api_key: str) -> dict:
     import aiohttp
 
     # Resolve env key name to provider id if needed
+    _ensure_loaded()
     provider_id = ENV_KEY_TO_PROVIDER.get(provider_or_key, provider_or_key)
 
     try:
@@ -303,6 +300,7 @@ async def run_cli_wizard(db, config) -> bool:
     print("=" * 50)
 
     # Step 1: Provider selection
+    _ensure_loaded()
     print("\n  Select your LLM provider:\n")
     for i, p in enumerate(PROVIDER_OPTIONS, 1):
         free = " (free tier)" if p["free_tier"] else ""
