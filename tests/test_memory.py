@@ -591,3 +591,68 @@ class TestWorkingMemoryPersistence:
         wm = WorkingMemory()  # No DB
         loaded = await wm.load_session_from_db("test")
         assert loaded is False
+
+
+# =========================================================================
+# Auto Promote
+# =========================================================================
+
+class TestAutoPromote:
+    @pytest.mark.asyncio
+    async def test_auto_promote_creates_episodic_note(self):
+        wm = WorkingMemory()
+        em = EpisodicMemory()
+        cb = ContextBuilder(working_memory=wm, episodic_memory=em)
+
+        # Create a session with enough messages
+        wm.get_or_create_session("test:promote", user="u", channel="c")
+        for i in range(12):
+            wm.add_message("test:promote", LLMMessage(role="user", content=f"message {i}"))
+            wm.add_message("test:promote", LLMMessage(role="assistant", content=f"reply {i}"))
+
+        result = await cb.auto_promote(message_threshold=10)
+        assert result["episodic_notes"] >= 1
+
+        # Verify episodic note was created
+        notes = await em.get_all_notes()
+        assert len(notes) >= 1
+
+    @pytest.mark.asyncio
+    async def test_auto_promote_skips_short_sessions(self):
+        wm = WorkingMemory()
+        em = EpisodicMemory()
+        cb = ContextBuilder(working_memory=wm, episodic_memory=em)
+
+        # Create a session with few messages
+        wm.get_or_create_session("test:short", user="u", channel="c")
+        wm.add_message("test:short", LLMMessage(role="user", content="hello"))
+        wm.add_message("test:short", LLMMessage(role="assistant", content="hi"))
+
+        result = await cb.auto_promote(message_threshold=10)
+        assert result["episodic_notes"] == 0
+
+    @pytest.mark.asyncio
+    async def test_auto_promote_semantic_extraction(self):
+        wm = WorkingMemory()
+        em = EpisodicMemory()
+        sm = SemanticMemory()
+        cb = ContextBuilder(working_memory=wm, episodic_memory=em, semantic_memory=sm)
+
+        # Create a session mentioning infrastructure
+        wm.get_or_create_session("test:infra", user="u", channel="c")
+        for i in range(12):
+            wm.add_message("test:infra", LLMMessage(
+                role="user", content=f"Check pod-nginx on node 192.168.1.{i}"))
+            wm.add_message("test:infra", LLMMessage(
+                role="assistant", content=f"Pod is running on 192.168.1.{i}"))
+
+        result = await cb.auto_promote(message_threshold=10)
+        assert result["episodic_notes"] >= 1
+        # Semantic entities should be created from IP addresses
+        assert result["semantic_entities"] >= 0
+
+    @pytest.mark.asyncio
+    async def test_auto_promote_no_working_memory(self):
+        cb = ContextBuilder(working_memory=None)
+        result = await cb.auto_promote()
+        assert result == {"episodic_notes": 0, "semantic_entities": 0}

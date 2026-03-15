@@ -390,6 +390,23 @@ async def run():
 
             asyncio.create_task(_flush_expansion_data())
 
+            # Periodic memory promotion (working → episodic → semantic)
+            async def _auto_promote_memory():
+                while True:
+                    await asyncio.sleep(600)  # Every 10 minutes
+                    if context_builder:
+                        try:
+                            result = await context_builder.auto_promote(message_threshold=8)
+                            if result["episodic_notes"] > 0 or result["semantic_entities"] > 0:
+                                logger.info(
+                                    f"Memory promotion: {result['episodic_notes']} notes, "
+                                    f"{result['semantic_entities']} entities"
+                                )
+                        except Exception as e:
+                            logger.error(f"Memory promotion failed: {e}")
+
+            asyncio.create_task(_auto_promote_memory())
+
             web_app = WebApp(
                 message_handler=agent.handle_message,
                 tool_registry=registry,

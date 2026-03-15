@@ -219,3 +219,41 @@ class ContextBuilder:
                     created_entities.append(entity)
 
         return created_entities
+
+    async def auto_promote(self, message_threshold: int = 10) -> dict:
+        """Automatically promote qualifying sessions to episodic, then to semantic.
+
+        Returns summary of what was promoted.
+        """
+        import logging
+
+        promoted = {"episodic_notes": 0, "semantic_entities": 0}
+
+        if not self._working:
+            return promoted
+
+        # Phase 1: Promote qualifying working memory sessions to episodic
+        new_notes = []
+        session_ids = list(self._working._sessions.keys())
+        for session_id in session_ids:
+            try:
+                note = await self.promote_to_episodic(session_id, message_threshold)
+                if note:
+                    new_notes.append(note)
+                    promoted["episodic_notes"] += 1
+            except Exception as e:
+                logging.getLogger(__name__).warning(
+                    f"Failed to promote session {session_id}: {e}"
+                )
+
+        # Phase 2: Promote new episodic notes to semantic (extract entities)
+        if new_notes and self._semantic:
+            try:
+                entities = await self.promote_to_semantic(new_notes)
+                promoted["semantic_entities"] = len(entities) if entities else 0
+            except Exception as e:
+                logging.getLogger(__name__).warning(
+                    f"Failed to promote to semantic: {e}"
+                )
+
+        return promoted
