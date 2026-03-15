@@ -445,7 +445,14 @@
         function connect() {
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
             ws = new WebSocket(`${protocol}//${location.host}/ws/chat`);
-            ws.onopen = () => { document.getElementById('statusDot').className = 'dot connected'; document.getElementById('statusText').textContent = 'Connected'; };
+            ws.onopen = () => {
+                document.getElementById('statusDot').className = 'dot connected';
+                document.getElementById('statusText').textContent = 'Connected';
+                // Restore session on reconnect
+                if (currentSessionId && currentSessionId !== 'default') {
+                    ws.send(JSON.stringify({ type: 'switch_session', session_id: currentSessionId }));
+                }
+            };
             ws.onclose = () => { document.getElementById('statusDot').className = 'dot disconnected'; document.getElementById('statusText').textContent = 'Disconnected'; setTimeout(connect, 3000); };
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
@@ -465,6 +472,7 @@
                 }
                 else if (data.type === 'session_created') {
                     currentSessionId = data.session_id;
+                    localStorage.setItem('breadmind_session', data.session_id);
                     messagesDiv.innerHTML = '';
                     addMessage('New session started.', 'bot');
                     loadSessions();
@@ -504,10 +512,11 @@
 
         function switchSession(sessionId) {
             currentSessionId = sessionId;
+            localStorage.setItem('breadmind_session', sessionId);
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({ type: 'switch_session', session_id: sessionId }));
             }
-            loadSessions(); // Update active highlight
+            loadSessions();
         }
 
         function newSession() {
@@ -520,6 +529,7 @@
             document.querySelectorAll('.tab').forEach((t, i) => { t.classList.toggle('active', ['chat','monitoring','store','settings'][i] === name); });
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
             document.getElementById('tab-' + name).classList.add('active');
+            location.hash = name;
             if (name === 'settings') loadSettings();
             if (name === 'monitoring') loadEvents();
             if (name === 'store') { loadFeatured(); loadInstalledServers(); }
@@ -1157,10 +1167,11 @@
             });
         }
 
-        let _currentSettingsTab = 'general';
+        let _currentSettingsTab = localStorage.getItem('breadmind_stab') || 'general';
 
         function switchSettingsTab(tab) {
             _currentSettingsTab = tab;
+            localStorage.setItem('breadmind_stab', tab);
             document.querySelectorAll('.sub-tab').forEach(b => b.classList.toggle('active', b.id === 'stab-' + tab));
             document.querySelectorAll('#settingsContent .settings-section').forEach(s => {
                 s.style.display = s.dataset.stab === tab ? '' : 'none';
@@ -2719,6 +2730,18 @@
 
         connect();
         loadSessions();
+
+        // Restore tab from URL hash
+        const hashTab = location.hash.replace('#', '');
+        if (hashTab && ['chat','monitoring','store','settings'].includes(hashTab)) {
+            switchTab(hashTab);
+        }
+
+        // Restore session from localStorage
+        const savedSession = localStorage.getItem('breadmind_session');
+        if (savedSession) {
+            currentSessionId = savedSession;
+        }
     </script>
 </body>
 </html>
