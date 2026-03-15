@@ -4,6 +4,7 @@ import asyncio
 import logging
 import uuid
 
+import json
 import aiohttp
 from .base import (
     LLMProvider,
@@ -51,6 +52,15 @@ class GeminiProvider(LLMProvider):
 
         body["generationConfig"] = {"maxOutputTokens": 8192}
 
+        # Disable thinking to avoid thought_signature requirements in tool calls
+        # thinkingConfig must be top-level, not inside generationConfig
+        body["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 0}
+
+        # Also try top-level for models that expect it there
+        body["generationConfig"]["responseModalities"] = ["TEXT"]
+
+        logger.debug("Gemini request body: %s", json.dumps(body, default=str)[:3000])
+
         last_error: Exception | None = None
         for attempt in range(_MAX_RETRIES):
             try:
@@ -78,6 +88,7 @@ class GeminiProvider(LLMProvider):
                             )
 
                         data = await resp.json()
+                        logger.debug("Gemini raw response: %s", json.dumps(data, default=str)[:2000])
                         return self._parse_response(data)
 
             except aiohttp.ClientError as e:
@@ -127,17 +138,21 @@ class GeminiProvider(LLMProvider):
             elif msg.tool_calls:
                 parts = []
                 for tc in msg.tool_calls:
-                    fc_part: dict = {
-                        "functionCall": {
-                            "name": tc.name,
-                            "args": tc.arguments,
+                    # Use raw part from Gemini response if available (preserves thought_signature exactly)
+                    raw_part = tc.metadata.get("_raw_part") if tc.metadata else None
+                    if raw_part:
+                        parts.append(raw_part)
+                    else:
+                        fc_part: dict = {
+                            "functionCall": {
+                                "name": tc.name,
+                                "args": tc.arguments,
+                            }
                         }
-                    }
-                    # Preserve thought_signature for Gemini thinking models
-                    ts = tc.metadata.get("thought_signature") if tc.metadata else None
-                    if ts:
-                        fc_part["functionCall"]["thought_signature"] = ts
-                    parts.append(fc_part)
+                        ts = tc.metadata.get("thought_signature") if tc.metadata else None
+                        if ts:
+                            fc_part["thought_signature"] = ts
+                        parts.append(fc_part)
                 contents.append({"role": "model", "parts": parts})
             else:
                 role = "model" if msg.role == "assistant" else "user"
@@ -190,8 +205,12 @@ class GeminiProvider(LLMProvider):
             elif "functionCall" in part:
                 fc = part["functionCall"]
                 metadata = {}
-                if "thought_signature" in fc:
-                    metadata["thought_signature"] = fc["thought_signature"]
+                # thought_signature can be at part level or inside functionCall
+                ts = part.get("thought_signature") or fc.get("thought_signature")
+                if ts:
+                    metadata["thought_signature"] = ts
+                # Save the raw part for exact round-trip
+                metadata["_raw_part"] = part
                 tool_calls.append(ToolCall(
                     id=str(uuid.uuid4())[:8],
                     name=fc.get("name", ""),
