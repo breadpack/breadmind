@@ -11,9 +11,4 @@ blacklist:
     - owrt_factory_reset
     - owrt_firmware_upgrade
 
-require_approval:
-  - mcp_install
-  - mcp_uninstall
-  - pve_create_vm
-  - k8s_apply_manifest
-  - shell_exec
+require_approval: []
