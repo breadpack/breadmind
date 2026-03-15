@@ -370,6 +370,63 @@ async def test_profiler_user_context():
 
 
 # =========================================================================
+# UserProfiler Persistence
+# =========================================================================
+
+class TestUserProfilerPersistence:
+    @pytest.mark.asyncio
+    async def test_flush_and_load(self):
+        from unittest.mock import AsyncMock
+        from breadmind.memory.profiler import UserProfiler, UserPreference
+
+        mock_db = AsyncMock()
+        stored = {}
+        async def mock_set(key, value):
+            stored[key] = value
+        async def mock_get(key):
+            return stored.get(key)
+        mock_db.set_setting = mock_set
+        mock_db.get_setting = mock_get
+
+        profiler = UserProfiler(db=mock_db)
+        await profiler.add_preference("user1", UserPreference(category="deploy", description="Always use rolling update"))
+        await profiler.flush_to_db()
+
+        profiler2 = UserProfiler(db=mock_db)
+        await profiler2.load_from_db()
+        prefs = await profiler2.get_preferences("user1")
+        assert len(prefs) == 1
+        assert prefs[0].category == "deploy"
+
+    @pytest.mark.asyncio
+    async def test_confidence_decay(self):
+        from breadmind.memory.profiler import UserProfiler, UserPreference
+        profiler = UserProfiler()
+        await profiler.add_preference("u1", UserPreference(category="notify", description="Use Telegram", confidence=1.0))
+        await profiler.decay_preference("u1", "notify", amount=0.3)
+        prefs = await profiler.get_preferences("u1")
+        assert prefs[0].confidence == pytest.approx(0.7)
+
+    @pytest.mark.asyncio
+    async def test_max_preferences_cap(self):
+        from breadmind.memory.profiler import UserProfiler, UserPreference
+        profiler = UserProfiler()
+        profiler._max_preferences = 3
+        for i in range(5):
+            await profiler.add_preference("u1", UserPreference(
+                category=f"pref_{i}", description=f"desc {i}", confidence=0.5 + i * 0.1))
+        prefs = await profiler.get_preferences("u1")
+        assert len(prefs) <= 3
+
+    @pytest.mark.asyncio
+    async def test_no_db_graceful(self):
+        from breadmind.memory.profiler import UserProfiler
+        profiler = UserProfiler()  # No DB
+        await profiler.flush_to_db()  # Should not crash
+        await profiler.load_from_db()  # Should not crash
+
+
+# =========================================================================
 # Context Builder
 # =========================================================================
 

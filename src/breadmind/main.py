@@ -34,6 +34,11 @@ try:
 except ImportError:
     ContextBuilder = None
 
+try:
+    from breadmind.memory.profiler import UserProfiler
+except ImportError:
+    UserProfiler = None
+
 
 
 def _find_free_port(preferred: int, max_attempts: int = 10) -> int:
@@ -274,6 +279,15 @@ async def run():
         except Exception:
             pass
 
+    # Initialize UserProfiler
+    profiler = None
+    if UserProfiler is not None:
+        try:
+            profiler = UserProfiler(db=db)
+            await profiler.load_from_db()
+        except Exception:
+            pass
+
     # Wire ContextBuilder if available (must be before agent creation)
     context_builder = None
     if ContextBuilder is not None:
@@ -282,6 +296,7 @@ async def run():
                 working_memory=working_memory,
                 episodic_memory=episodic_memory,
                 semantic_memory=semantic_memory,
+                profiler=profiler,
                 max_context_tokens=4000,
             )
         except Exception:
@@ -375,6 +390,8 @@ async def run():
                     try:
                         await performance_tracker.flush_to_db()
                         await skill_store.flush_to_db()
+                        if profiler:
+                            await profiler.flush_to_db()
                         # Auto-cleanup underperforming auto-created roles
                         if swarm_manager and performance_tracker:
                             for role_info in swarm_manager.get_available_roles():

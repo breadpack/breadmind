@@ -1,4 +1,7 @@
+import logging
 from dataclasses import dataclass, field
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -18,9 +21,11 @@ class UserPattern:
 class UserProfiler:
     """Extract and store user preferences and behavioral patterns."""
 
-    def __init__(self):
+    def __init__(self, db=None):
         self._preferences: dict[str, list[UserPreference]] = {}  # user -> prefs
         self._patterns: dict[str, list[UserPattern]] = {}  # user -> patterns
+        self._db = db
+        self._max_preferences = 20
 
     async def add_preference(self, user: str, pref: UserPreference):
         if user not in self._preferences:
@@ -32,6 +37,12 @@ class UserProfiler:
                 existing.confidence = min(existing.confidence + 0.1, 1.0)
                 return
         self._preferences[user].append(pref)
+        # After adding preference, trim to max
+        prefs = self._preferences[user]
+        if len(prefs) > self._max_preferences:
+            # Remove lowest confidence preferences
+            prefs.sort(key=lambda p: p.confidence, reverse=True)
+            self._preferences[user] = prefs[:self._max_preferences]
 
     async def add_pattern(self, user: str, pattern: UserPattern):
         if user not in self._patterns:
@@ -62,3 +73,55 @@ class UserProfiler:
             for p in patterns:
                 parts.append(f"  - {p.action} (frequency: {p.frequency})")
         return "\n".join(parts) if parts else ""
+
+    async def decay_preference(self, user: str, category: str, amount: float = 0.15) -> None:
+        """Reduce confidence of a preference (e.g., when user bypasses it)."""
+        prefs = self._preferences.get(user, [])
+        for p in prefs:
+            if p.category == category:
+                p.confidence = max(0.0, p.confidence - amount)
+                break
+
+    async def flush_to_db(self) -> None:
+        """Save all profiler data to DB."""
+        if not self._db or not hasattr(self._db, 'set_setting'):
+            return
+        try:
+            data = {
+                "preferences": {
+                    user: [{"category": p.category, "description": p.description, "confidence": p.confidence}
+                           for p in prefs]
+                    for user, prefs in self._preferences.items()
+                },
+                "patterns": {
+                    user: [{"action": p.action, "frequency": p.frequency, "context": p.context}
+                           for p in pats]
+                    for user, pats in self._patterns.items()
+                },
+            }
+            await self._db.set_setting("user_profiler", data)
+        except Exception as e:
+            _log.warning(f"Failed to flush profiler: {e}")
+
+    async def load_from_db(self) -> None:
+        """Load profiler data from DB."""
+        if not self._db or not hasattr(self._db, 'get_setting'):
+            return
+        try:
+            data = await self._db.get_setting("user_profiler")
+            if not data:
+                return
+            for user, prefs in data.get("preferences", {}).items():
+                self._preferences[user] = [
+                    UserPreference(category=p["category"], description=p["description"],
+                                   confidence=p.get("confidence", 1.0))
+                    for p in prefs
+                ]
+            for user, pats in data.get("patterns", {}).items():
+                self._patterns[user] = [
+                    UserPattern(action=p["action"], frequency=p.get("frequency", 1),
+                                context=p.get("context", ""))
+                    for p in pats
+                ]
+        except Exception as e:
+            _log.warning(f"Failed to load profiler: {e}")
