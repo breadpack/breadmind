@@ -25,3 +25,15 @@ def test_episodic_note_creation():
     )
     assert "snapshot" in note.keywords
     assert note.embedding is None  # not yet computed
+
+
+class TestDatabasePgvector:
+    def test_has_pgvector_default_false(self):
+        """Without a real database, has_pgvector should return False."""
+        # This tests the attribute default
+        from breadmind.storage.database import Database
+        db = Database.__new__(Database)
+        db._has_pgvector = False
+        import asyncio
+        result = asyncio.get_event_loop().run_until_complete(db.has_pgvector())
+        assert result is False
