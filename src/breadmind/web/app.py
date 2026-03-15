@@ -400,7 +400,7 @@ class WebApp:
         async def get_api_keys_status():
             """Return which API keys are set (masked values)."""
             keys = {}
-            for key_name in ["ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY"]:
+            for key_name in ["ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "XAI_API_KEY"]:
                 val = os.environ.get(key_name, "")
                 if val:
                     keys[key_name] = {"set": True, "masked": val[:8] + "***" if len(val) > 8 else "***"}
@@ -443,6 +443,20 @@ class WebApp:
                     async with aiohttp.ClientSession() as session:
                         async with session.get(
                             "https://api.openai.com/v1/models",
+                            headers={"Authorization": f"Bearer {value}"},
+                            timeout=aiohttp.ClientTimeout(total=10),
+                        ) as resp:
+                            if resp.status == 200:
+                                return {"valid": True, "reason": ""}
+                            elif resp.status == 401:
+                                return {"valid": False, "reason": "Invalid API key (401 Unauthorized)"}
+                            else:
+                                return {"valid": False, "reason": f"Unexpected response: HTTP {resp.status}"}
+
+                elif key_name == "XAI_API_KEY":
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(
+                            "https://api.x.ai/v1/models",
                             headers={"Authorization": f"Bearer {value}"},
                             timeout=aiohttp.ClientTimeout(total=10),
                         ) as resp:
@@ -619,6 +633,24 @@ class WebApp:
                                                      if "gpt" in m["id"] or "o1" in m["id"] or "o3" in m["id"]])
                     if not models:
                         models = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o3-mini"]
+
+                elif provider == "grok":
+                    api_key = os.environ.get("XAI_API_KEY", "")
+                    if api_key:
+                        try:
+                            async with aiohttp.ClientSession() as session:
+                                async with session.get(
+                                    "https://api.x.ai/v1/models",
+                                    headers={"Authorization": f"Bearer {api_key}"},
+                                    timeout=aiohttp.ClientTimeout(total=10),
+                                ) as resp:
+                                    if resp.status == 200:
+                                        data = await resp.json()
+                                        models = [m["id"] for m in data.get("data", [])]
+                        except Exception:
+                            pass
+                    if not models:
+                        models = ["grok-3", "grok-3-mini", "grok-2"]
 
                 elif provider == "ollama":
                     try:

@@ -51,6 +51,14 @@ def create_provider(config):
             return OllamaProvider()
         from breadmind.llm.gemini import GeminiProvider
         return GeminiProvider(api_key=api_key, default_model=config.llm.default_model)
+    elif provider_name == "grok":
+        import os
+        api_key = os.environ.get("XAI_API_KEY", "")
+        if not api_key:
+            print("Warning: XAI_API_KEY not set, falling back to ollama")
+            return OllamaProvider()
+        from breadmind.llm.grok import GrokProvider
+        return GrokProvider(api_key=api_key, default_model=config.llm.default_model)
     elif provider_name == "cli":
         from breadmind.llm.cli import CLIProvider
         model = config.llm.default_model or "claude -p"

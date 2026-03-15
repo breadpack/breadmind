@@ -4,7 +4,7 @@ import yaml
 from dataclasses import dataclass, field
 from pathlib import Path
 
-_VALID_PROVIDERS = ("claude", "gemini", "ollama", "cli")
+_VALID_PROVIDERS = ("claude", "gemini", "grok", "ollama", "cli")
 _VALID_LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 
@@ -212,7 +212,7 @@ def _expand_env(obj):
     return obj
 
 
-_VALID_API_KEY_NAMES = ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY")
+_VALID_API_KEY_NAMES = ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "XAI_API_KEY")
 
 _env_file_path: str | None = None
 
