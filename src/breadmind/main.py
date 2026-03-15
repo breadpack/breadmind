@@ -224,15 +224,7 @@ async def run():
     for func in expansion_tools.values():
         registry.register(func)
 
-    # Register memory tools
-    from breadmind.tools.meta import create_memory_tools
-    memory_tools = create_memory_tools(
-        episodic_memory=episodic_memory,
-        profiler=profiler,
-        smart_retriever=smart_retriever,
-    )
-    for func in memory_tools.values():
-        registry.register(func)
+    # Memory tools registered after profiler init (below)
 
     # Initialize MCP Store
     mcp_store = None
@@ -297,6 +289,16 @@ async def run():
             await profiler.load_from_db()
         except Exception:
             pass
+
+    # Register memory tools (after profiler init)
+    from breadmind.tools.meta import create_memory_tools
+    memory_tools = create_memory_tools(
+        episodic_memory=episodic_memory,
+        profiler=profiler,
+        smart_retriever=smart_retriever,
+    )
+    for func in memory_tools.values():
+        registry.register(func)
 
     # Wire ContextBuilder if available (must be before agent creation)
     context_builder = None
