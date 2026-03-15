@@ -63,6 +63,8 @@ class MCPConfig:
     max_restart_attempts: int = 3
     servers: dict = field(default_factory=dict)
     registries: list[RegistryConfigItem] = field(default_factory=lambda: [
+        RegistryConfigItem(name="skills.sh", type="skills_sh", enabled=True,
+                           url="https://skills.sh"),
         RegistryConfigItem(name="clawhub", type="clawhub", enabled=True),
         RegistryConfigItem(name="mcp-registry", type="mcp_registry", enabled=True,
                            url="https://registry.modelcontextprotocol.io"),
@@ -80,12 +82,32 @@ class SecurityConfig:
 
 
 @dataclass
+class NetworkConfig:
+    """Distributed agent network configuration."""
+    mode: str = "standalone"  # standalone | commander | worker
+    commander_url: str = ""  # Worker: wss://commander:8081/ws/agent/self
+    ws_port: int = 8081  # Commander: WebSocket hub port
+    heartbeat_interval: int = 30  # seconds
+    offline_threshold: int = 90  # seconds without heartbeat → offline
+    ca_cert_path: str = ""
+    ca_key_path: str = ""
+    cert_path: str = ""
+    key_path: str = ""
+    ca_passphrase_env: str = "BREADMIND_CA_PASSPHRASE"
+    llm_proxy_rpm: int = 30  # per-worker requests per minute
+    llm_proxy_rph: int = 500  # per-worker requests per hour
+    offline_queue_max_rows: int = 10000
+    offline_queue_max_mb: int = 100
+
+
+@dataclass
 class AppConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
     mcp: MCPConfig = field(default_factory=MCPConfig)
     web: WebConfig = field(default_factory=WebConfig)
     security: SecurityConfig = field(default_factory=SecurityConfig)
+    network: NetworkConfig = field(default_factory=NetworkConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     _persona: dict = field(default=None)
 
@@ -149,6 +171,28 @@ You MUST use tools before answering. Text-only responses are a last resort.
 """.strip()
 
 
+def _get_os_context() -> str:
+    """Detect current OS environment and return context string for the agent."""
+    import platform as _plat
+    system = _plat.system()
+    release = _plat.release()
+    machine = _plat.machine()
+
+    if system == "Windows":
+        shell_info = "Use PowerShell or cmd commands (e.g., Get-Process, Get-Service, ipconfig, systeminfo, wmic). Use shell_exec with powershell -Command for PowerShell commands."
+    elif system == "Darwin":
+        shell_info = "Use macOS commands (e.g., top, diskutil, networksetup, launchctl, sw_vers, system_profiler)."
+    else:
+        shell_info = "Use Linux commands (e.g., systemctl, ip, df, top, journalctl)."
+
+    return (
+        f"## Host Environment\n"
+        f"- OS: {system} {release} ({machine})\n"
+        f"- {shell_info}\n"
+        f"- shell_exec runs directly on this host OS. Use OS-appropriate commands."
+    )
+
+
 def build_system_prompt(persona: dict, behavior_prompt: str | None = None) -> str:
     """Build full system prompt from persona config."""
     parts = [persona.get("system_prompt", DEFAULT_PERSONA["system_prompt"])]
@@ -165,6 +209,9 @@ def build_system_prompt(persona: dict, behavior_prompt: str | None = None) -> st
         parts.append(f"Your primary expertise areas: {', '.join(specialties)}.")
 
     parts.append(f"Your name is {name}.")
+
+    # Append OS environment context
+    parts.append(_get_os_context())
 
     # Append proactive execution behavior
     parts.append(behavior_prompt or _PROACTIVE_BEHAVIOR_PROMPT)
@@ -377,6 +424,19 @@ async def apply_db_settings(config: AppConfig, db) -> None:
 
         # Load encrypted API keys
         await load_api_keys_from_db(db)
+
+        # Skill markets restoration
+        saved_markets = await db.get_setting("skill_markets")
+        if saved_markets and isinstance(saved_markets, list):
+            config.mcp.registries = [
+                RegistryConfigItem(
+                    name=m.get("name", ""),
+                    type=m.get("type", ""),
+                    enabled=m.get("enabled", True),
+                    url=m.get("url") or None,
+                )
+                for m in saved_markets if m.get("name")
+            ]
 
         # Safety settings restoration
         safety_blacklist = await db.get_setting("safety_blacklist")
