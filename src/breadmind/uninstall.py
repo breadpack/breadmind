@@ -153,10 +153,21 @@ def remove_config(config_dir: str):
     print("\n[3/6] Removing config directory...")
     config_path = Path(config_dir)
     if config_path.exists():
-        # List contents before removing
         files = list(config_path.rglob("*"))
+        # First pass: ignore errors (some files may be locked)
         shutil.rmtree(config_path, ignore_errors=True)
-        _print(f"Removed: {config_path} ({len(files)} files)")
+        # Second pass: retry if directory still exists
+        if config_path.exists():
+            import time
+            time.sleep(1)
+            shutil.rmtree(config_path, ignore_errors=True)
+        if config_path.exists():
+            _print(f"Partially removed: {config_path} (some files locked)")
+            remaining = list(config_path.rglob("*"))
+            for f in remaining:
+                _print(f"  Locked: {f}")
+        else:
+            _print(f"Removed: {config_path} ({len(files)} files)")
     else:
         _print(f"Not found: {config_path}")
 

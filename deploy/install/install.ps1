@@ -361,23 +361,34 @@ function Setup-Database {
 # Service setup
 # -------------------------------------------------------------------
 function Install-Nssm {
-    if (Get-Command nssm -ErrorAction SilentlyContinue) { return }
+    if (Get-Command nssm -ErrorAction SilentlyContinue) { return $true }
+    # Check if already in config bin
+    $existingNssm = Join-Path $ConfigDir "bin\nssm.exe"
+    if (Test-Path $existingNssm) {
+        $env:Path += ";$(Join-Path $ConfigDir 'bin')"
+        return $true
+    }
     Write-Info "Downloading NSSM..."
-    $zipPath = Join-Path $env:TEMP "nssm.zip"
-    $extractPath = Join-Path $env:TEMP "nssm"
-    Invoke-WebRequest -Uri $NssmUrl -OutFile $zipPath
-    Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
-    $nssmExe = Get-ChildItem -Path $extractPath -Recurse -Filter "nssm.exe" | Where-Object { $_.DirectoryName -match "win64" } | Select-Object -First 1
-    $destDir = Join-Path $ConfigDir "bin"
-    New-Item -ItemType Directory -Path $destDir -Force | Out-Null
-    Copy-Item $nssmExe.FullName (Join-Path $destDir "nssm.exe")
-    $env:Path += ";$destDir"
-    Write-Ok "NSSM installed to $destDir"
+    try {
+        $zipPath = Join-Path $env:TEMP "nssm.zip"
+        $extractPath = Join-Path $env:TEMP "nssm"
+        Invoke-WebRequest -Uri $NssmUrl -OutFile $zipPath -TimeoutSec 15
+        Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
+        $nssmExe = Get-ChildItem -Path $extractPath -Recurse -Filter "nssm.exe" | Where-Object { $_.DirectoryName -match "win64" } | Select-Object -First 1
+        $destDir = Join-Path $ConfigDir "bin"
+        New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+        Copy-Item $nssmExe.FullName (Join-Path $destDir "nssm.exe")
+        $env:Path += ";$destDir"
+        Write-Ok "NSSM installed to $destDir"
+        return $true
+    } catch {
+        Write-Warn "NSSM download failed (server may be unavailable)."
+        return $false
+    }
 }
 
 function Setup-Service {
     Write-Info "Setting up Windows service..."
-    Install-Nssm
 
     # Get Python executable path
     $pythonPath = & $script:PythonCmd @($script:PythonArgs + @("-c", "import sys; print(sys.executable)")) 2>$null
@@ -386,28 +397,48 @@ function Setup-Service {
         exit 1
     }
 
-    try {
-        nssm install BreadMind $pythonPath "-m" "breadmind" "--web" "--config-dir" $ConfigDir
-        nssm set BreadMind AppDirectory $ConfigDir
-        nssm set BreadMind Description "BreadMind AI Infrastructure Agent"
-        nssm set BreadMind Start SERVICE_AUTO_START
-        nssm set BreadMind AppEnvironmentExtra "PYTHONUNBUFFERED=1"
-        nssm set BreadMind AppStdout (Join-Path $ConfigDir "breadmind.log")
-        nssm set BreadMind AppStderr (Join-Path $ConfigDir "breadmind.err")
-        nssm start BreadMind
-        Write-Ok "BreadMind service started (NSSM)."
-    } catch {
-        Write-Warn "NSSM service setup failed: $_"
-        Write-Warn "Trying sc.exe fallback..."
+    $logFile = Join-Path $ConfigDir "breadmind.log"
+    $errFile = Join-Path $ConfigDir "breadmind.err"
+    $started = $false
+
+    # Strategy 1: NSSM service
+    if (Install-Nssm) {
         try {
-            sc.exe create BreadMind binPath= "`"$pythonPath`" -m breadmind --web --config-dir `"$ConfigDir`"" start= auto
-            sc.exe description BreadMind "BreadMind AI Infrastructure Agent"
-            sc.exe start BreadMind
-            Write-Ok "BreadMind service started (sc.exe)."
+            nssm install BreadMind $pythonPath "-m" "breadmind" "--web" "--config-dir" $ConfigDir
+            nssm set BreadMind AppDirectory $ConfigDir
+            nssm set BreadMind Description "BreadMind AI Infrastructure Agent"
+            nssm set BreadMind Start SERVICE_AUTO_START
+            nssm set BreadMind AppEnvironmentExtra "PYTHONUNBUFFERED=1"
+            nssm set BreadMind AppStdout $logFile
+            nssm set BreadMind AppStderr $errFile
+            nssm start BreadMind
+            Write-Ok "BreadMind service started (NSSM)."
+            $started = $true
         } catch {
-            Write-Err "Failed to create service. You can run BreadMind manually:"
-            Write-Err "  $pythonPath -m breadmind --web --config-dir `"$ConfigDir`""
+            Write-Warn "NSSM service setup failed: $_"
         }
+    }
+
+    # Strategy 2: Start as background process
+    if (-not $started) {
+        Write-Info "Starting BreadMind as background process..."
+        $env:PYTHONUNBUFFERED = "1"
+        $proc = Start-Process -FilePath $pythonPath `
+            -ArgumentList "-m", "breadmind", "--web", "--config-dir", $ConfigDir `
+            -WindowStyle Hidden `
+            -RedirectStandardOutput $logFile `
+            -RedirectStandardError $errFile `
+            -PassThru
+        if ($proc) {
+            Write-Ok "BreadMind started (PID: $($proc.Id))"
+            Write-Info "Note: Process will stop when you log out. For persistent service, install NSSM manually."
+            $started = $true
+        }
+    }
+
+    if (-not $started) {
+        Write-Err "Failed to start BreadMind. Run manually:"
+        Write-Err "  $pythonPath -m breadmind --web --config-dir `"$ConfigDir`""
     }
 }
 
