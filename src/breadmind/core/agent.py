@@ -45,6 +45,10 @@ class CoreAgent:
         self._summarizer = summarizer
         self._pending_approvals: dict[str, dict] = {}
 
+    def update_provider(self, provider: LLMProvider):
+        """Replace the LLM provider at runtime (e.g. after setup wizard)."""
+        self._provider = provider
+
     def update_timeouts(self, tool_timeout: int = None, chat_timeout: int = None):
         """Update timeout settings at runtime."""
         if tool_timeout is not None and tool_timeout >= 1:

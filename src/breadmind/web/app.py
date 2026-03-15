@@ -160,6 +160,15 @@ class WebApp:
                     "tool_call_timeout_seconds": self._config.llm.tool_call_timeout_seconds if self._config else 30,
                 })
 
+            # Hot-swap the agent's LLM provider so chat works immediately
+            if self._agent and self._config:
+                try:
+                    from breadmind.main import create_provider
+                    new_provider = create_provider(self._config)
+                    self._agent.update_provider(new_provider)
+                except Exception as e:
+                    logger.warning(f"Failed to hot-swap provider: {e}")
+
             await mark_setup_complete(self._db)
             return {"status": "ok", "provider": provider_id, "model": model}
 
@@ -684,6 +693,15 @@ class WebApp:
                     })
                 except Exception as e:
                     logger.warning(f"Failed to persist LLM settings to DB: {e}")
+
+            # Hot-swap agent provider if provider or model changed
+            if self._agent and self._config and (provider is not None or model is not None):
+                try:
+                    from breadmind.main import create_provider as _create_provider
+                    new_provider = _create_provider(self._config)
+                    self._agent.update_provider(new_provider)
+                except Exception as e:
+                    logger.warning(f"Failed to hot-swap provider: {e}")
 
             return {"status": "ok", "persisted": self._db is not None}
 
