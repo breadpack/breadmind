@@ -231,6 +231,11 @@ async def run():
             team_builder.set_retriever(smart_retriever)
             swarm_manager.set_retriever(smart_retriever)
 
+            # Token manager for worker provisioning
+            from breadmind.network.token_manager import TokenManager
+            token_manager = TokenManager(db=db)
+            await token_manager.load_from_db()
+
             # Commander mode initialization
             commander = None
             if mode == "commander":
@@ -305,6 +310,8 @@ async def run():
                 skill_store=skill_store,
                 performance_tracker=performance_tracker,
                 search_engine=search_engine,
+                token_manager=token_manager,
+                commander=commander,
             )
             print(f"  Starting web server on {web_host}:{web_port}")
             server_config = uvicorn.Config(
