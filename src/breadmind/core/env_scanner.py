@@ -16,6 +16,7 @@ import asyncio
 import logging
 import os
 import platform
+import re
 import shutil
 from dataclasses import dataclass, field
 
@@ -372,8 +373,112 @@ async def _scan_services(result: ScanResult):
             result.running_services = sorted(procs & notable)
 
 
-async def scan_dynamic() -> ScanResult:
-    """Lightweight scan of only dynamic (changing) data: memory, disks, IPs, services."""
+# Install command patterns — when detected in shell_exec output, trigger tool discovery
+_INSTALL_PATTERNS = re.compile(
+    r"(?:successfully installed|is already installed|"
+    r"Setting up |Unpacking |installed successfully|"
+    r"choco install|winget install|scoop install|"
+    r"apt install|yum install|dnf install|brew install|"
+    r"pip install|npm install|cargo install|go install|"
+    r"Installation complete|installed \d+ package)",
+    re.I,
+)
+
+
+async def detect_new_tool(command: str, output: str, semantic_memory) -> str | None:
+    """Check if a shell command installed a new tool and update KG if so.
+
+    Called after shell_exec completes. Returns tool name if detected, else None.
+    Lightweight: no LLM, just pattern matching + shutil.which.
+    """
+    if not output or not semantic_memory:
+        return None
+
+    # Check if output looks like an install
+    if not _INSTALL_PATTERNS.search(output):
+        return None
+
+    # Extract potential tool name from the command
+    tool_name = _extract_tool_from_install_cmd(command)
+    if not tool_name:
+        return None
+
+    # Verify the tool actually exists now
+    if not shutil.which(tool_name):
+        return None
+
+    # Check if we already know about it
+    entity_id = f"tool:{tool_name}"
+    existing = await semantic_memory.get_entity(entity_id)
+    if existing:
+        return None  # Already known
+
+    # Get version if possible
+    version = "installed"
+    try:
+        ok, ver = await _run_cmd(f"{tool_name} --version", timeout=5)
+        if ok and ver:
+            version = ver.splitlines()[0][:80]
+    except Exception:
+        pass
+
+    # Store in KG
+    from breadmind.storage.models import KGEntity, KGRelation
+    hostname = platform.node()
+
+    await semantic_memory.add_entity(KGEntity(
+        id=entity_id,
+        entity_type="infra_component",
+        name=tool_name,
+        properties={"version": version, "host": hostname, "discovered": "runtime"},
+    ))
+    await semantic_memory.add_relation(KGRelation(
+        source_id=f"host:{hostname}",
+        target_id=entity_id,
+        relation_type="has_tool",
+    ))
+
+    logger.info("New tool discovered at runtime: %s (%s)", tool_name, version)
+    return tool_name
+
+
+def _extract_tool_from_install_cmd(command: str) -> str | None:
+    """Extract the tool/package name from an install command."""
+    # Match common install patterns
+    patterns = [
+        # pip install <pkg>
+        re.compile(r"pip3?\s+install\s+(?:-[^\s]+\s+)*([a-zA-Z0-9_-]+)", re.I),
+        # npm install -g <pkg>
+        re.compile(r"npm\s+install\s+(?:-[^\s]+\s+)*([a-zA-Z0-9@/_-]+)", re.I),
+        # apt/yum/dnf install <pkg>
+        re.compile(r"(?:apt|yum|dnf|apt-get)\s+install\s+(?:-[^\s]+\s+)*([a-zA-Z0-9._-]+)", re.I),
+        # brew install <pkg>
+        re.compile(r"brew\s+install\s+([a-zA-Z0-9._-]+)", re.I),
+        # choco install <pkg>
+        re.compile(r"choco\s+install\s+([a-zA-Z0-9._-]+)", re.I),
+        # winget install <pkg>
+        re.compile(r"winget\s+install\s+([a-zA-Z0-9._-]+)", re.I),
+        # scoop install <pkg>
+        re.compile(r"scoop\s+install\s+([a-zA-Z0-9._-]+)", re.I),
+        # cargo install <pkg>
+        re.compile(r"cargo\s+install\s+([a-zA-Z0-9_-]+)", re.I),
+        # go install <pkg>
+        re.compile(r"go\s+install\s+([a-zA-Z0-9./_-]+)", re.I),
+    ]
+    for pat in patterns:
+        m = pat.search(command)
+        if m:
+            name = m.group(1).split("/")[-1].split("@")[0]  # Strip scope/version
+            return name
+    return None
+
+
+async def scan_dynamic(include_tools: bool = False) -> ScanResult:
+    """Lightweight scan of only dynamic (changing) data: memory, disks, IPs, services.
+
+    Args:
+        include_tools: If True, also rescan installed tools (slower, ~5s).
+    """
     result = ScanResult()
     result.hostname = platform.node()
     result.os_name = platform.system()
@@ -381,12 +486,17 @@ async def scan_dynamic() -> ScanResult:
     result.os_arch = platform.machine()
     result.cpu_cores = os.cpu_count() or 0
 
-    await asyncio.gather(
+    tasks = [
         _scan_memory(result),
         _scan_disks(result),
         _scan_network(result),
         _scan_services(result),
-    )
+    ]
+    if include_tools:
+        tasks.append(_scan_tools(result))
+        tasks.append(_scan_infra(result))
+
+    await asyncio.gather(*tasks)
 
     return result
 

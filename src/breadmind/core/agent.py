@@ -478,6 +478,15 @@ class CoreAgent:
                             output, success, elapsed_ms,
                         )
 
+                    # Detect newly installed tools from shell_exec output
+                    if tc.name == "shell_exec" and success and self._context_builder:
+                        sm = getattr(self._context_builder, '_semantic', None)
+                        if sm:
+                            cmd = tc.arguments.get("command", "")
+                            asyncio.create_task(
+                                self._detect_new_tool(cmd, output)
+                            )
+
                     tool_msg = LLMMessage(
                         role="tool", content=output,
                         tool_call_id=tc.id, name=tc.name,
@@ -497,6 +506,20 @@ class CoreAgent:
                 self._safe_analyze(session_id, list(messages))
             )
         return final
+
+    async def _detect_new_tool(self, command: str, output: str):
+        """Fire-and-forget: check if shell_exec installed a new tool."""
+        try:
+            from breadmind.core.env_scanner import detect_new_tool
+            sm = getattr(self._context_builder, '_semantic', None)
+            if sm:
+                tool_name = await detect_new_tool(command, output, sm)
+                if tool_name:
+                    self.add_notification(
+                        f"[System] 새 도구 발견: {tool_name} — 환경 정보가 갱신되었습니다."
+                    )
+        except Exception:
+            logger.debug("Tool detection failed", exc_info=True)
 
     async def _safe_analyze(self, session_id: str, messages: list[LLMMessage]):
         """Fire-and-forget behavior analysis with error protection."""

@@ -1,6 +1,9 @@
 """Tests for environment scanner."""
 import pytest
-from breadmind.core.env_scanner import scan_environment, store_scan_in_memory, ScanResult
+from breadmind.core.env_scanner import (
+    scan_environment, store_scan_in_memory, ScanResult,
+    detect_new_tool, _extract_tool_from_install_cmd,
+)
 from breadmind.memory.episodic import EpisodicMemory
 from breadmind.memory.semantic import SemanticMemory
 
@@ -197,3 +200,42 @@ class TestRescan:
         disk = await sm.get_entity("disk:srv1:C:")
         assert disk.properties["free_gb"] == 100.0
         assert disk.properties["percent_used"] == 80.0
+
+
+class TestToolDetection:
+    def test_extract_tool_from_pip_install(self):
+        assert _extract_tool_from_install_cmd("pip install flask") == "flask"
+        assert _extract_tool_from_install_cmd("pip3 install -U requests") == "requests"
+
+    def test_extract_tool_from_apt_install(self):
+        assert _extract_tool_from_install_cmd("apt install -y nginx") == "nginx"
+        assert _extract_tool_from_install_cmd("apt-get install curl") == "curl"
+
+    def test_extract_tool_from_choco(self):
+        assert _extract_tool_from_install_cmd("choco install terraform") == "terraform"
+
+    def test_extract_tool_from_npm(self):
+        assert _extract_tool_from_install_cmd("npm install -g typescript") == "typescript"
+
+    def test_extract_tool_from_unknown(self):
+        assert _extract_tool_from_install_cmd("ls -la") is None
+
+    @pytest.mark.asyncio
+    async def test_detect_new_tool_ignores_non_install(self):
+        sm = SemanticMemory()
+        result = await detect_new_tool("ls -la", "file1 file2", sm)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_detect_new_tool_with_known_tool(self):
+        sm = SemanticMemory()
+        from breadmind.storage.models import KGEntity
+        # Pre-register python as known
+        await sm.add_entity(KGEntity(id="tool:python", entity_type="infra_component", name="python"))
+
+        result = await detect_new_tool(
+            "pip install python",
+            "Successfully installed python",
+            sm,
+        )
+        assert result is None  # Already known
