@@ -253,17 +253,33 @@ class CoreAgent:
             except Exception as e:
                 logger.warning(f"ContextBuilder enrichment failed: {e}")
 
-        tools = self._tools.get_all_definitions()
+        # Filter tools to relevant subset based on message content
+        all_tools = self._tools.get_all_definitions()
+        tools = self._filter_relevant_tools(all_tools, message)
 
         for turn in range(self._max_turns):
             # Apply conversation summarization if available
             chat_messages = messages
             if self._summarizer is not None and hasattr(self._summarizer, "summarize_if_needed"):
                 try:
-                    chat_messages = await self._summarizer.summarize_if_needed(messages, None)
+                    chat_messages = await self._summarizer.summarize_if_needed(
+                        messages, tools,
+                    )
                 except Exception:
                     logger.exception("Summarizer error, using original messages")
                     chat_messages = messages
+            else:
+                # Fallback: trim messages if exceeding context window
+                try:
+                    from breadmind.llm.token_counter import TokenCounter
+                    model = getattr(self._provider, "model_name", "claude-sonnet-4-6")
+                    if not TokenCounter.fits_in_context(chat_messages, tools, model):
+                        chat_messages = TokenCounter.trim_messages_to_fit(
+                            chat_messages, tools, model,
+                        )
+                        logger.warning("Trimmed messages to fit context window")
+                except Exception:
+                    logger.debug("TokenCounter check skipped due to error")
 
             await self._notify_progress("thinking", "")
 
@@ -478,3 +494,43 @@ class CoreAgent:
             await self._behavior_tracker.analyze(session_id, messages)
         except Exception:
             logger.exception("Behavior analysis failed")
+
+    def _filter_relevant_tools(
+        self, tools: list, message: str, max_tools: int = 30,
+    ) -> list:
+        """Filter tools to a relevant subset based on message content.
+
+        Always includes: shell_exec, web_search, file_read, file_write, browser,
+        mcp_search, mcp_install, mcp_list, skill_manage.
+        For other tools, score by keyword overlap with the message.
+        """
+        ALWAYS_INCLUDE = {
+            "shell_exec", "web_search", "file_read", "file_write",
+            "browser", "mcp_search", "mcp_install", "mcp_list",
+            "skill_manage", "memory_save", "memory_search",
+            "swarm_role", "messenger_connect",
+        }
+
+        if len(tools) <= max_tools:
+            return tools
+
+        essential = []
+        candidates = []
+        msg_lower = message.lower()
+
+        for t in tools:
+            if t.name in ALWAYS_INCLUDE:
+                essential.append(t)
+            else:
+                # Score by name/description overlap
+                score = 0
+                name_words = set(t.name.lower().replace("_", " ").split())
+                desc_words = set((t.description or "").lower().split())
+                msg_words = set(msg_lower.split())
+                score = len(msg_words & name_words) * 3 + len(msg_words & desc_words)
+                candidates.append((score, t))
+
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        remaining_slots = max_tools - len(essential)
+        selected = essential + [t for _, t in candidates[:remaining_slots]]
+        return selected
