@@ -194,6 +194,19 @@ async def run():
     profiler = memory_components.get("profiler")
     mcp_store = memory_components.get("mcp_store")
 
+    # Start memory garbage collector
+    from breadmind.memory.gc import MemoryGC
+    memory_gc = MemoryGC(
+        working_memory=working_memory,
+        episodic_memory=memory_components.get("episodic_memory"),
+        semantic_memory=memory_components.get("semantic_memory"),
+        interval_seconds=3600,      # Run every hour
+        decay_threshold=0.1,        # Remove notes with <10% relevance
+        max_cached_notes=500,       # Cap in-memory episodic cache
+        kg_max_age_days=90,         # Prune orphaned KG entities after 90 days
+    )
+    await memory_gc.start()
+
     try:
         if args.web:
             import uvicorn
@@ -313,6 +326,7 @@ async def run():
                 print(f"breadmind> {response}\n")
     finally:
         update_task.cancel()
+        await memory_gc.stop()
         await monitoring_engine.stop()
         await mcp_manager.stop_all()
         working_memory._sessions.clear()
