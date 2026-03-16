@@ -223,13 +223,15 @@ class CoreAgent:
         logger.info(json.dumps({"event": "session_start", "user": user, "channel": channel}))
 
         # Step 1: Classify intent (rule-based, no LLM call)
-        from breadmind.core.intent import classify as classify_intent
+        from breadmind.core.intent import classify as classify_intent, get_think_budget
         intent = classify_intent(message)
+        think_budget = get_think_budget(intent)
         logger.info(json.dumps({
             "event": "intent_classified",
             "category": intent.category.value,
             "confidence": round(intent.confidence, 2),
             "entities": intent.entities[:5],
+            "think_budget": think_budget,
         }))
 
         # Build initial messages
@@ -296,7 +298,11 @@ class CoreAgent:
             t0 = time.monotonic()
             try:
                 response = await asyncio.wait_for(
-                    self._provider.chat(messages=chat_messages, tools=tools or None),
+                    self._provider.chat(
+                        messages=chat_messages,
+                        tools=tools or None,
+                        think_budget=think_budget,
+                    ),
                     timeout=self._chat_timeout,
                 )
             except asyncio.TimeoutError:

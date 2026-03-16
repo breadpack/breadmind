@@ -100,6 +100,7 @@ class LLMProvider(ABC):
         messages: list[LLMMessage],
         tools: list[ToolDefinition] | None = None,
         model: str | None = None,
+        think_budget: int | None = None,
     ) -> LLMResponse:
         ...
 
@@ -138,11 +139,12 @@ class FallbackProvider(LLMProvider):
         messages: list[LLMMessage],
         tools: list[ToolDefinition] | None = None,
         model: str | None = None,
+        think_budget: int | None = None,
     ) -> LLMResponse:
         last_error: Exception | None = None
         for provider in self._providers:
             try:
-                return await provider.chat(messages, tools, model)
+                return await provider.chat(messages, tools, model, think_budget=think_budget)
             except Exception as e:
                 last_error = e
                 continue  # try next provider

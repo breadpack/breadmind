@@ -34,6 +34,7 @@ class GrokProvider(LLMProvider):
         messages: list[LLMMessage],
         tools: list[ToolDefinition] | None = None,
         model: str | None = None,
+        think_budget: int | None = None,
     ) -> LLMResponse:
         api_messages = self._convert_messages(messages)
         kwargs: dict = {
