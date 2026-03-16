@@ -341,6 +341,9 @@ class ContextBuilder:
                     note = await self.promote_to_episodic(session_id, message_threshold=1)
                     if note:
                         promoted["episodic_notes"] += 1
+                        # Pin notes from important sessions
+                        if self._has_important_content(session):
+                            self._episodic.pin_note(note)
                 except Exception as e:
                     logging.getLogger(__name__).warning(f"Failed to promote session {session_id}: {e}")
 

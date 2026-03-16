@@ -26,6 +26,9 @@ class EpisodicNote:
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     id: int | None = None
     decay_weight: float = 1.0
+    access_count: int = 0          # How many times this note was retrieved
+    last_accessed: datetime | None = None  # Last retrieval time
+    pinned: bool = False           # If True, exempt from decay/cleanup
 
 
 @dataclass
