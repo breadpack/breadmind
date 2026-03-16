@@ -159,14 +159,17 @@ class MemoryGC:
         ):
             try:
                 from breadmind.core.env_scanner import scan_dynamic, store_scan_in_memory
-                scan = await scan_dynamic()
+                # Full tool rescan every 24 cycles (24h), lightweight otherwise
+                include_tools = (run_number % (self._env_refresh_interval * 4) == 0)
+                scan = await scan_dynamic(include_tools=include_tools)
                 env_result = await store_scan_in_memory(
                     scan, self._episodic, self._semantic, db=self._db,
                 )
                 result["env_refreshed"] = True
+                extra = " (with tools)" if include_tools else ""
                 logger.info(
-                    "Environment refreshed: memory=%.1fGB free, disks=%d, ips=%d",
-                    scan.memory_available_gb, len(scan.disks), len(scan.ip_addresses),
+                    "Environment refreshed%s: memory=%.1fGB free, disks=%d, ips=%d",
+                    extra, scan.memory_available_gb, len(scan.disks), len(scan.ip_addresses),
                 )
             except Exception as e:
                 logger.warning("Environment refresh failed: %s", e)
