@@ -53,6 +53,7 @@ class ContextBuilder:
         profiler: UserProfiler | None = None,
         max_context_tokens: int = 4000,
         skill_store=None,
+        smart_retriever=None,
     ):
         self._working = working_memory
         self._episodic = episodic_memory
@@ -60,12 +61,38 @@ class ContextBuilder:
         self._profiler = profiler
         self._max_context_tokens = max_context_tokens
         self._skill_store = skill_store
+        self._smart_retriever = smart_retriever
 
     async def build_context(
-        self, session_id: str, current_message: str
+        self, session_id: str, current_message: str, intent=None,
     ) -> list[LLMMessage]:
-        """Build enriched context from all memory layers."""
+        """Build enriched context from all memory layers.
+
+        Args:
+            session_id: Session identifier.
+            current_message: The user's current message.
+            intent: Optional Intent object for intent-aware retrieval.
+        """
         messages: list[LLMMessage] = []
+
+        # 0. Intent context — tell the LLM what the user intends
+        if intent is not None:
+            from breadmind.core.intent import IntentCategory
+            intent_desc = {
+                IntentCategory.QUERY: "사용자가 정보를 조회하려고 합니다. 시스템 상태, 로그, 메트릭 등을 확인하세요.",
+                IntentCategory.EXECUTE: "사용자가 작업 실행을 요청합니다. 조사 후 직접 실행하세요.",
+                IntentCategory.DIAGNOSE: "사용자가 문제 진단을 요청합니다. 로그/상태를 조사하고 원인을 파악하세요.",
+                IntentCategory.CONFIGURE: "사용자가 설정 변경을 요청합니다. 현재 설정을 확인 후 변경하세요.",
+                IntentCategory.LEARN: "사용자가 기억/학습 관련 요청을 합니다. 기억을 저장하거나 검색하세요.",
+                IntentCategory.CHAT: "일반 대화입니다.",
+            }
+            desc = intent_desc.get(intent.category, "")
+            parts = [f"## Intent Analysis\n- Category: {intent.category.value}\n- Confidence: {intent.confidence:.0%}"]
+            if desc:
+                parts.append(f"- Guidance: {desc}")
+            if intent.entities:
+                parts.append(f"- Detected entities: {', '.join(intent.entities[:10])}")
+            messages.append(LLMMessage(role="system", content="\n".join(parts)))
 
         # 1. System prompt with user profile
         session = self._working._sessions.get(session_id)
@@ -77,8 +104,28 @@ class ContextBuilder:
                     LLMMessage(role="system", content=f"User profile:\n{profile_ctx}")
                 )
 
-        # 2. Relevant episodic memories (top 5 by keyword match)
-        if self._episodic:
+        # 2. Relevant context via SmartRetriever (semantic search) or fallback to keyword
+        context_retrieved = False
+        if self._smart_retriever:
+            try:
+                context_items = await asyncio.wait_for(
+                    self._smart_retriever.retrieve_context(
+                        current_message, token_budget=1500, limit=5,
+                    ),
+                    timeout=8,
+                )
+                if context_items:
+                    ctx_lines = [f"- [{item.source}] {item.content}" for item in context_items]
+                    messages.append(LLMMessage(
+                        role="system",
+                        content="Relevant past context:\n" + "\n".join(ctx_lines),
+                    ))
+                    context_retrieved = True
+            except (asyncio.TimeoutError, Exception):
+                pass
+
+        # Fallback: keyword-based episodic search
+        if not context_retrieved and self._episodic:
             keywords = self._extract_keywords(current_message)
             if keywords:
                 try:
