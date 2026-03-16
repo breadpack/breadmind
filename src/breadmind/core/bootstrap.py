@@ -326,4 +326,22 @@ async def init_agent(config, provider, registry, guard, db, memory_components):
     )
     agent.set_behavior_tracker(behavior_tracker)
 
+    # Environment scan — runs on first startup or if no scan exists
+    try:
+        last_scan = await db.get_setting("last_env_scan") if db else None
+        if last_scan is None:
+            from breadmind.core.env_scanner import scan_environment, store_scan_in_memory
+            logger.info("First run detected — scanning environment...")
+            scan = await scan_environment()
+            stored = await store_scan_in_memory(
+                scan,
+                episodic_memory=memory_components["episodic_memory"],
+                semantic_memory=memory_components["semantic_memory"],
+                db=db,
+            )
+            print(f"  Environment scan: {len(scan.installed_tools)} tools, "
+                  f"{len(scan.disks)} disks, {len(scan.ip_addresses)} IPs")
+    except Exception as e:
+        logger.warning("Environment scan failed: %s", e)
+
     return agent, behavior_tracker, audit_logger, metrics_collector
