@@ -42,6 +42,9 @@ class BehaviorTracker:
         self._db = db
         self._on_prompt_updated = on_prompt_updated
         self._lock = asyncio.Lock()
+        self._prompt_versions: list[dict] = []
+        self._current_version: int = 0
+        self._effectiveness: dict[int, list[float]] = {}
 
     def _should_analyze(self, messages: list[LLMMessage]) -> bool:
         user_msgs = [m for m in messages if m.role == "user"]
@@ -214,6 +217,25 @@ class BehaviorTracker:
 
             self._set_behavior_prompt(new_prompt)
 
+            self._current_version += 1
+            self._prompt_versions.append({
+                "version": self._current_version,
+                "prompt": new_prompt,
+                "reason": reason,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "metrics_snapshot": {
+                    "tool_success_rate": (
+                        metrics["tool_success_count"] /
+                        max(metrics["tool_call_count"], 1)
+                    ),
+                    "text_only": metrics["text_only_response"],
+                    "negative_feedback": metrics["negative_feedback"],
+                },
+            })
+            # Keep last 20 versions
+            if len(self._prompt_versions) > 20:
+                self._prompt_versions = self._prompt_versions[-20:]
+
             if self._db:
                 try:
                     await self._db.set_setting("behavior_prompt", {
@@ -239,3 +261,20 @@ class BehaviorTracker:
 
             logger.info(f"Behavior prompt improved: {reason}")
             return {"reason": reason, "prompt": new_prompt}
+
+    def record_effectiveness(self, success_rate: float, text_only: bool):
+        """Record effectiveness of current prompt version."""
+        ver = self._current_version
+        if ver not in self._effectiveness:
+            self._effectiveness[ver] = []
+        self._effectiveness[ver].append(1.0 if not text_only else 0.0)
+
+    def get_version_history(self) -> list[dict]:
+        """Return prompt version history with effectiveness scores."""
+        result = []
+        for v in self._prompt_versions:
+            ver = v["version"]
+            scores = self._effectiveness.get(ver, [])
+            avg = sum(scores) / len(scores) if scores else None
+            result.append({**v, "avg_effectiveness": avg, "sample_count": len(scores)})
+        return result
