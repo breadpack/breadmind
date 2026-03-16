@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import PlainTextResponse, JSONResponse
 
 logger = logging.getLogger(__name__)
@@ -42,15 +42,17 @@ def setup_worker_routes(r: APIRouter, app_state):
             labels=parsed_labels,
         )
 
-        # Build one-liner install commands
+        # Build one-liner install command (single URL, OS auto-detected)
         commander_url = _get_commander_ws_url(app_state)
         base_url = _get_base_url(app_state)
+        script_url = f'{base_url}/api/workers/install-script?token={token.secret}'
 
         return {
             "token": token.to_dict(),
+            "install_url": script_url,
             "install_commands": {
-                "linux": f'curl -fsSL {base_url}/api/workers/install-script?token={token.secret} | bash',
-                "windows": f'irm {base_url}/api/workers/install-script?token={token.secret}"&"os=windows | iex',
+                "linux": f'curl -fsSL {script_url} | bash',
+                "windows": f'irm {script_url} | iex',
             },
             "commander_url": commander_url,
         }
@@ -76,8 +78,14 @@ def setup_worker_routes(r: APIRouter, app_state):
     # ── Install Script ──
 
     @r.get("/api/workers/install-script")
-    async def install_script(token: str, os: str = "linux"):
-        """Generate and serve a dynamic install script."""
+    async def install_script(request: Request, token: str, os: str = ""):
+        """Generate and serve a dynamic install script.
+
+        OS is auto-detected from User-Agent:
+        - PowerShell → windows script
+        - curl/wget/anything else → linux/bash script
+        Explicit ?os=windows overrides auto-detection.
+        """
         token_mgr = getattr(app_state, '_token_manager', None)
         if not token_mgr:
             return PlainTextResponse("# Error: Token manager not available", status_code=503)
@@ -87,17 +95,25 @@ def setup_worker_routes(r: APIRouter, app_state):
         if not tk:
             return PlainTextResponse("# Error: Invalid or expired token", status_code=403)
 
+        # Auto-detect OS from User-Agent if not explicitly provided
+        os_type = os
+        if not os_type:
+            ua = (request.headers.get("user-agent") or "").lower()
+            if "powershell" in ua or "windowspowershell" in ua:
+                os_type = "windows"
+            else:
+                os_type = "linux"
+
         from breadmind.network.install_generator import generate_install_script
         commander_url = _get_commander_ws_url(app_state)
 
         script = generate_install_script(
             commander_url=commander_url,
             token_secret=token,
-            os_type=os,
+            os_type=os_type,
         )
 
-        content_type = "text/plain" if os == "linux" else "text/plain"
-        return PlainTextResponse(script, media_type=content_type)
+        return PlainTextResponse(script, media_type="text/plain")
 
     # ── SSH Push Deploy ──
 
