@@ -442,6 +442,103 @@ async def detect_new_tool(command: str, output: str, semantic_memory) -> str | N
     return tool_name
 
 
+_UNINSTALL_PATTERNS = re.compile(
+    r"(?:successfully uninstalled|removed|purged|"
+    r"uninstalled successfully|has been removed|"
+    r"choco uninstall|winget uninstall|scoop uninstall|"
+    r"apt remove|apt-get remove|apt purge|yum remove|dnf remove|"
+    r"brew uninstall|pip uninstall|npm uninstall|"
+    r"cargo uninstall|Removing )",
+    re.I,
+)
+
+
+async def detect_removed_tool(command: str, output: str, semantic_memory) -> str | None:
+    """Check if a shell command removed a tool and update KG if so.
+
+    Called after shell_exec completes. Returns tool name if detected, else None.
+    """
+    if not output or not semantic_memory:
+        return None
+
+    if not _UNINSTALL_PATTERNS.search(output):
+        return None
+
+    tool_name = _extract_tool_from_uninstall_cmd(command)
+    if not tool_name:
+        return None
+
+    # Verify the tool is actually gone
+    if shutil.which(tool_name):
+        return None  # Still exists (maybe partial uninstall)
+
+    # Check if we know about it
+    entity_id = f"tool:{tool_name}"
+    existing = await semantic_memory.get_entity(entity_id)
+    if not existing:
+        return None  # Not in our KG
+
+    # Remove from KG
+    semantic_memory._entities.pop(entity_id, None)
+    # Remove relations pointing to/from this entity
+    semantic_memory._relations = [
+        r for r in semantic_memory._relations
+        if r.source_id != entity_id and r.target_id != entity_id
+    ]
+
+    logger.info("Tool removed detected at runtime: %s", tool_name)
+    return tool_name
+
+
+def _extract_tool_from_uninstall_cmd(command: str) -> str | None:
+    """Extract the tool/package name from an uninstall command."""
+    patterns = [
+        re.compile(r"pip3?\s+uninstall\s+(?:-[^\s]+\s+)*([a-zA-Z0-9_-]+)", re.I),
+        re.compile(r"npm\s+(?:uninstall|remove)\s+(?:-[^\s]+\s+)*([a-zA-Z0-9@/_-]+)", re.I),
+        re.compile(r"(?:apt|apt-get)\s+(?:remove|purge)\s+(?:-[^\s]+\s+)*([a-zA-Z0-9._-]+)", re.I),
+        re.compile(r"(?:yum|dnf)\s+(?:remove|erase)\s+(?:-[^\s]+\s+)*([a-zA-Z0-9._-]+)", re.I),
+        re.compile(r"brew\s+uninstall\s+([a-zA-Z0-9._-]+)", re.I),
+        re.compile(r"choco\s+uninstall\s+([a-zA-Z0-9._-]+)", re.I),
+        re.compile(r"winget\s+uninstall\s+([a-zA-Z0-9._-]+)", re.I),
+        re.compile(r"scoop\s+uninstall\s+([a-zA-Z0-9._-]+)", re.I),
+        re.compile(r"cargo\s+uninstall\s+([a-zA-Z0-9_-]+)", re.I),
+    ]
+    for pat in patterns:
+        m = pat.search(command)
+        if m:
+            name = m.group(1).split("/")[-1].split("@")[0]
+            return name
+    return None
+
+
+async def reconcile_tools(semantic_memory) -> list[str]:
+    """Check all tool entities in KG and remove those no longer installed.
+
+    Called during periodic tool rescan. Returns list of removed tool names.
+    """
+    removed: list[str] = []
+    tool_entities = [
+        (eid, e) for eid, e in list(semantic_memory._entities.items())
+        if eid.startswith("tool:") and e.entity_type == "infra_component"
+    ]
+
+    for entity_id, entity in tool_entities:
+        tool_name = entity_id[5:]  # Strip "tool:" prefix
+        # Skip infrastructure tools that may not be simple binaries
+        if tool_name in ("docker", "kubernetes"):
+            continue
+        if not shutil.which(tool_name):
+            semantic_memory._entities.pop(entity_id, None)
+            semantic_memory._relations = [
+                r for r in semantic_memory._relations
+                if r.source_id != entity_id and r.target_id != entity_id
+            ]
+            removed.append(tool_name)
+            logger.info("Tool no longer found: %s (removed from KG)", tool_name)
+
+    return removed
+
+
 def _extract_tool_from_install_cmd(command: str) -> str | None:
     """Extract the tool/package name from an install command."""
     # Match common install patterns

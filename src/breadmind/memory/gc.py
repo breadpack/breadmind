@@ -166,6 +166,15 @@ class MemoryGC:
                     scan, self._episodic, self._semantic, db=self._db,
                 )
                 result["env_refreshed"] = True
+
+                # Reconcile: remove KG entries for tools no longer installed
+                if include_tools:
+                    from breadmind.core.env_scanner import reconcile_tools
+                    removed = await reconcile_tools(self._semantic)
+                    if removed:
+                        result["tools_removed"] = removed
+                        logger.info("Removed stale tools from KG: %s", ", ".join(removed))
+
                 extra = " (with tools)" if include_tools else ""
                 logger.info(
                     "Environment refreshed%s: memory=%.1fGB free, disks=%d, ips=%d",

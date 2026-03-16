@@ -2,10 +2,12 @@
 import pytest
 from breadmind.core.env_scanner import (
     scan_environment, store_scan_in_memory, ScanResult,
-    detect_new_tool, _extract_tool_from_install_cmd,
+    detect_new_tool, detect_removed_tool, reconcile_tools,
+    _extract_tool_from_install_cmd, _extract_tool_from_uninstall_cmd,
 )
 from breadmind.memory.episodic import EpisodicMemory
 from breadmind.memory.semantic import SemanticMemory
+from breadmind.storage.models import KGEntity
 
 
 class TestScanResult:
@@ -229,7 +231,6 @@ class TestToolDetection:
     @pytest.mark.asyncio
     async def test_detect_new_tool_with_known_tool(self):
         sm = SemanticMemory()
-        from breadmind.storage.models import KGEntity
         # Pre-register python as known
         await sm.add_entity(KGEntity(id="tool:python", entity_type="infra_component", name="python"))
 
@@ -239,3 +240,60 @@ class TestToolDetection:
             sm,
         )
         assert result is None  # Already known
+
+
+class TestToolRemovalDetection:
+    def test_extract_tool_from_pip_uninstall(self):
+        assert _extract_tool_from_uninstall_cmd("pip uninstall flask") == "flask"
+        assert _extract_tool_from_uninstall_cmd("pip3 uninstall -y requests") == "requests"
+
+    def test_extract_tool_from_apt_remove(self):
+        assert _extract_tool_from_uninstall_cmd("apt remove nginx") == "nginx"
+        assert _extract_tool_from_uninstall_cmd("apt-get purge curl") == "curl"
+        assert _extract_tool_from_uninstall_cmd("apt purge curl") == "curl"
+
+    def test_extract_tool_from_choco_uninstall(self):
+        assert _extract_tool_from_uninstall_cmd("choco uninstall terraform") == "terraform"
+
+    def test_extract_tool_from_unknown(self):
+        assert _extract_tool_from_uninstall_cmd("ls -la") is None
+
+    @pytest.mark.asyncio
+    async def test_detect_removed_ignores_non_uninstall(self):
+        sm = SemanticMemory()
+        result = await detect_removed_tool("ls -la", "file1 file2", sm)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_detect_removed_unknown_tool(self):
+        sm = SemanticMemory()
+        # Tool not in KG — nothing to remove
+        result = await detect_removed_tool(
+            "pip uninstall nonexistenttool",
+            "Successfully uninstalled nonexistenttool",
+            sm,
+        )
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_reconcile_removes_missing_tools(self):
+        sm = SemanticMemory()
+        # Add a tool that doesn't actually exist
+        await sm.add_entity(KGEntity(
+            id="tool:fake_nonexistent_tool_xyz",
+            entity_type="infra_component",
+            name="fake_nonexistent_tool_xyz",
+        ))
+        # Add a tool that does exist (python)
+        await sm.add_entity(KGEntity(
+            id="tool:python",
+            entity_type="infra_component",
+            name="python",
+        ))
+
+        removed = await reconcile_tools(sm)
+
+        assert "fake_nonexistent_tool_xyz" in removed
+        assert "python" not in removed
+        assert "tool:fake_nonexistent_tool_xyz" not in sm._entities
+        assert "tool:python" in sm._entities
