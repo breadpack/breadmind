@@ -130,6 +130,28 @@ def classify(message: str) -> Intent:
     )
 
 
+# Think budget by intent category (tokens).
+# Complex reasoning tasks get more budget, simple ones get less.
+# Claude extended_thinking: 1,024 ~ 128,000 / Gemini thinkingBudget: 0 ~ 24,576
+_THINK_BUDGETS: dict[IntentCategory, int] = {
+    IntentCategory.CHAT: 0,          # Simple conversation — no deep thinking
+    IntentCategory.LEARN: 2048,      # Memory ops — minimal reasoning
+    IntentCategory.QUERY: 4096,      # Info lookup — data interpretation
+    IntentCategory.CONFIGURE: 4096,  # Settings — impact assessment
+    IntentCategory.EXECUTE: 10240,   # Actions — multi-step execution planning
+    IntentCategory.DIAGNOSE: 16384,  # Troubleshooting — deep root-cause analysis, multiple hypotheses
+}
+
+
+def get_think_budget(intent: Intent) -> int:
+    """Return recommended think budget (tokens) based on intent.
+
+    Higher budget for complex reasoning tasks (diagnose, execute),
+    lower or zero for simple tasks (chat, learn).
+    """
+    return _THINK_BUDGETS.get(intent.category, 2048)
+
+
 _STOPWORDS_KO = frozenset({
     "이", "가", "은", "는", "을", "를", "에", "의", "와", "과", "도", "로",
     "으로", "에서", "까지", "부터", "만", "좀", "것", "수", "등", "및",

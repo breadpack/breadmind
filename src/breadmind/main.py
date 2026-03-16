@@ -185,6 +185,19 @@ async def run():
 
     update_task = asyncio.create_task(check_updates_periodically())
 
+    # Auto-discover and install skills from marketplace (background)
+    async def _discover_skills():
+        try:
+            from breadmind.core.bootstrap import discover_and_install_skills
+            await discover_and_install_skills(
+                skill_store=memory_components["skill_store"],
+                search_engine=search_engine,
+            )
+        except Exception as e:
+            logger.debug("Skill auto-discovery skipped: %s", e)
+
+    asyncio.create_task(_discover_skills())
+
     # Extract commonly used memory components
     working_memory = memory_components["working_memory"]
     performance_tracker = memory_components["performance_tracker"]

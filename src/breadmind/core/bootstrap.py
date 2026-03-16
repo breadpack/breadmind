@@ -39,6 +39,14 @@ class AppComponents:
     tool_gap_detector: Any = None
 
 
+def _detect_package_managers() -> list[str]:
+    """Quick detection of available package managers via shutil.which()."""
+    import shutil
+    candidates = ["apt", "apt-get", "dnf", "yum", "apk", "pacman", "zypper",
+                   "snap", "flatpak", "brew", "winget", "choco", "scoop"]
+    return [pm for pm in candidates if shutil.which(pm)]
+
+
 async def init_database(config, config_dir: str):
     """Initialize database or fall back to file-based settings."""
     db = None
@@ -156,6 +164,11 @@ async def init_memory(db, provider, config, registry, mcp_manager, search_engine
     skill_store = SkillStore(db=db, tracker=performance_tracker)
     await skill_store.load_from_db()
 
+    # Register OS-specific administration skill (tailored to detected package managers)
+    from breadmind.skills.os_skills import register_os_skills
+    detected_pkg_managers = _detect_package_managers()
+    await register_os_skills(skill_store, package_managers=detected_pkg_managers)
+
     tool_gap_detector = ToolGapDetector(
         tool_registry=registry,
         mcp_manager=mcp_manager,
@@ -242,6 +255,48 @@ async def init_memory(db, provider, config, registry, mcp_manager, search_engine
         "profiler": profiler,
         "mcp_store": mcp_store,
     }
+
+
+async def discover_and_install_skills(skill_store, search_engine):
+    """Auto-discover skills from marketplace based on detected environment.
+
+    Searches marketplace first, falls back to builtin domain skills.
+    Designed to run as a background task after startup.
+    """
+    from breadmind.skills.auto_discovery import auto_discover_skills, apply_fallback_skills
+    from breadmind.skills.domain_skills import detect_domains
+
+    detected = detect_domains()
+    detected_tool_names = []
+    for d in detected:
+        detected_tool_names.extend(d.detected_tools)
+
+    if not detected_tool_names:
+        return
+
+    # Try marketplace first
+    result = await auto_discover_skills(
+        detected_tools=detected_tool_names,
+        search_engine=search_engine,
+        skill_store=skill_store,
+        max_per_domain=1,
+        timeout=30,
+    )
+
+    if result.installed > 0:
+        logger.info(
+            "Skill auto-discovery: %d searched, %d installed, %d failed",
+            result.searched, result.installed, result.failed,
+        )
+
+    # Apply builtin fallbacks for domains without marketplace skills
+    await apply_fallback_skills(detected_tool_names, skill_store)
+
+    # Persist to DB
+    try:
+        await skill_store.flush_to_db()
+    except Exception:
+        pass
 
 
 async def init_agent(config, provider, registry, guard, db, memory_components):

@@ -29,6 +29,7 @@ class CLIProvider(LLMProvider):
         messages: list[LLMMessage],
         tools: list[ToolDefinition] | None = None,
         model: str | None = None,
+        think_budget: int | None = None,
     ) -> LLMResponse:
         prompt = self._build_prompt(messages, tools)
         proc = await asyncio.create_subprocess_exec(

@@ -34,6 +34,7 @@ class GeminiProvider(LLMProvider):
         messages: list[LLMMessage],
         tools: list[ToolDefinition] | None = None,
         model: str | None = None,
+        think_budget: int | None = None,
     ) -> LLMResponse:
         model_name = model or self._default_model
         url = f"{_API_BASE}/models/{model_name}:generateContent?key={self._api_key}"
@@ -52,11 +53,10 @@ class GeminiProvider(LLMProvider):
 
         body["generationConfig"] = {"maxOutputTokens": 8192}
 
-        # Disable thinking to avoid thought_signature requirements in tool calls
-        # thinkingConfig must be top-level, not inside generationConfig
-        body["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 0}
+        # Adjust thinking budget based on task complexity
+        effective_budget = think_budget if think_budget is not None else 0
+        body["generationConfig"]["thinkingConfig"] = {"thinkingBudget": effective_budget}
 
-        # Also try top-level for models that expect it there
         body["generationConfig"]["responseModalities"] = ["TEXT"]
 
         logger.debug("Gemini request body: %s", json.dumps(body, default=str)[:3000])

@@ -95,7 +95,7 @@ async def test_chat_stream_fallback():
     """chat_stream 기본 구현이 chat()으로 폴백하여 전체 응답을 반환하는지 확인한다."""
 
     class _TestProvider(LLMProvider):
-        async def chat(self, messages, tools=None, model=None):
+        async def chat(self, messages, tools=None, model=None, think_budget=None):
             return LLMResponse(
                 content="전체 응답 텍스트",
                 tool_calls=[],
@@ -121,7 +121,7 @@ async def test_chat_stream_fallback_no_content():
     """chat_stream 기본 구현에서 content가 None이면 아무것도 반환하지 않는지 확인한다."""
 
     class _TestProvider(LLMProvider):
-        async def chat(self, messages, tools=None, model=None):
+        async def chat(self, messages, tools=None, model=None, think_budget=None):
             return LLMResponse(
                 content=None,
                 tool_calls=[ToolCall(id="1", name="test", arguments={})],
@@ -149,7 +149,7 @@ class _SuccessProvider(LLMProvider):
     def __init__(self, content: str = "ok"):
         self._content = content
 
-    async def chat(self, messages, tools=None, model=None):
+    async def chat(self, messages, tools=None, model=None, think_budget=None):
         return LLMResponse(
             content=self._content,
             tool_calls=[],
@@ -162,7 +162,7 @@ class _SuccessProvider(LLMProvider):
 
 
 class _FailProvider(LLMProvider):
-    async def chat(self, messages, tools=None, model=None):
+    async def chat(self, messages, tools=None, model=None, think_budget=None):
         raise ConnectionError("provider down")
 
     async def health_check(self):
@@ -230,7 +230,7 @@ async def test_summarizer_triggers_when_over_threshold():
     """임계값 초과 시 요약이 수행되는지 확인한다."""
 
     class _SummaryProvider(LLMProvider):
-        async def chat(self, messages, tools=None, model=None):
+        async def chat(self, messages, tools=None, model=None, think_budget=None):
             return LLMResponse(
                 content="Summary of conversation",
                 tool_calls=[],
@@ -269,7 +269,7 @@ async def test_summarizer_preserves_system_and_recent():
     """요약 시 시스템 메시지와 최근 메시지가 보존되는지 확인한다."""
 
     class _SummaryProvider(LLMProvider):
-        async def chat(self, messages, tools=None, model=None):
+        async def chat(self, messages, tools=None, model=None, think_budget=None):
             return LLMResponse(
                 content="Condensed summary",
                 tool_calls=[],

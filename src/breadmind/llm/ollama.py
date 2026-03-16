@@ -32,6 +32,7 @@ class OllamaProvider(LLMProvider):
         messages: list[LLMMessage],
         tools: list[ToolDefinition] | None = None,
         model: str | None = None,
+        think_budget: int | None = None,
     ) -> LLMResponse:
         payload = {
             "model": model or self._default_model,

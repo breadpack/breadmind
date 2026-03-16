@@ -37,13 +37,22 @@ class ClaudeProvider(LLMProvider):
         messages: list[LLMMessage],
         tools: list[ToolDefinition] | None = None,
         model: str | None = None,
+        think_budget: int | None = None,
     ) -> LLMResponse:
         system_prompt, api_messages = self._convert_messages(messages)
+        use_thinking = think_budget is not None and think_budget > 0
         kwargs: dict = {
             "model": model or self._default_model,
-            "max_tokens": 4096,
+            "max_tokens": 16384 if use_thinking else 4096,
             "messages": api_messages,
         }
+
+        # Extended thinking: allows deeper reasoning for complex tasks
+        if use_thinking:
+            kwargs["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": think_budget,
+            }
 
         # 시스템 프롬프트가 있으면 system 파라미터로 전달 (캐시 제어 포함)
         if system_prompt:
