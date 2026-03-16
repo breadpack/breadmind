@@ -17,6 +17,7 @@ from breadmind.web.routes import (
     setup_swarm_routes,
     setup_system_routes,
 )
+from breadmind.web.routes.workers import setup_worker_routes
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,8 @@ class WebApp:
                  mcp_store=None, safety_guard=None, working_memory=None, message_router=None,
                  scheduler=None, subagent_manager=None, webhook_manager=None, auth=None,
                  container_executor=None, swarm_manager=None,
-                 skill_store=None, performance_tracker=None, search_engine=None):
+                 skill_store=None, performance_tracker=None, search_engine=None,
+                 token_manager=None, commander=None):
         self.app = FastAPI(title="BreadMind", version="0.1.0")
         self._message_handler = message_handler
         self._tool_registry = tool_registry
@@ -52,6 +54,8 @@ class WebApp:
         self._skill_store = skill_store
         self._performance_tracker = performance_tracker
         self._search_engine = search_engine
+        self._token_manager = token_manager
+        self._commander = commander
 
         # CORS middleware
         if config and hasattr(config, 'security'):
@@ -133,7 +137,7 @@ class WebApp:
         async def auth_middleware(request: Request, call_next):
             path = request.url.path
             # Skip auth for certain paths
-            skip_paths = ["/api/auth/", "/api/setup/", "/health", "/api/webhook/receive/"]
+            skip_paths = ["/api/auth/", "/api/setup/", "/health", "/api/webhook/receive/", "/api/workers/install-script"]
             if any(path.startswith(p) for p in skip_paths):
                 return await call_next(request)
 
@@ -176,6 +180,7 @@ class WebApp:
         setup_mcp_routes(app, self)
         setup_monitoring_routes(app, self)
         setup_swarm_routes(app, self)
+        setup_worker_routes(app, self)
         setup_chat_routes(app, self)
 
     async def _persist_swarm_roles(self):
