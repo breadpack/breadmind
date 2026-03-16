@@ -204,6 +204,8 @@ async def run():
         decay_threshold=0.1,        # Remove notes with <10% relevance
         max_cached_notes=500,       # Cap in-memory episodic cache
         kg_max_age_days=90,         # Prune orphaned KG entities after 90 days
+        env_refresh_interval=6,     # Refresh environment every 6 cycles (6h)
+        db=db,
     )
     await memory_gc.start()
 

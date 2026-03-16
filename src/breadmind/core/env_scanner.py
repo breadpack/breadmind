@@ -372,6 +372,25 @@ async def _scan_services(result: ScanResult):
             result.running_services = sorted(procs & notable)
 
 
+async def scan_dynamic() -> ScanResult:
+    """Lightweight scan of only dynamic (changing) data: memory, disks, IPs, services."""
+    result = ScanResult()
+    result.hostname = platform.node()
+    result.os_name = platform.system()
+    result.os_version = platform.version()
+    result.os_arch = platform.machine()
+    result.cpu_cores = os.cpu_count() or 0
+
+    await asyncio.gather(
+        _scan_memory(result),
+        _scan_disks(result),
+        _scan_network(result),
+        _scan_services(result),
+    )
+
+    return result
+
+
 async def store_scan_in_memory(
     scan: ScanResult,
     episodic_memory,
@@ -380,23 +399,41 @@ async def store_scan_in_memory(
 ) -> dict:
     """Store scan results as pinned memories and KG entities.
 
+    If an env_scan note already exists, it is replaced (not duplicated).
+    KG entities are upserted (add_entity overwrites by ID).
+
     Returns stats about what was stored.
     """
     from breadmind.storage.models import KGEntity, KGRelation
 
-    stored = {"notes": 0, "entities": 0}
+    stored = {"notes": 0, "entities": 0, "updated": False}
 
-    # 1. Store as a pinned episodic note
-    note = await episodic_memory.add_note(
-        content=scan.to_memory_text(),
-        keywords=scan.to_keywords(),
-        tags=["env_scan", "system_info", "pinned"],
-        context_description=f"Environment scan of {scan.hostname}",
-    )
-    episodic_memory.pin_note(note)
+    # 1. Find and replace existing env_scan note, or create new
+    existing_note = None
+    for note in episodic_memory._notes:
+        if "env_scan" in (note.tags or []):
+            existing_note = note
+            break
+
+    if existing_note is not None:
+        # Update in place — preserve pin status and access history
+        existing_note.content = scan.to_memory_text()
+        existing_note.keywords = scan.to_keywords()
+        existing_note.context_description = f"Environment scan of {scan.hostname}"
+        from datetime import datetime, timezone
+        existing_note.updated_at = datetime.now(timezone.utc)
+        stored["updated"] = True
+    else:
+        note = await episodic_memory.add_note(
+            content=scan.to_memory_text(),
+            keywords=scan.to_keywords(),
+            tags=["env_scan", "system_info", "pinned"],
+            context_description=f"Environment scan of {scan.hostname}",
+        )
+        episodic_memory.pin_note(note)
     stored["notes"] = 1
 
-    # 2. Create KG entities for the host
+    # 2. Upsert KG entities for the host
     host_entity = KGEntity(
         id=f"host:{scan.hostname}",
         entity_type="infra_component",
@@ -406,13 +443,23 @@ async def store_scan_in_memory(
             "arch": scan.os_arch,
             "cpu": scan.cpu_info,
             "cpu_cores": scan.cpu_cores,
-            "memory_gb": round(scan.memory_total_gb, 1),
+            "memory_total_gb": round(scan.memory_total_gb, 1),
+            "memory_available_gb": round(scan.memory_available_gb, 1),
         },
     )
     await semantic_memory.add_entity(host_entity)
     stored["entities"] += 1
 
-    # 3. Create entities for each IP address
+    # 3. Upsert entities for each IP address
+    # Remove old IP relations first to handle IP changes
+    old_rels = await semantic_memory.get_relations(f"host:{scan.hostname}")
+    old_ip_ids = {r.target_id for r in old_rels if r.relation_type == "has_address"}
+    new_ip_ids = {f"ip:{ip}" for ip in scan.ip_addresses}
+
+    # Remove stale IP entities
+    for stale_id in old_ip_ids - new_ip_ids:
+        semantic_memory._entities.pop(stale_id, None)
+
     for ip in scan.ip_addresses:
         ip_entity = KGEntity(
             id=f"ip:{ip}",
@@ -421,14 +468,16 @@ async def store_scan_in_memory(
             properties={"type": "ip_address", "host": scan.hostname},
         )
         await semantic_memory.add_entity(ip_entity)
-        await semantic_memory.add_relation(KGRelation(
-            source_id=f"host:{scan.hostname}",
-            target_id=f"ip:{ip}",
-            relation_type="has_address",
-        ))
+        # Only add relation if it doesn't already exist
+        if f"ip:{ip}" not in old_ip_ids:
+            await semantic_memory.add_relation(KGRelation(
+                source_id=f"host:{scan.hostname}",
+                target_id=f"ip:{ip}",
+                relation_type="has_address",
+            ))
         stored["entities"] += 1
 
-    # 4. Create entities for infrastructure tools
+    # 4. Upsert entities for infrastructure tools
     for tool_name in ["docker", "kubernetes"]:
         version = ""
         if tool_name == "docker" and scan.docker_version:
@@ -445,14 +494,9 @@ async def store_scan_in_memory(
             properties={"version": version, "host": scan.hostname},
         )
         await semantic_memory.add_entity(tool_entity)
-        await semantic_memory.add_relation(KGRelation(
-            source_id=f"host:{scan.hostname}",
-            target_id=f"tool:{tool_name}",
-            relation_type="has_tool",
-        ))
         stored["entities"] += 1
 
-    # 5. Create entities for disks
+    # 5. Upsert entities for disks (with latest usage)
     for disk in scan.disks:
         disk_entity = KGEntity(
             id=f"disk:{scan.hostname}:{disk['drive']}",
@@ -465,30 +509,25 @@ async def store_scan_in_memory(
             },
         )
         await semantic_memory.add_entity(disk_entity)
-        await semantic_memory.add_relation(KGRelation(
-            source_id=f"host:{scan.hostname}",
-            target_id=f"disk:{scan.hostname}:{disk['drive']}",
-            relation_type="has_disk",
-        ))
         stored["entities"] += 1
 
     # 6. Save scan timestamp in DB
     if db:
         try:
+            from datetime import datetime, timezone
             await db.set_setting("last_env_scan", {
                 "hostname": scan.hostname,
-                "timestamp": __import__("datetime").datetime.now(
-                    __import__("datetime").timezone.utc
-                ).isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "tools_count": len(scan.installed_tools),
                 "disks_count": len(scan.disks),
             })
         except Exception:
             pass
 
+    action = "updated" if stored["updated"] else "stored"
     logger.info(
-        "Environment scan stored: %d notes, %d entities (host=%s, tools=%d, disks=%d)",
-        stored["notes"], stored["entities"],
+        "Environment scan %s: %d notes, %d entities (host=%s, tools=%d, disks=%d)",
+        action, stored["notes"], stored["entities"],
         scan.hostname, len(scan.installed_tools), len(scan.disks),
     )
 
