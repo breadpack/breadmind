@@ -48,7 +48,10 @@ class EpisodicMemory:
         self, keywords: list[str], limit: int = 5
     ) -> list[EpisodicNote]:
         if self._db:
-            return await self._db.search_notes_by_keywords(keywords, limit)
+            results = await self._db.search_notes_by_keywords(keywords, limit)
+            for note in results:
+                self._reinforce(note)
+            return results
 
         scored = []
         for note in self._notes:
@@ -58,7 +61,10 @@ class EpisodicMemory:
                 score *= note.decay_weight
                 scored.append((score, note))
         scored.sort(key=lambda x: x[0], reverse=True)
-        return [note for _, note in scored[:limit]]
+        results = [note for _, note in scored[:limit]]
+        for note in results:
+            self._reinforce(note)
+        return results
 
     async def search_by_tags(
         self, tags: list[str], limit: int = 5
@@ -119,25 +125,63 @@ class EpisodicMemory:
                 return True
         return False
 
+    def _reinforce(self, note: EpisodicNote):
+        """Strengthen a memory on access — like human recall reinforcement.
+
+        Each retrieval boosts decay_weight and updates access tracking.
+        More accessed memories resist decay longer.
+        """
+        note.access_count += 1
+        note.last_accessed = datetime.now(timezone.utc)
+        # Boost: each access adds 0.1, capped at 1.0
+        note.decay_weight = min(1.0, note.decay_weight + 0.1)
+
+    def pin_note(self, note: EpisodicNote):
+        """Mark a note as pinned — immune to decay and cleanup."""
+        note.pinned = True
+
     def apply_decay(self):
-        """Reduce decay_weight of all notes based on age.
-        Formula: weight *= 0.95 ** days_since_creation
+        """Reduce decay_weight based on time since last access (not creation).
+
+        Human-like: memories decay from last recall, not from creation.
+        Frequently accessed memories stay strong. Pinned memories are exempt.
+        Formula: weight = base_decay * access_bonus
+          - base_decay = 0.95 ^ days_since_last_access
+          - access_bonus = min(1.0 + access_count * 0.05, 2.0)
         """
         now = datetime.now(timezone.utc)
         for note in self._notes:
-            created = note.created_at
-            if created.tzinfo is None:
-                created = created.replace(tzinfo=timezone.utc)
-            days = (now - created).total_seconds() / 86400.0
-            note.decay_weight = 0.95 ** days
+            if note.pinned:
+                note.decay_weight = 1.0
+                continue
+
+            # Decay from last access (or creation if never accessed)
+            ref_time = note.last_accessed or note.created_at
+            if ref_time.tzinfo is None:
+                ref_time = ref_time.replace(tzinfo=timezone.utc)
+            days = (now - ref_time).total_seconds() / 86400.0
+
+            base_decay = 0.95 ** days
+            # Frequently accessed memories decay slower
+            access_bonus = min(1.0 + note.access_count * 0.05, 2.0)
+            note.decay_weight = min(1.0, base_decay * access_bonus)
 
     async def cleanup_low_relevance(self, threshold: float = 0.1) -> int:
-        """Remove notes with decay_weight below threshold. Returns count removed."""
+        """Remove notes with decay_weight below threshold.
+
+        Pinned notes are never removed. Returns count removed.
+        """
         if self._db:
             removed = await self._db.delete_notes_below_weight(threshold)
-            self._notes = [n for n in self._notes if n.decay_weight >= threshold]
+            self._notes = [
+                n for n in self._notes
+                if n.pinned or n.decay_weight >= threshold
+            ]
             return removed
 
         before = len(self._notes)
-        self._notes = [n for n in self._notes if n.decay_weight >= threshold]
+        self._notes = [
+            n for n in self._notes
+            if n.pinned or n.decay_weight >= threshold
+        ]
         return before - len(self._notes)

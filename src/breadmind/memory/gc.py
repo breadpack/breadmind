@@ -16,7 +16,14 @@ logger = logging.getLogger(__name__)
 
 
 class MemoryGC:
-    """Periodic garbage collector for the 3-layer memory system."""
+    """Periodic garbage collector for the 3-layer memory system.
+
+    Lifecycle inspired by human memory:
+    1. Decay: memories weaken over time (unless accessed or pinned)
+    2. Reinforce: recalled memories get strengthened automatically
+    3. Consolidate: similar weak memories merge into generalized knowledge
+    4. Prune: truly irrelevant memories are removed
+    """
 
     def __init__(
         self,
@@ -27,6 +34,7 @@ class MemoryGC:
         decay_threshold: float = 0.1,
         max_cached_notes: int = 500,
         kg_max_age_days: int = 90,
+        consolidation_enabled: bool = True,
     ):
         self._working = working_memory
         self._episodic = episodic_memory
@@ -35,6 +43,7 @@ class MemoryGC:
         self._decay_threshold = decay_threshold
         self._max_cached_notes = max_cached_notes
         self._kg_max_age_days = kg_max_age_days
+        self._consolidation_enabled = consolidation_enabled
         self._task: asyncio.Task | None = None
         self._stats: dict = {"runs": 0, "last_run": None}
 
@@ -70,6 +79,8 @@ class MemoryGC:
             "cleaned_notes": 0,
             "trimmed_cache": 0,
             "pruned_entities": 0,
+            "consolidated_notes": 0,
+            "consolidated_entities": 0,
         }
 
         # 1. WorkingMemory: expire stale sessions
@@ -117,6 +128,20 @@ class MemoryGC:
             except Exception as e:
                 logger.warning("KG pruning failed: %s", e)
 
+        # 4. Consolidation: merge similar weak episodic memories into knowledge
+        if self._consolidation_enabled and self._episodic and self._semantic:
+            try:
+                from breadmind.memory.consolidation import MemoryConsolidator
+                consolidator = MemoryConsolidator(
+                    episodic_memory=self._episodic,
+                    semantic_memory=self._semantic,
+                )
+                c_result = await consolidator.consolidate()
+                result["consolidated_notes"] = c_result["notes_consolidated"]
+                result["consolidated_entities"] = c_result["entities_created"]
+            except Exception as e:
+                logger.warning("Memory consolidation failed: %s", e)
+
         self._stats["runs"] += 1
         self._stats["last_run"] = datetime.now(timezone.utc).isoformat()
         self._stats["last_result"] = result
@@ -163,11 +188,12 @@ class MemoryGC:
                 if any(v > 0 for k, v in result.items() if k != "decayed_notes"):
                     logger.info(
                         "MemoryGC cycle: sessions=%d, cleaned=%d, "
-                        "trimmed=%d, kg_pruned=%d",
+                        "trimmed=%d, kg_pruned=%d, consolidated=%d",
                         result["expired_sessions"],
                         result["cleaned_notes"],
                         result["trimmed_cache"],
                         result["pruned_entities"],
+                        result.get("consolidated_notes", 0),
                     )
             except Exception as e:
                 logger.error("MemoryGC cycle failed: %s", e)

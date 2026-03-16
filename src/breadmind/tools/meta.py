@@ -309,6 +309,8 @@ def create_memory_tools(
                 tags=[f"memory:{category}", "explicit_memory"],
                 context_description=f"User-requested memory ({category})",
             )
+            # Pin explicit user memories — they should never decay
+            episodic_memory.pin_note(note)
 
             # Also store as user preference if applicable
             if category == "preference" and profiler:
