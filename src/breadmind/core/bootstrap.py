@@ -224,6 +224,7 @@ async def init_memory(db, provider, config, registry, mcp_manager, search_engine
             profiler=profiler,
             max_context_tokens=4000,
             skill_store=skill_store,
+            smart_retriever=smart_retriever,
         )
     except (ImportError, Exception):
         pass

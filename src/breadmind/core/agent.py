@@ -222,6 +222,16 @@ class CoreAgent:
         session_id = f"{user}:{channel}"
         logger.info(json.dumps({"event": "session_start", "user": user, "channel": channel}))
 
+        # Step 1: Classify intent (rule-based, no LLM call)
+        from breadmind.core.intent import classify as classify_intent
+        intent = classify_intent(message)
+        logger.info(json.dumps({
+            "event": "intent_classified",
+            "category": intent.category.value,
+            "confidence": round(intent.confidence, 2),
+            "entities": intent.entities[:5],
+        }))
+
         # Build initial messages
         system_msg = LLMMessage(role="system", content=self._system_prompt)
         user_msg = LLMMessage(role="user", content=message)
@@ -238,11 +248,11 @@ class CoreAgent:
         else:
             messages = [system_msg, user_msg]
 
-        # Enrich context with episodic/semantic memory if available
+        # Step 2: Enrich context with intent-aware memory retrieval
         if self._context_builder:
             try:
                 enrichment = await asyncio.wait_for(
-                    self._context_builder.build_context(session_id, message),
+                    self._context_builder.build_context(session_id, message, intent=intent),
                     timeout=10,
                 )
                 # Extract only the enrichment system messages (not conversation history)
@@ -253,9 +263,9 @@ class CoreAgent:
             except Exception as e:
                 logger.warning(f"ContextBuilder enrichment failed: {e}")
 
-        # Filter tools to relevant subset based on message content
+        # Step 3: Filter tools using intent-aware selection
         all_tools = self._tools.get_all_definitions()
-        tools = self._filter_relevant_tools(all_tools, message)
+        tools = self._filter_relevant_tools(all_tools, message, intent=intent)
 
         for turn in range(self._max_turns):
             # Apply conversation summarization if available
@@ -496,13 +506,12 @@ class CoreAgent:
             logger.exception("Behavior analysis failed")
 
     def _filter_relevant_tools(
-        self, tools: list, message: str, max_tools: int = 30,
+        self, tools: list, message: str, max_tools: int = 30, intent=None,
     ) -> list:
-        """Filter tools to a relevant subset based on message content.
+        """Filter tools to a relevant subset based on message content and intent.
 
-        Always includes: shell_exec, web_search, file_read, file_write, browser,
-        mcp_search, mcp_install, mcp_list, skill_manage.
-        For other tools, score by keyword overlap with the message.
+        Uses intent category to prioritize tools that match the user's goal,
+        then falls back to keyword overlap scoring for remaining slots.
         """
         ALWAYS_INCLUDE = {
             "shell_exec", "web_search", "file_read", "file_write",
@@ -514,23 +523,35 @@ class CoreAgent:
         if len(tools) <= max_tools:
             return tools
 
+        # Add intent-hinted tools to essential set
+        intent_hints = set()
+        if intent is not None:
+            intent_hints = intent.tool_hints
+
         essential = []
         candidates = []
         msg_lower = message.lower()
 
         for t in tools:
-            if t.name in ALWAYS_INCLUDE:
+            if t.name in ALWAYS_INCLUDE or t.name in intent_hints:
                 essential.append(t)
             else:
-                # Score by name/description overlap
+                # Score by name/description overlap + intent bonus
                 score = 0
                 name_words = set(t.name.lower().replace("_", " ").split())
                 desc_words = set((t.description or "").lower().split())
                 msg_words = set(msg_lower.split())
                 score = len(msg_words & name_words) * 3 + len(msg_words & desc_words)
+
+                # Boost tools whose description matches intent keywords
+                if intent is not None:
+                    intent_kw_set = set(intent.keywords)
+                    score += len(intent_kw_set & name_words) * 2
+                    score += len(intent_kw_set & desc_words)
+
                 candidates.append((score, t))
 
         candidates.sort(key=lambda x: x[0], reverse=True)
-        remaining_slots = max_tools - len(essential)
+        remaining_slots = max(0, max_tools - len(essential))
         selected = essential + [t for _, t in candidates[:remaining_slots]]
         return selected

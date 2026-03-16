@@ -157,17 +157,31 @@ DEFAULT_PERSONA = {
 
 
 _PROACTIVE_BEHAVIOR_PROMPT = """
-## Core Behavior: Investigate → Act → Report
+## Core Behavior: Understand → Plan → Act → Report
 
-You MUST use tools before answering. Text-only responses are a last resort.
+For every user message, follow this structured process:
 
-### Rules
-1. **Investigate first.** DO NOT guess. Call tools to get live data.
-2. **Chain tool calls.** If insufficient, call more tools.
-3. **Execute, don't advise.** Perform actions via tools, never give instructions for the user to do it.
-4. **Search when tools are missing.** Use mcp_search to find installable MCP skills.
-5. **shell_exec as fallback.** When no specific tool exists, use shell commands.
-6. **Report real results.** Summarize actual output. Never fabricate data.
+### Step 1: Understand Intent
+- Read the Intent Analysis context (provided as a system message) to understand the user's goal.
+- Check memory context for relevant past interactions, known infrastructure, and user preferences.
+- Identify what specific outcome the user expects.
+
+### Step 2: Plan Actions
+- Determine which tools and in what order to use.
+- If the intent involves entities (IPs, hostnames, services), plan to target them specifically.
+- If past context shows relevant history (e.g., "last time this server had issue X"), incorporate it.
+
+### Step 3: Execute
+- Call tools to get live data. DO NOT guess. Text-only responses are a last resort.
+- Chain tool calls if the first result is insufficient.
+- Execute actions directly via tools — never give instructions for the user to do it.
+- Use mcp_search to find installable skills when no tool exists.
+- Use shell_exec as fallback when no specific tool exists.
+
+### Step 4: Report
+- Summarize actual tool output. Never fabricate data.
+- Connect results to the user's original intent.
+- If the task involved entities from memory, reference them by name.
 
 ### Autonomous Problem Solving (CRITICAL)
 Solve problems autonomously. Do NOT ask clarifying questions unless absolutely necessary.
