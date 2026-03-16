@@ -115,6 +115,85 @@ class TestStoreInMemory:
         docker = await sm.get_entity("tool:docker")
         assert docker is not None
 
-        # Relations
+        # Relations — at least the 2 IP addresses
         rels = await sm.get_relations("host:srv1")
-        assert len(rels) >= 3  # 2 IPs + docker
+        assert len(rels) >= 2  # 2 IPs (tool relations only added on initial scan)
+
+
+class TestRescan:
+    @pytest.mark.asyncio
+    async def test_rescan_updates_existing_note(self):
+        em = EpisodicMemory()
+        sm = SemanticMemory()
+
+        # Initial scan
+        scan1 = ScanResult(
+            hostname="srv1", os_name="Linux", os_version="6.0", os_arch="x86_64",
+            memory_total_gb=32.0, memory_available_gb=16.0,
+            disks=[{"drive": "/", "total_gb": 500, "free_gb": 200, "percent_used": 60}],
+        )
+        await store_scan_in_memory(scan1, em, sm)
+        assert len(em._notes) == 1
+        assert "16.0GB available" in em._notes[0].content
+
+        # Rescan with changed values
+        scan2 = ScanResult(
+            hostname="srv1", os_name="Linux", os_version="6.0", os_arch="x86_64",
+            memory_total_gb=32.0, memory_available_gb=8.0,  # Memory changed
+            disks=[{"drive": "/", "total_gb": 500, "free_gb": 100, "percent_used": 80}],
+        )
+        result = await store_scan_in_memory(scan2, em, sm)
+
+        # Should update, not duplicate
+        assert len(em._notes) == 1
+        assert result["updated"] is True
+        assert "8.0GB available" in em._notes[0].content
+
+    @pytest.mark.asyncio
+    async def test_rescan_updates_kg_entities(self):
+        em = EpisodicMemory()
+        sm = SemanticMemory()
+
+        # Initial scan with IP 10.0.0.1
+        scan1 = ScanResult(
+            hostname="srv1", os_name="Linux", os_version="6.0", os_arch="x86_64",
+            ip_addresses=["10.0.0.1"],
+        )
+        await store_scan_in_memory(scan1, em, sm)
+        assert await sm.get_entity("ip:10.0.0.1") is not None
+
+        # Rescan — IP changed to 10.0.0.2
+        scan2 = ScanResult(
+            hostname="srv1", os_name="Linux", os_version="6.0", os_arch="x86_64",
+            ip_addresses=["10.0.0.2"],
+        )
+        await store_scan_in_memory(scan2, em, sm)
+
+        # Old IP removed, new IP exists
+        assert await sm.get_entity("ip:10.0.0.1") is None
+        assert await sm.get_entity("ip:10.0.0.2") is not None
+
+    @pytest.mark.asyncio
+    async def test_rescan_updates_disk_usage(self):
+        em = EpisodicMemory()
+        sm = SemanticMemory()
+
+        scan1 = ScanResult(
+            hostname="srv1", os_name="Linux", os_version="6.0", os_arch="x86_64",
+            disks=[{"drive": "C:", "total_gb": 500, "free_gb": 300, "percent_used": 40}],
+        )
+        await store_scan_in_memory(scan1, em, sm)
+
+        disk = await sm.get_entity("disk:srv1:C:")
+        assert disk.properties["free_gb"] == 300.0
+
+        # Rescan — disk usage changed
+        scan2 = ScanResult(
+            hostname="srv1", os_name="Linux", os_version="6.0", os_arch="x86_64",
+            disks=[{"drive": "C:", "total_gb": 500, "free_gb": 100, "percent_used": 80}],
+        )
+        await store_scan_in_memory(scan2, em, sm)
+
+        disk = await sm.get_entity("disk:srv1:C:")
+        assert disk.properties["free_gb"] == 100.0
+        assert disk.properties["percent_used"] == 80.0

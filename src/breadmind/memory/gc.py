@@ -35,6 +35,9 @@ class MemoryGC:
         max_cached_notes: int = 500,
         kg_max_age_days: int = 90,
         consolidation_enabled: bool = True,
+        env_refresh_enabled: bool = True,
+        env_refresh_interval: int = 6,  # refresh every N GC cycles (default: 6h)
+        db=None,
     ):
         self._working = working_memory
         self._episodic = episodic_memory
@@ -44,6 +47,9 @@ class MemoryGC:
         self._max_cached_notes = max_cached_notes
         self._kg_max_age_days = kg_max_age_days
         self._consolidation_enabled = consolidation_enabled
+        self._env_refresh_enabled = env_refresh_enabled
+        self._env_refresh_interval = env_refresh_interval
+        self._db = db
         self._task: asyncio.Task | None = None
         self._stats: dict = {"runs": 0, "last_run": None}
 
@@ -141,6 +147,29 @@ class MemoryGC:
                 result["consolidated_entities"] = c_result["entities_created"]
             except Exception as e:
                 logger.warning("Memory consolidation failed: %s", e)
+
+        # 5. Environment refresh — rescan dynamic data (memory, disks, IPs)
+        run_number = self._stats.get("runs", 0)
+        if (
+            self._env_refresh_enabled
+            and self._episodic
+            and self._semantic
+            and run_number > 0  # skip first cycle (initial scan already ran)
+            and run_number % self._env_refresh_interval == 0
+        ):
+            try:
+                from breadmind.core.env_scanner import scan_dynamic, store_scan_in_memory
+                scan = await scan_dynamic()
+                env_result = await store_scan_in_memory(
+                    scan, self._episodic, self._semantic, db=self._db,
+                )
+                result["env_refreshed"] = True
+                logger.info(
+                    "Environment refreshed: memory=%.1fGB free, disks=%d, ips=%d",
+                    scan.memory_available_gb, len(scan.disks), len(scan.ip_addresses),
+                )
+            except Exception as e:
+                logger.warning("Environment refresh failed: %s", e)
 
         self._stats["runs"] += 1
         self._stats["last_run"] = datetime.now(timezone.utc).isoformat()
