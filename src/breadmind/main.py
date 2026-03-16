@@ -7,38 +7,8 @@ import sys
 
 logger = logging.getLogger(__name__)
 from breadmind.config import load_config, load_safety_config, get_default_config_dir, set_env_file_path, load_env_file
-from breadmind.core.agent import CoreAgent
-from breadmind.core.safety import SafetyGuard
 from breadmind.llm.factory import create_provider
-from breadmind.memory.working import WorkingMemory
 from breadmind.monitoring.engine import MonitoringEngine
-from breadmind.tools.registry import ToolRegistry
-from breadmind.tools.builtin import shell_exec, web_search, file_read, file_write, messenger_connect, swarm_role
-from breadmind.tools.mcp_client import MCPClientManager
-from breadmind.tools.registry_search import RegistrySearchEngine, RegistryConfig
-from breadmind.tools.meta import create_meta_tools
-
-# Optional imports - may not be available yet
-try:
-    from breadmind.core.audit import AuditLogger
-except ImportError:
-    AuditLogger = None
-
-try:
-    from breadmind.core.metrics import MetricsCollector
-except ImportError:
-    MetricsCollector = None
-
-try:
-    from breadmind.memory.context_builder import ContextBuilder
-except ImportError:
-    ContextBuilder = None
-
-try:
-    from breadmind.memory.profiler import UserProfiler
-except ImportError:
-    UserProfiler = None
-
 
 
 def _find_free_port(preferred: int, max_attempts: int = 10) -> int:
@@ -137,25 +107,10 @@ async def run():
         await run_worker(config, args)
         return
 
-    # Connect to database and load persisted settings
-    # Falls back to file-based settings store when DB is unavailable
-    db = None
-    try:
-        from breadmind.storage.database import Database
-        db_cfg = config.database
-        dsn = f"postgresql://{db_cfg.user}:{db_cfg.password}@{db_cfg.host}:{db_cfg.port}/{db_cfg.name}"
-        db = Database(dsn)
-        await db.connect()
-        from breadmind.config import apply_db_settings
-        await apply_db_settings(config, db)
-        print("  Database connected, settings loaded")
-    except Exception as e:
-        print(f"  Database not available ({e}), using file-based settings")
-        from breadmind.storage.settings_store import FileSettingsStore
-        db = FileSettingsStore(os.path.join(config_dir, "settings.json"))
-        from breadmind.config import apply_db_settings
-        await apply_db_settings(config, db)
-        print(f"  Settings: {config_dir}/settings.json")
+    # Initialize all components via bootstrap
+    from breadmind.core.bootstrap import init_database, init_tools, init_memory, init_agent
+
+    db = await init_database(config, config_dir)
 
     # First-run setup wizard (CLI mode only, web has its own UI)
     if not args.web:
@@ -164,133 +119,11 @@ async def run():
             await run_cli_wizard(db, config)
 
     provider = create_provider(config)
-    registry = ToolRegistry()
-    guard = SafetyGuard(
-        blacklist=safety_cfg.get("blacklist", {}),
-        require_approval=safety_cfg.get("require_approval", []),
+    registry, guard, mcp_manager, search_engine, meta_tools = await init_tools(config, safety_cfg)
+    memory_components = await init_memory(db, provider, config, registry, mcp_manager, search_engine)
+    agent, behavior_tracker, audit_logger, metrics_collector = await init_agent(
+        config, provider, registry, guard, db, memory_components,
     )
-
-    # Register built-in tools
-    for t in [shell_exec, web_search, file_read, file_write, messenger_connect, swarm_role]:
-        registry.register(t)
-
-    # Register browser tools (optional — requires pip install 'breadmind[browser]')
-    try:
-        from breadmind.tools.browser import register_browser_tools
-        register_browser_tools(registry)
-    except Exception:
-        pass
-
-    # Initialize MCP
-    mcp_manager = MCPClientManager(
-        max_restart_attempts=config.mcp.max_restart_attempts,
-        call_timeout=config.llm.tool_call_timeout_seconds,
-    )
-
-    # Set up MCP tool execution callback
-    async def mcp_execute(server_name, tool_name, arguments):
-        return await mcp_manager.call_tool(server_name, tool_name, arguments)
-    registry._mcp_callback = mcp_execute
-
-    # Connect configured MCP servers
-    for name, srv_cfg in config.mcp.servers.items():
-        try:
-            transport = srv_cfg.get("transport", "stdio")
-            if transport == "sse":
-                defs = await mcp_manager.connect_sse_server(
-                    name, srv_cfg["url"], headers=srv_cfg.get("headers"),
-                )
-            else:
-                defs = await mcp_manager.start_stdio_server(
-                    name, srv_cfg["command"], srv_cfg.get("args", []),
-                    env=srv_cfg.get("env"),
-                )
-            for d in defs:
-                registry.register_mcp_tool(d, server_name=name, execute_callback=mcp_execute)
-            print(f"  Connected MCP server: {name} ({len(defs)} tools)")
-        except Exception as e:
-            print(f"  Failed to connect MCP server '{name}': {e}")
-
-    # Register meta tools
-    search_engine = RegistrySearchEngine([
-        RegistryConfig(name=r.name, type=r.type, enabled=r.enabled, url=r.url)
-        for r in config.mcp.registries
-    ])
-    meta_tools = create_meta_tools(mcp_manager, search_engine)
-    for func in meta_tools.values():
-        registry.register(func)
-
-    # Self-expansion components
-    from breadmind.core.performance import PerformanceTracker
-    from breadmind.core.skill_store import SkillStore
-    from breadmind.core.tool_gap import ToolGapDetector
-    from breadmind.core.team_builder import TeamBuilder
-    from breadmind.tools.meta import create_expansion_tools
-
-    performance_tracker = PerformanceTracker(db=db)
-    await performance_tracker.load_from_db()
-
-    skill_store = SkillStore(db=db, tracker=performance_tracker)
-    await skill_store.load_from_db()
-
-    tool_gap_detector = ToolGapDetector(
-        tool_registry=registry,
-        mcp_manager=mcp_manager,
-        search_engine=search_engine,
-    )
-
-    # Memory layers and SmartRetriever
-    from breadmind.memory.episodic import EpisodicMemory
-    from breadmind.memory.semantic import SemanticMemory
-    from breadmind.memory.embedding import EmbeddingService
-    from breadmind.core.smart_retriever import SmartRetriever
-
-    episodic_memory = EpisodicMemory(db=db)
-    semantic_memory = SemanticMemory(db=db)
-    embedding_service = EmbeddingService()
-
-    smart_retriever = SmartRetriever(
-        embedding_service=embedding_service,
-        episodic_memory=episodic_memory,
-        semantic_memory=semantic_memory,
-        skill_store=skill_store,
-        db=db,
-    )
-
-    # Wire SmartRetriever into skill store
-    skill_store.set_retriever(smart_retriever)
-
-    # Register expansion meta tools
-    expansion_tools = create_expansion_tools(
-        skill_store=skill_store,
-        tracker=performance_tracker,
-    )
-    for func in expansion_tools.values():
-        registry.register(func)
-
-    # Memory tools registered after profiler init (below)
-
-    # Initialize MCP Store
-    mcp_store = None
-    try:
-        from breadmind.mcp.store import MCPStore
-        from breadmind.mcp.install_assistant import InstallAssistant
-        install_assistant = InstallAssistant(provider=provider)
-        mcp_store = MCPStore(
-            mcp_manager=mcp_manager,
-            registry_search=search_engine,
-            install_assistant=install_assistant,
-            db=db,
-            tool_registry=registry,
-        )
-        # Auto-restore previously running servers
-        await mcp_store.auto_restore_servers()
-        print(f"  MCP Store: ready")
-    except Exception as e:
-        print(f"  MCP Store: not available ({e})")
-
-    # Initialize working memory
-    working_memory = WorkingMemory(db=db)
 
     # Initialize monitoring engine
     monitoring_engine = MonitoringEngine()
@@ -309,108 +142,6 @@ async def run():
     else:
         signal.signal(signal.SIGTERM, _signal_handler)
         signal.signal(signal.SIGINT, _signal_handler)
-
-    # Initialize optional components
-    audit_logger = None
-    if AuditLogger is not None:
-        try:
-            audit_logger = AuditLogger()
-        except Exception:
-            pass
-
-    metrics_collector = None
-    if MetricsCollector is not None:
-        try:
-            metrics_collector = MetricsCollector()
-        except Exception:
-            pass
-
-    # Initialize UserProfiler
-    profiler = None
-    if UserProfiler is not None:
-        try:
-            profiler = UserProfiler(db=db)
-            await profiler.load_from_db()
-        except Exception:
-            pass
-
-    # Register memory tools (after profiler init)
-    from breadmind.tools.meta import create_memory_tools
-    memory_tools = create_memory_tools(
-        episodic_memory=episodic_memory,
-        profiler=profiler,
-        smart_retriever=smart_retriever,
-    )
-    for func in memory_tools.values():
-        registry.register(func)
-
-    # Wire ContextBuilder if available (must be before agent creation)
-    context_builder = None
-    if ContextBuilder is not None:
-        try:
-            context_builder = ContextBuilder(
-                working_memory=working_memory,
-                episodic_memory=episodic_memory,
-                semantic_memory=semantic_memory,
-                profiler=profiler,
-                max_context_tokens=4000,
-                skill_store=skill_store,
-            )
-        except Exception:
-            pass
-
-    from breadmind.config import build_system_prompt, DEFAULT_PERSONA
-
-    # Load saved behavior prompt from DB
-    # If saved prompt lacks the "Autonomous Problem Solving" section,
-    # discard it so the updated default is used instead.
-    saved_behavior_prompt = None
-    if db is not None:
-        try:
-            bp_data = await db.get_setting("behavior_prompt")
-            if bp_data and "prompt" in bp_data:
-                saved = bp_data["prompt"]
-                if "Autonomous Problem Solving" in saved:
-                    saved_behavior_prompt = saved
-                else:
-                    logger.info("Discarding saved behavior prompt (missing autonomous solving section)")
-        except Exception:
-            pass
-
-    system_prompt = build_system_prompt(
-        DEFAULT_PERSONA, behavior_prompt=saved_behavior_prompt,
-    )
-
-    agent_kwargs = dict(
-        provider=provider,
-        tool_registry=registry,
-        safety_guard=guard,
-        system_prompt=system_prompt,
-        max_turns=config.llm.tool_call_max_turns,
-        working_memory=working_memory,
-        tool_gap_detector=tool_gap_detector,
-        context_builder=context_builder,
-        behavior_prompt=saved_behavior_prompt,
-    )
-    if audit_logger is not None:
-        agent_kwargs["audit_logger"] = audit_logger
-
-    agent = CoreAgent(**agent_kwargs)
-
-    # Wire BehaviorTracker
-    from breadmind.core.behavior_tracker import BehaviorTracker
-    behavior_tracker = BehaviorTracker(
-        provider=provider,
-        get_behavior_prompt=agent.get_behavior_prompt,
-        set_behavior_prompt=agent.set_behavior_prompt,
-        add_notification=agent.add_notification,
-        db=db,
-    )
-    agent.set_behavior_tracker(behavior_tracker)
-
-    # Wire metrics_collector to registry if supported
-    if metrics_collector is not None and hasattr(registry, 'set_metrics_collector'):
-        registry.set_metrics_collector(metrics_collector)
 
     builtin_count = len([t for t in registry.get_all_definitions() if registry.get_tool_source(t.name) == "builtin"])
     print("BreadMind v0.1.0 - AI Infrastructure Agent")
@@ -454,6 +185,15 @@ async def run():
 
     update_task = asyncio.create_task(check_updates_periodically())
 
+    # Extract commonly used memory components
+    working_memory = memory_components["working_memory"]
+    performance_tracker = memory_components["performance_tracker"]
+    skill_store = memory_components["skill_store"]
+    smart_retriever = memory_components["smart_retriever"]
+    context_builder = memory_components.get("context_builder")
+    profiler = memory_components.get("profiler")
+    mcp_store = memory_components.get("mcp_store")
+
     try:
         if args.web:
             import uvicorn
@@ -470,6 +210,7 @@ async def run():
             # Wire self-expansion components into swarm manager
             swarm_manager.set_tracker(performance_tracker)
             swarm_manager.set_skill_store(skill_store)
+            from breadmind.core.team_builder import TeamBuilder
             team_builder = TeamBuilder(swarm_manager, performance_tracker, skill_store, agent.handle_message)
             swarm_manager.set_team_builder(team_builder)
             team_builder.set_retriever(smart_retriever)
