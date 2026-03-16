@@ -508,15 +508,21 @@ class CoreAgent:
         return final
 
     async def _detect_new_tool(self, command: str, output: str):
-        """Fire-and-forget: check if shell_exec installed a new tool."""
+        """Fire-and-forget: check if shell_exec installed or removed a tool."""
         try:
-            from breadmind.core.env_scanner import detect_new_tool
+            from breadmind.core.env_scanner import detect_new_tool, detect_removed_tool
             sm = getattr(self._context_builder, '_semantic', None)
             if sm:
                 tool_name = await detect_new_tool(command, output, sm)
                 if tool_name:
                     self.add_notification(
                         f"[System] 새 도구 발견: {tool_name} — 환경 정보가 갱신되었습니다."
+                    )
+                    return
+                removed = await detect_removed_tool(command, output, sm)
+                if removed:
+                    self.add_notification(
+                        f"[System] 도구 제거 감지: {removed} — 환경 정보가 갱신되었습니다."
                     )
         except Exception:
             logger.debug("Tool detection failed", exc_info=True)
