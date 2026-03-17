@@ -5,6 +5,8 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from breadmind.messenger.platforms import get_token_env_map
+
 logger = logging.getLogger(__name__)
 
 
@@ -29,23 +31,6 @@ class ExpiryStatus:
 
 class MessengerSecurityManager:
     """메신저 토큰 보안 관리자."""
-
-    TOKEN_KEY_MAP = {
-        "slack": ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"],
-        "discord": ["DISCORD_BOT_TOKEN"],
-        "telegram": ["TELEGRAM_BOT_TOKEN"],
-        "whatsapp": [
-            "WHATSAPP_TWILIO_ACCOUNT_SID",
-            "WHATSAPP_TWILIO_AUTH_TOKEN",
-            "WHATSAPP_FROM_NUMBER",
-        ],
-        "gmail": [
-            "GMAIL_CLIENT_ID",
-            "GMAIL_CLIENT_SECRET",
-            "GMAIL_REFRESH_TOKEN",
-        ],
-        "signal": ["SIGNAL_PHONE_NUMBER", "SIGNAL_CLI_PATH"],
-    }
 
     ROTATION_THRESHOLD_DAYS = 90
 
@@ -120,7 +105,7 @@ class MessengerSecurityManager:
 
     async def check_token_expiry(self, platform: str) -> ExpiryStatus:
         """토큰 만료/로테이션 필요 여부 확인."""
-        keys = self.TOKEN_KEY_MAP.get(platform, [])
+        keys = get_token_env_map().get(platform, [])
         for key in keys:
             ts_key = f"{platform}:{key}"
             stored_at = self._token_timestamps.get(ts_key)
@@ -150,7 +135,7 @@ class MessengerSecurityManager:
 
     async def load_token_timestamps(self) -> None:
         """DB에서 토큰 저장 시점 복원."""
-        for platform, keys in self.TOKEN_KEY_MAP.items():
+        for platform, keys in get_token_env_map().items():
             for key in keys:
                 result = await self._db.get_setting(f"messenger_token:{key}")
                 if result:
