@@ -235,3 +235,251 @@
 .guide-steps code { background:#1e293b; padding:1px 4px; border-radius:2px; color:#e2e8f0; }
 .setup-fields { margin-bottom:8px; }
 .field-hint { color:#64748b; font-size:11px; margin-top:-4px; margin-bottom:8px; }
+
+/* =============================================================================
+   Glass Theme Overrides for Personal Tab
+   ============================================================================= */
+
+/* Personal nav */
+.personal-nav-btn {
+    background: transparent !important;
+    border: 1px solid transparent !important;
+    color: var(--text-secondary, rgba(255,255,255,0.6)) !important;
+    border-radius: 12px !important;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.personal-nav-btn:hover {
+    background: rgba(255,255,255,0.08) !important;
+    color: rgba(255,255,255,0.95) !important;
+}
+
+.personal-nav-btn.active {
+    background: rgba(255,255,255,0.12) !important;
+    color: rgba(255,255,255,0.95) !important;
+    border-color: rgba(255,255,255,0.15) !important;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.1) !important;
+}
+
+/* Task cards */
+.task-column {
+    background: rgba(255,255,255,0.03) !important;
+    backdrop-filter: blur(10px) !important;
+    border: 1px solid rgba(255,255,255,0.06) !important;
+    border-radius: 16px !important;
+}
+
+.task-card {
+    background: rgba(255,255,255,0.05) !important;
+    backdrop-filter: blur(20px) !important;
+    border: 1px solid rgba(255,255,255,0.1) !important;
+    border-radius: 12px !important;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.task-card:hover {
+    background: rgba(255,255,255,0.08) !important;
+    transform: translateY(-2px) !important;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.2) !important;
+}
+
+/* Event cards */
+.event-card {
+    background: rgba(255,255,255,0.05) !important;
+    backdrop-filter: blur(20px) !important;
+    border: 1px solid rgba(255,255,255,0.1) !important;
+    border-radius: 12px !important;
+}
+
+.event-date {
+    background: linear-gradient(135deg, #6366f1, #8b5cf6) !important;
+    border-radius: 10px !important;
+}
+
+/* Contact cards */
+.contact-card {
+    background: rgba(255,255,255,0.05) !important;
+    backdrop-filter: blur(20px) !important;
+    border: 1px solid rgba(255,255,255,0.1) !important;
+    border-radius: 12px !important;
+}
+
+.contact-avatar {
+    background: linear-gradient(135deg, #6366f1, #a78bfa) !important;
+    border-radius: 50% !important;
+}
+
+/* Integration cards */
+.integration-card {
+    background: rgba(255,255,255,0.05) !important;
+    backdrop-filter: blur(20px) !important;
+    border: 1px solid rgba(255,255,255,0.1) !important;
+    border-radius: 12px !important;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.integration-card:hover {
+    background: rgba(255,255,255,0.08) !important;
+    transform: translateY(-1px) !important;
+}
+
+.integration-card.connected {
+    border-color: rgba(52, 211, 153, 0.3) !important;
+    box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.1) inset !important;
+}
+
+.integration-status.connected {
+    background: rgba(52, 211, 153, 0.15) !important;
+    color: #34d399 !important;
+}
+
+.integration-status.disconnected {
+    background: rgba(255,255,255,0.05) !important;
+    color: rgba(255,255,255,0.4) !important;
+}
+
+/* Summary stats */
+.summary-stat {
+    background: rgba(255,255,255,0.05) !important;
+    backdrop-filter: blur(20px) !important;
+    border: 1px solid rgba(255,255,255,0.1) !important;
+    border-radius: 16px !important;
+}
+
+.summary-number {
+    background: linear-gradient(135deg, #6366f1, #a78bfa) !important;
+    -webkit-background-clip: text !important;
+    -webkit-text-fill-color: transparent !important;
+    background-clip: text !important;
+}
+
+/* Modals */
+.modal-content {
+    background: rgba(20, 20, 40, 0.85) !important;
+    backdrop-filter: blur(40px) !important;
+    -webkit-backdrop-filter: blur(40px) !important;
+    border: 1px solid rgba(255,255,255,0.12) !important;
+    border-radius: 20px !important;
+    box-shadow: 0 24px 48px rgba(0,0,0,0.5) !important;
+}
+
+.modal-backdrop {
+    background: rgba(0,0,0,0.5) !important;
+    backdrop-filter: blur(4px) !important;
+}
+
+.modal-input {
+    background: rgba(255,255,255,0.06) !important;
+    border: 1px solid rgba(255,255,255,0.1) !important;
+    border-radius: 10px !important;
+    color: rgba(255,255,255,0.95) !important;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', system-ui, sans-serif !important;
+}
+
+.modal-input:focus {
+    border-color: #818cf8 !important;
+    box-shadow: 0 0 0 3px rgba(99,102,241,0.3) !important;
+}
+
+/* Buttons */
+.btn-primary {
+    background: linear-gradient(135deg, #6366f1, #8b5cf6) !important;
+    border: none !important;
+    border-radius: 10px !important;
+    box-shadow: 0 2px 8px rgba(99,102,241,0.3) !important;
+    font-weight: 600 !important;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.btn-primary:hover {
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 16px rgba(99,102,241,0.4) !important;
+}
+
+.btn-secondary {
+    background: rgba(255,255,255,0.08) !important;
+    border: 1px solid rgba(255,255,255,0.12) !important;
+    color: rgba(255,255,255,0.8) !important;
+    border-radius: 10px !important;
+}
+
+.btn-sm {
+    border: 1px solid rgba(255,255,255,0.1) !important;
+    background: rgba(255,255,255,0.05) !important;
+    color: rgba(255,255,255,0.6) !important;
+    border-radius: 8px !important;
+}
+
+.btn-sm:hover {
+    background: rgba(255,255,255,0.1) !important;
+    color: rgba(255,255,255,0.9) !important;
+}
+
+.btn-danger {
+    color: #f87171 !important;
+    border-color: rgba(248,113,113,0.3) !important;
+}
+
+.btn-danger:hover {
+    background: rgba(248,113,113,0.15) !important;
+    color: #fca5a5 !important;
+}
+
+/* Quick Actions */
+.quick-actions-dropdown {
+    background: rgba(20, 20, 40, 0.9) !important;
+    backdrop-filter: blur(40px) !important;
+    -webkit-backdrop-filter: blur(40px) !important;
+    border: 1px solid rgba(255,255,255,0.1) !important;
+    border-radius: 16px !important;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.5) !important;
+}
+
+.quick-action-item:hover, .quick-action-item.selected {
+    background: rgba(255,255,255,0.08) !important;
+}
+
+.qa-cmd { color: #818cf8 !important; }
+
+/* Toast */
+.toast {
+    backdrop-filter: blur(20px) !important;
+    -webkit-backdrop-filter: blur(20px) !important;
+    border-radius: 12px !important;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3) !important;
+}
+
+.toast-success { background: rgba(6, 78, 59, 0.8) !important; border-color: rgba(52,211,153,0.3) !important; }
+.toast-error { background: rgba(69, 10, 10, 0.8) !important; border-color: rgba(248,113,113,0.3) !important; }
+.toast-warning { background: rgba(69, 26, 3, 0.8) !important; border-color: rgba(251,191,36,0.3) !important; }
+.toast-info { background: rgba(12, 74, 110, 0.8) !important; border-color: rgba(99,102,241,0.3) !important; }
+
+/* Onboarding */
+.onboarding-modal {
+    background: rgba(20, 20, 40, 0.9) !important;
+    backdrop-filter: blur(40px) !important;
+    -webkit-backdrop-filter: blur(40px) !important;
+    border: 1px solid rgba(99,102,241,0.3) !important;
+    border-radius: 24px !important;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.5) !important;
+}
+
+.step-dot.active {
+    background: linear-gradient(135deg, #6366f1, #8b5cf6) !important;
+}
+
+/* Empty state */
+.empty-icon { opacity: 0.4; }
+
+/* Loading spinner */
+.loading::before {
+    border-color: rgba(255,255,255,0.1) !important;
+    border-top-color: #818cf8 !important;
+}
+
+/* Setup guide */
+.setup-guide {
+    background: rgba(255,255,255,0.03) !important;
+    border: 1px solid rgba(255,255,255,0.08) !important;
+    border-radius: 12px !important;
+}

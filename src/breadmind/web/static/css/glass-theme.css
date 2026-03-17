@@ -1,0 +1,470 @@
+/* =============================================================================
+   BreadMind Glass Theme — Apple-inspired Glassmorphism
+   ============================================================================= */
+
+/* --- CSS Variables --- */
+:root {
+    --glass-bg: rgba(255, 255, 255, 0.05);
+    --glass-bg-hover: rgba(255, 255, 255, 0.08);
+    --glass-bg-active: rgba(255, 255, 255, 0.12);
+    --glass-border: rgba(255, 255, 255, 0.1);
+    --glass-border-light: rgba(255, 255, 255, 0.15);
+    --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    --glass-blur: blur(20px);
+    --glass-blur-heavy: blur(40px);
+
+    --accent: #6366f1;
+    --accent-light: #818cf8;
+    --accent-glow: rgba(99, 102, 241, 0.3);
+    --accent-gradient: linear-gradient(135deg, #6366f1, #8b5cf6, #a78bfa);
+
+    --text-primary: rgba(255, 255, 255, 0.95);
+    --text-secondary: rgba(255, 255, 255, 0.6);
+    --text-tertiary: rgba(255, 255, 255, 0.4);
+
+    --success: #34d399;
+    --warning: #fbbf24;
+    --error: #f87171;
+
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+    --radius-xl: 20px;
+
+    --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
+    --font-mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', monospace;
+
+    --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* --- Aurora Background --- */
+body {
+    font-family: var(--font-sans) !important;
+    background: #0a0a1a !important;
+    color: var(--text-primary);
+    overflow: hidden;
+}
+
+#aurora-bg {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    z-index: 0;
+    background:
+        radial-gradient(ellipse at 20% 50%, rgba(99, 102, 241, 0.15) 0%, transparent 50%),
+        radial-gradient(ellipse at 80% 20%, rgba(139, 92, 246, 0.12) 0%, transparent 50%),
+        radial-gradient(ellipse at 50% 80%, rgba(59, 130, 246, 0.1) 0%, transparent 50%),
+        linear-gradient(180deg, #0a0a1a 0%, #0f1528 50%, #0a0a1a 100%);
+    animation: aurora 20s ease-in-out infinite alternate;
+}
+
+@keyframes aurora {
+    0% { opacity: 1; }
+    50% { opacity: 0.8; }
+    100% { opacity: 1; }
+}
+
+/* All content above aurora */
+body > *:not(#aurora-bg):not(script):not(link) {
+    position: relative;
+    z-index: 1;
+}
+
+/* --- Typography --- */
+* { font-family: var(--font-sans); }
+code, pre, .code, .mono { font-family: var(--font-mono) !important; }
+h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; }
+
+/* --- Header --- */
+.header {
+    background: var(--glass-bg) !important;
+    backdrop-filter: var(--glass-blur) !important;
+    -webkit-backdrop-filter: var(--glass-blur) !important;
+    border-bottom: 1px solid var(--glass-border) !important;
+    box-shadow: none !important;
+}
+
+.header h1 {
+    font-weight: 700 !important;
+    font-size: 18px !important;
+    letter-spacing: -0.03em;
+    background: var(--accent-gradient);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+/* --- Tabs --- */
+.tabs {
+    background: var(--glass-bg) !important;
+    backdrop-filter: var(--glass-blur) !important;
+    -webkit-backdrop-filter: var(--glass-blur) !important;
+    border-bottom: 1px solid var(--glass-border) !important;
+    padding: 4px 8px !important;
+    gap: 2px !important;
+}
+
+.tab-btn {
+    background: transparent !important;
+    border: none !important;
+    color: var(--text-secondary) !important;
+    border-radius: var(--radius-md) !important;
+    padding: 8px 16px !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    transition: var(--transition) !important;
+    letter-spacing: -0.01em;
+}
+
+.tab-btn:hover {
+    background: var(--glass-bg-hover) !important;
+    color: var(--text-primary) !important;
+}
+
+.tab-btn.active {
+    background: var(--glass-bg-active) !important;
+    color: var(--text-primary) !important;
+    box-shadow: inset 0 0 0 1px var(--glass-border-light) !important;
+}
+
+/* --- Sidebar --- */
+.sidebar {
+    background: var(--glass-bg) !important;
+    backdrop-filter: var(--glass-blur-heavy) !important;
+    -webkit-backdrop-filter: var(--glass-blur-heavy) !important;
+    border-right: 1px solid var(--glass-border) !important;
+    box-shadow: var(--glass-shadow) !important;
+}
+
+.sidebar .session-item {
+    border-radius: var(--radius-md) !important;
+    margin: 2px 8px !important;
+    padding: 10px 12px !important;
+    border: none !important;
+    background: transparent !important;
+    transition: var(--transition) !important;
+}
+
+.sidebar .session-item:hover {
+    background: var(--glass-bg-hover) !important;
+}
+
+.sidebar .session-item.active {
+    background: var(--glass-bg-active) !important;
+    box-shadow: inset 0 0 0 1px var(--glass-border-light) !important;
+}
+
+/* --- Chat Messages --- */
+.message .bubble {
+    border-radius: var(--radius-lg) !important;
+    border: none !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15) !important;
+    transition: var(--transition) !important;
+}
+
+.message.user .bubble {
+    background: var(--accent-gradient) !important;
+    color: white !important;
+    border-radius: var(--radius-lg) var(--radius-lg) 4px var(--radius-lg) !important;
+}
+
+.message.bot .bubble {
+    background: var(--glass-bg) !important;
+    backdrop-filter: var(--glass-blur) !important;
+    -webkit-backdrop-filter: var(--glass-blur) !important;
+    border: 1px solid var(--glass-border) !important;
+    border-radius: var(--radius-lg) var(--radius-lg) var(--radius-lg) 4px !important;
+    color: var(--text-primary) !important;
+}
+
+.message .meta {
+    color: var(--text-tertiary) !important;
+    font-size: 11px !important;
+}
+
+/* --- Input Area --- */
+.input-area {
+    background: var(--glass-bg) !important;
+    backdrop-filter: var(--glass-blur) !important;
+    -webkit-backdrop-filter: var(--glass-blur) !important;
+    border-top: 1px solid var(--glass-border) !important;
+    padding: 12px 16px !important;
+}
+
+.input-row input,
+.input-row textarea {
+    background: rgba(255, 255, 255, 0.06) !important;
+    border: 1px solid var(--glass-border) !important;
+    border-radius: var(--radius-lg) !important;
+    color: var(--text-primary) !important;
+    padding: 12px 16px !important;
+    font-size: 14px !important;
+    font-family: var(--font-sans) !important;
+    transition: var(--transition) !important;
+}
+
+.input-row input:focus,
+.input-row textarea:focus {
+    border-color: var(--accent-light) !important;
+    box-shadow: 0 0 0 3px var(--accent-glow) !important;
+    outline: none !important;
+    background: rgba(255, 255, 255, 0.08) !important;
+}
+
+.input-row button,
+button.send-btn {
+    background: var(--accent-gradient) !important;
+    border: none !important;
+    border-radius: var(--radius-md) !important;
+    color: white !important;
+    font-weight: 600 !important;
+    padding: 10px 20px !important;
+    transition: var(--transition) !important;
+    box-shadow: 0 2px 8px var(--accent-glow) !important;
+}
+
+.input-row button:hover,
+button.send-btn:hover {
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 16px var(--accent-glow) !important;
+}
+
+/* --- Cards & Panels --- */
+.stat-card,
+.event-card,
+.server-card,
+.approval-card,
+.usage-card,
+.settings-section,
+.monitoring .event-card {
+    background: var(--glass-bg) !important;
+    backdrop-filter: var(--glass-blur) !important;
+    -webkit-backdrop-filter: var(--glass-blur) !important;
+    border: 1px solid var(--glass-border) !important;
+    border-radius: var(--radius-lg) !important;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1) !important;
+    transition: var(--transition) !important;
+}
+
+.stat-card:hover,
+.server-card:hover {
+    background: var(--glass-bg-hover) !important;
+    transform: translateY(-2px) !important;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2) !important;
+}
+
+/* --- Settings --- */
+.settings-tab-btn {
+    background: transparent !important;
+    border: none !important;
+    color: var(--text-secondary) !important;
+    border-radius: var(--radius-md) !important;
+    padding: 8px 14px !important;
+    font-size: 13px !important;
+    transition: var(--transition) !important;
+}
+
+.settings-tab-btn:hover {
+    background: var(--glass-bg-hover) !important;
+    color: var(--text-primary) !important;
+}
+
+.settings-tab-btn.active {
+    background: var(--glass-bg-active) !important;
+    color: var(--text-primary) !important;
+}
+
+.settings-section input,
+.settings-section select,
+.settings-section textarea {
+    background: rgba(255, 255, 255, 0.06) !important;
+    border: 1px solid var(--glass-border) !important;
+    border-radius: var(--radius-sm) !important;
+    color: var(--text-primary) !important;
+    padding: 10px 12px !important;
+    transition: var(--transition) !important;
+}
+
+.settings-section input:focus,
+.settings-section select:focus,
+.settings-section textarea:focus {
+    border-color: var(--accent-light) !important;
+    box-shadow: 0 0 0 3px var(--accent-glow) !important;
+    outline: none !important;
+}
+
+.save-btn {
+    background: var(--accent-gradient) !important;
+    border: none !important;
+    border-radius: var(--radius-md) !important;
+    color: white !important;
+    font-weight: 600 !important;
+    padding: 10px 24px !important;
+    box-shadow: 0 2px 8px var(--accent-glow) !important;
+    transition: var(--transition) !important;
+}
+
+.save-btn:hover {
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 16px var(--accent-glow) !important;
+}
+
+/* --- Buttons --- */
+.btn-approve {
+    background: rgba(34, 197, 94, 0.15) !important;
+    border: 1px solid rgba(34, 197, 94, 0.3) !important;
+    color: var(--success) !important;
+    border-radius: var(--radius-sm) !important;
+}
+
+.btn-deny {
+    background: rgba(248, 113, 113, 0.15) !important;
+    border: 1px solid rgba(248, 113, 113, 0.3) !important;
+    color: var(--error) !important;
+    border-radius: var(--radius-sm) !important;
+}
+
+.btn-start {
+    background: rgba(16, 185, 129, 0.15) !important;
+    border: 1px solid rgba(16, 185, 129, 0.3) !important;
+    color: var(--success) !important;
+}
+
+.btn-stop {
+    background: rgba(251, 191, 36, 0.15) !important;
+    border: 1px solid rgba(251, 191, 36, 0.3) !important;
+    color: var(--warning) !important;
+}
+
+/* --- Monitoring --- */
+.filter-btn {
+    background: var(--glass-bg) !important;
+    border: 1px solid var(--glass-border) !important;
+    border-radius: var(--radius-md) !important;
+    color: var(--text-secondary) !important;
+    transition: var(--transition) !important;
+}
+
+.filter-btn:hover, .filter-btn.active {
+    background: var(--glass-bg-active) !important;
+    color: var(--text-primary) !important;
+    border-color: var(--glass-border-light) !important;
+}
+
+/* --- Scrollbar --- */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+/* --- Selection --- */
+::selection {
+    background: var(--accent-glow);
+    color: white;
+}
+
+/* --- Animations --- */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.message {
+    animation: fadeIn 0.3s ease-out !important;
+}
+
+.tab-content {
+    animation: fadeIn 0.2s ease-out;
+}
+
+/* --- Status badges --- */
+.status-connected, .status-online {
+    color: var(--success) !important;
+    text-shadow: 0 0 8px rgba(52, 211, 153, 0.4);
+}
+
+.status-error, .status-offline {
+    color: var(--error) !important;
+}
+
+/* --- MCP Store / Skill Store --- */
+.store-card, .skill-card {
+    background: var(--glass-bg) !important;
+    backdrop-filter: var(--glass-blur) !important;
+    -webkit-backdrop-filter: var(--glass-blur) !important;
+    border: 1px solid var(--glass-border) !important;
+    border-radius: var(--radius-lg) !important;
+    transition: var(--transition) !important;
+}
+
+.store-card:hover, .skill-card:hover {
+    background: var(--glass-bg-hover) !important;
+    transform: translateY(-2px) !important;
+}
+
+/* --- Messenger cards --- */
+.messenger-card, .platform-card {
+    background: var(--glass-bg) !important;
+    backdrop-filter: var(--glass-blur) !important;
+    -webkit-backdrop-filter: var(--glass-blur) !important;
+    border: 1px solid var(--glass-border) !important;
+    border-radius: var(--radius-lg) !important;
+}
+
+/* --- Thinking indicator --- */
+.thinking {
+    background: var(--glass-bg) !important;
+    border: 1px solid var(--glass-border) !important;
+    border-radius: var(--radius-lg) !important;
+}
+
+.thinking-dot {
+    background: var(--accent-light) !important;
+}
+
+/* --- Tooltips & Dropdowns --- */
+.dropdown, .tooltip, .popup {
+    background: rgba(20, 20, 40, 0.9) !important;
+    backdrop-filter: var(--glass-blur) !important;
+    -webkit-backdrop-filter: var(--glass-blur) !important;
+    border: 1px solid var(--glass-border) !important;
+    border-radius: var(--radius-md) !important;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4) !important;
+}
+
+/* --- No events placeholder --- */
+.no-events, .empty-state {
+    color: var(--text-tertiary) !important;
+}
+
+/* --- Code blocks in chat --- */
+.message pre {
+    background: rgba(0, 0, 0, 0.3) !important;
+    border: 1px solid var(--glass-border) !important;
+    border-radius: var(--radius-md) !important;
+    font-family: var(--font-mono) !important;
+}
+
+.message code {
+    background: rgba(99, 102, 241, 0.15) !important;
+    border-radius: 4px !important;
+    padding: 2px 6px !important;
+    font-family: var(--font-mono) !important;
+    color: var(--accent-light) !important;
+}
+
+/* --- Links --- */
+a { color: var(--accent-light) !important; transition: var(--transition); }
+a:hover { color: #a78bfa !important; }
