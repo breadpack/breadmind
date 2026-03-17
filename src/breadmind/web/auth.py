@@ -1,4 +1,5 @@
 import hashlib
+import hmac
 import logging
 import secrets
 import time
@@ -27,7 +28,7 @@ class AuthManager:
         return hashlib.sha256(password.encode()).hexdigest()
 
     def verify_password(self, password: str) -> bool:
-        return self.hash_password(password) == self._password_hash
+        return hmac.compare_digest(self.hash_password(password), self._password_hash)
 
     def verify_api_key(self, key: str) -> bool:
         return key in self._api_keys

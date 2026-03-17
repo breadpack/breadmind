@@ -57,7 +57,8 @@ class WebhookManager:
     def _verify_secret(self, endpoint: WebhookEndpoint, payload_bytes: bytes, headers: dict) -> bool:
         """Verify webhook signature using HMAC-SHA256."""
         if not endpoint.secret:
-            return True  # No secret configured, skip verification
+            logger.warning("Webhook endpoint %s has no secret configured — rejecting", endpoint.id)
+            return False
 
         # GitHub: X-Hub-Signature-256
         github_sig = headers.get("x-hub-signature-256", "")
