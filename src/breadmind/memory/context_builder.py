@@ -320,6 +320,68 @@ class ContextBuilder:
 
         return created_entities
 
+    async def promote_contacts_to_kg(self, contacts: list) -> list[KGEntity]:
+        """Promote Contact objects to KGEntity in semantic memory.
+
+        Creates entities of type 'person' with contact info as properties.
+        Creates 'works_at' relations for contacts with organizations.
+        """
+        if not self._semantic:
+            return []
+
+        import logging
+
+        entities: list[KGEntity] = []
+        for contact in contacts:
+            entity_id = f"contact-{contact.id}"
+
+            properties: dict = {"source": "contact"}
+            if contact.email:
+                properties["email"] = contact.email
+            if contact.phone:
+                properties["phone"] = contact.phone
+            if contact.platform_ids:
+                properties["platforms"] = contact.platform_ids
+
+            entity = KGEntity(
+                id=entity_id,
+                entity_type="person",
+                name=contact.name,
+                properties=properties,
+                weight=1.0,
+            )
+
+            try:
+                await self._semantic.upsert_entity(entity)
+                entities.append(entity)
+
+                # Create org relation if available
+                if contact.organization:
+                    org_id = f"org-{contact.organization.lower().replace(' ', '-')}"
+                    org_entity = KGEntity(
+                        id=org_id,
+                        entity_type="organization",
+                        name=contact.organization,
+                        properties={},
+                        weight=0.8,
+                    )
+                    await self._semantic.upsert_entity(org_entity)
+
+                    relation = KGRelation(
+                        source_id=entity_id,
+                        target_id=org_id,
+                        relation_type="works_at",
+                        weight=1.0,
+                    )
+                    await self._semantic.add_relation(relation)
+
+            except Exception as e:
+                logging.getLogger(__name__).warning(
+                    "Contact KG promotion failed for %s: %s", contact.name, e,
+                )
+
+        return entities
+
     async def auto_promote(self, message_threshold: int = 10, force_session_ids: list[str] | None = None) -> dict:
         """Automatically promote qualifying sessions to episodic, then to semantic.
 
