@@ -461,6 +461,7 @@ async def register_os_skills(
         name=skill.name,
         description=skill.description,
         prompt_template=prompt,
+        steps=[],
         trigger_keywords=skill.trigger_keywords,
         source="builtin",
     )
