@@ -3,11 +3,12 @@ import json
 import logging
 from fastapi import FastAPI, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from typing import Callable
 
+from breadmind.web.rate_limiter import RateLimiter
 from breadmind.web.routes import (
     setup_chat_routes,
     setup_config_routes,
@@ -146,19 +147,13 @@ class WebApp:
 
     def _setup_routes(self):
         app = self.app
+        rate_limiter = RateLimiter()
 
-        # --- Security headers middleware ---
+        # Middleware registration order: first registered = innermost.
+        # Execution order (outermost → innermost):
+        #   HTTPS enforce → Rate limit → Security headers → Auth → handler
 
-        @app.middleware("http")
-        async def add_security_headers(request: Request, call_next):
-            response = await call_next(request)
-            response.headers["X-Content-Type-Options"] = "nosniff"
-            response.headers["X-Frame-Options"] = "DENY"
-            response.headers["X-XSS-Protection"] = "1; mode=block"
-            response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-            return response
-
-        # --- Auth middleware ---
+        # --- Auth middleware (innermost – registered first) ---
 
         @app.middleware("http")
         async def auth_middleware(request: Request, call_next):
@@ -202,6 +197,63 @@ class WebApp:
             if path.startswith("/ws/"):
                 return await call_next(request)
 
+            return await call_next(request)
+
+        # --- Security headers middleware ---
+
+        @app.middleware("http")
+        async def add_security_headers(request: Request, call_next):
+            response = await call_next(request)
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["X-XSS-Protection"] = "1; mode=block"
+            response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+            return response
+
+        # --- Rate limiting middleware ---
+
+        @app.middleware("http")
+        async def rate_limit_middleware(request: Request, call_next):
+            # Skip rate limiting for health checks and WebSocket connections
+            path = request.url.path
+            if path == "/health" or path.startswith("/ws/"):
+                return await call_next(request)
+
+            client_ip = request.client.host if request.client else "unknown"
+
+            # Auth endpoint rate limiting (stricter)
+            if path.startswith("/api/auth/login"):
+                if rate_limiter.is_auth_blocked(client_ip):
+                    return JSONResponse(
+                        status_code=429,
+                        content={"error": "Too many failed login attempts. Try again in 5 minutes."},
+                    )
+
+            # General rate limiting
+            if not rate_limiter.is_allowed(client_ip):
+                return JSONResponse(
+                    status_code=429,
+                    content={"error": "Rate limit exceeded. Try again later."},
+                )
+
+            response = await call_next(request)
+
+            # Record auth failures
+            if path.startswith("/api/auth/login") and response.status_code == 401:
+                rate_limiter.record_auth_fail(client_ip)
+
+            return response
+
+        # --- HTTPS enforce middleware (outermost – registered last) ---
+
+        @app.middleware("http")
+        async def enforce_https(request: Request, call_next):
+            if (self._config and hasattr(self._config, 'security')
+                    and self._config.security.require_https
+                    and request.url.scheme == "http"
+                    and request.url.hostname not in ("localhost", "127.0.0.1")):
+                https_url = request.url.replace(scheme="https")
+                return RedirectResponse(url=str(https_url), status_code=301)
             return await call_next(request)
 
         # --- Index route ---

@@ -4,7 +4,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+
+from breadmind.web.dependencies import get_app_state, get_working_memory
 
 logger = logging.getLogger(__name__)
 
@@ -15,35 +17,35 @@ def setup_chat_routes(r: APIRouter, app_state):
     """Register chat and session routes."""
 
     @r.get("/api/sessions")
-    async def list_sessions():
-        if app_state._working_memory:
-            return {"sessions": await app_state._working_memory.list_all_sessions(user="web")}
+    async def list_sessions(working_memory=Depends(get_working_memory)):
+        if working_memory:
+            return {"sessions": await working_memory.list_all_sessions(user="web")}
         return {"sessions": []}
 
     @r.get("/api/sessions/{session_id}/messages")
-    async def get_session_messages(session_id: str):
-        if app_state._working_memory:
-            return {"messages": app_state._working_memory.get_session_messages(f"web:{session_id}")}
+    async def get_session_messages(session_id: str, working_memory=Depends(get_working_memory)):
+        if working_memory:
+            return {"messages": working_memory.get_session_messages(f"web:{session_id}")}
         return {"messages": []}
 
     @r.delete("/api/sessions/{session_id}")
-    async def delete_session(session_id: str):
-        if app_state._working_memory:
-            app_state._working_memory.clear_session(f"web:{session_id}")
+    async def delete_session(session_id: str, working_memory=Depends(get_working_memory)):
+        if working_memory:
+            working_memory.clear_session(f"web:{session_id}")
         return {"status": "ok"}
 
     @r.websocket("/ws/chat")
-    async def websocket_chat(websocket: WebSocket):
+    async def websocket_chat(websocket: WebSocket, app=Depends(get_app_state)):
         # Auth check for WebSocket — extract and store token for re-validation
         session_token = None
-        if app_state._auth and app_state._auth.enabled:
+        if app._auth and app._auth.enabled:
             # Extract token from query param or cookie (same logic as authenticate_websocket)
             token = websocket.query_params.get("token", "")
-            if token and app_state._auth.verify_session(token):
+            if token and app._auth.verify_session(token):
                 session_token = token
             else:
                 token = websocket.cookies.get("breadmind_session", "")
-                if token and app_state._auth.verify_session(token):
+                if token and app._auth.verify_session(token):
                     session_token = token
 
             if not session_token:
@@ -51,16 +53,16 @@ def setup_chat_routes(r: APIRouter, app_state):
                 return
 
         await websocket.accept()
-        async with app_state._lock:
-            app_state._connections.append(websocket)
+        async with app._lock:
+            app._connections.append(websocket)
         current_session = "default"
         try:
             while True:
                 data = await websocket.receive_text()
 
                 # Re-validate session on every message to catch expiration
-                if session_token and app_state._auth and app_state._auth.enabled:
-                    if not app_state._auth.verify_session(session_token):
+                if session_token and app._auth and app._auth.enabled:
+                    if not app._auth.verify_session(session_token):
                         await websocket.close(code=4001, reason="Session expired")
                         return
                 msg = json.loads(data)
@@ -69,13 +71,13 @@ def setup_chat_routes(r: APIRouter, app_state):
                 if msg.get("type") == "switch_session":
                     current_session = msg.get("session_id", "default")
                     # Try loading from DB if not in memory
-                    if app_state._working_memory and app_state._working_memory._db:
+                    if app._working_memory and app._working_memory._db:
                         sid = f"web:{current_session}"
-                        if sid not in app_state._working_memory._sessions:
-                            await app_state._working_memory.load_session_from_db(sid)
+                        if sid not in app._working_memory._sessions:
+                            await app._working_memory.load_session_from_db(sid)
                     # Send session history
-                    if app_state._working_memory:
-                        messages = app_state._working_memory.get_session_messages(f"web:{current_session}")
+                    if app._working_memory:
+                        messages = app._working_memory.get_session_messages(f"web:{current_session}")
                         await websocket.send_text(json.dumps({
                             "type": "session_history",
                             "session_id": current_session,
@@ -97,15 +99,15 @@ def setup_chat_routes(r: APIRouter, app_state):
                 # nested "web:web:web:..." from user:channel concatenation
                 channel = current_session
 
-                if app_state._message_handler:
+                if app._message_handler:
                     # Auto-title: use first message as title
                     sid = f"web:{current_session}"
-                    if app_state._working_memory:
-                        session = app_state._working_memory.get_or_create_session(
+                    if app._working_memory:
+                        session = app._working_memory.get_or_create_session(
                             sid, user="web", channel=channel,
                         )
                         if not session.metadata.get("title") and user_message:
-                            app_state._working_memory.set_session_title(
+                            app._working_memory.set_session_title(
                                 sid,
                                 user_message[:50],
                             )
@@ -122,17 +124,17 @@ def setup_chat_routes(r: APIRouter, app_state):
                         except Exception:
                             pass
 
-                    if app_state._agent and hasattr(app_state._agent, "set_progress_callback"):
-                        app_state._agent.set_progress_callback(_progress)
+                    if app._agent and hasattr(app._agent, "set_progress_callback"):
+                        app._agent.set_progress_callback(_progress)
 
                     try:
-                        if asyncio.iscoroutinefunction(app_state._message_handler):
-                            response = await app_state._message_handler(user_message, user="web", channel=channel)
+                        if asyncio.iscoroutinefunction(app._message_handler):
+                            response = await app._message_handler(user_message, user="web", channel=channel)
                         else:
-                            response = app_state._message_handler(user_message, user="web", channel=channel)
+                            response = app._message_handler(user_message, user="web", channel=channel)
                     finally:
-                        if app_state._agent and hasattr(app_state._agent, "set_progress_callback"):
-                            app_state._agent.set_progress_callback(None)
+                        if app._agent and hasattr(app._agent, "set_progress_callback"):
+                            app._agent.set_progress_callback(None)
                 else:
                     response = "No message handler configured."
 
@@ -142,11 +144,11 @@ def setup_chat_routes(r: APIRouter, app_state):
                     "session_id": current_session,
                 }))
         except WebSocketDisconnect:
-            async with app_state._lock:
-                if websocket in app_state._connections:
-                    app_state._connections.remove(websocket)
+            async with app._lock:
+                if websocket in app._connections:
+                    app._connections.remove(websocket)
         except Exception as e:
             logger.error(f"WebSocket error: {e}")
-            async with app_state._lock:
-                if websocket in app_state._connections:
-                    app_state._connections.remove(websocket)
+            async with app._lock:
+                if websocket in app._connections:
+                    app._connections.remove(websocket)

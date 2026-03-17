@@ -3,8 +3,14 @@ from __future__ import annotations
 
 import logging
 import os
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
+
+from breadmind.web.dependencies import (
+    get_app_state, get_agent, get_config, get_db, get_guard,
+    get_monitoring_engine, get_message_router, get_search_engine,
+    get_working_memory,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -15,104 +21,111 @@ def setup_config_routes(r: APIRouter, app_state):
     """Register all /api/config/* routes."""
 
     @r.get("/api/config")
-    async def get_config():
-        if app_state._config:
+    async def get_config_endpoint(config=Depends(get_config)):
+        if config:
             return {
                 "llm": {
-                    "default_provider": app_state._config.llm.default_provider,
-                    "default_model": app_state._config.llm.default_model,
-                    "tool_call_max_turns": app_state._config.llm.tool_call_max_turns,
-                    "tool_call_timeout_seconds": app_state._config.llm.tool_call_timeout_seconds,
+                    "default_provider": config.llm.default_provider,
+                    "default_model": config.llm.default_model,
+                    "tool_call_max_turns": config.llm.tool_call_max_turns,
+                    "tool_call_timeout_seconds": config.llm.tool_call_timeout_seconds,
                 },
                 "mcp": {
-                    "auto_discover": app_state._config.mcp.auto_discover,
-                    "max_restart_attempts": app_state._config.mcp.max_restart_attempts,
-                    "servers": app_state._config.mcp.servers,
+                    "auto_discover": config.mcp.auto_discover,
+                    "max_restart_attempts": config.mcp.max_restart_attempts,
+                    "servers": config.mcp.servers,
                     "registries": [
                         {"name": r.name, "type": r.type, "enabled": r.enabled}
-                        for r in app_state._config.mcp.registries
+                        for r in config.mcp.registries
                     ],
                 },
                 "database": {
-                    "host": app_state._config.database.host,
-                    "port": app_state._config.database.port,
-                    "name": app_state._config.database.name,
+                    "host": config.database.host,
+                    "port": config.database.port,
+                    "name": config.database.name,
                 },
             }
         return {}
 
     @r.get("/api/safety")
-    async def get_safety():
-        if app_state._safety_config:
-            return app_state._safety_config
+    async def get_safety(app=Depends(get_app_state)):
+        if app._safety_config:
+            return app._safety_config
         return {"blacklist": {}, "require_approval": []}
 
     @r.get("/api/config/safety")
-    async def get_safety_config():
+    async def get_safety_config_endpoint(
+        guard=Depends(get_guard),
+        app=Depends(get_app_state),
+    ):
         """Get editable safety configuration."""
-        if app_state._safety_guard and hasattr(app_state._safety_guard, 'get_config'):
-            return {"safety": app_state._safety_guard.get_config()}
+        if guard and hasattr(guard, 'get_config'):
+            return {"safety": guard.get_config()}
         # Fallback to raw config
-        if app_state._safety_config:
-            return {"safety": app_state._safety_config}
+        if app._safety_config:
+            return {"safety": app._safety_config}
         return {"safety": {"blacklist": {}, "require_approval": [], "user_permissions": {}, "admin_users": []}}
 
     @r.post("/api/config/safety/blacklist")
-    async def update_blacklist(request: Request):
+    async def update_blacklist(request: Request, guard=Depends(get_guard), db=Depends(get_db)):
         """Update safety blacklist."""
         data = await request.json()
         blacklist = data.get("blacklist", {})
         if not isinstance(blacklist, dict):
             return JSONResponse(status_code=400, content={"error": "blacklist must be a dict"})
-        if app_state._safety_guard:
-            app_state._safety_guard.update_blacklist(blacklist)
+        if guard:
+            guard.update_blacklist(blacklist)
         # Persist to DB
-        if app_state._db:
-            await app_state._db.set_setting("safety_blacklist", blacklist)
+        if db:
+            await db.set_setting("safety_blacklist", blacklist)
         return {"status": "ok"}
 
     @r.post("/api/config/safety/approval")
-    async def update_require_approval(request: Request):
+    async def update_require_approval(request: Request, guard=Depends(get_guard), db=Depends(get_db)):
         """Update require_approval list."""
         data = await request.json()
         tools = data.get("require_approval", [])
-        if app_state._safety_guard:
-            app_state._safety_guard.update_require_approval(tools)
-        if app_state._db:
-            await app_state._db.set_setting("safety_approval", tools)
+        if guard:
+            guard.update_require_approval(tools)
+        if db:
+            await db.set_setting("safety_approval", tools)
         return {"status": "ok"}
 
     @r.post("/api/config/safety/permissions")
-    async def update_permissions(request: Request):
+    async def update_permissions(request: Request, guard=Depends(get_guard), db=Depends(get_db)):
         """Update user permissions and admin list."""
         data = await request.json()
         permissions = data.get("user_permissions", {})
         admins = data.get("admin_users", [])
-        if app_state._safety_guard:
-            app_state._safety_guard.update_user_permissions(permissions, admins)
-        if app_state._db:
-            await app_state._db.set_setting("safety_permissions", {"user_permissions": permissions, "admin_users": admins})
+        if guard:
+            guard.update_user_permissions(permissions, admins)
+        if db:
+            await db.set_setting("safety_permissions", {"user_permissions": permissions, "admin_users": admins})
         return {"status": "ok"}
 
     # -- Skill Market Management --
 
     @r.get("/api/config/markets")
-    async def get_markets():
+    async def get_markets(search_engine=Depends(get_search_engine)):
         """Get configured skill markets/registries."""
-        if not app_state._search_engine:
+        if not search_engine:
             return {"markets": []}
         return {
             "markets": [
                 {"name": reg.name, "type": reg.type, "enabled": reg.enabled, "url": reg.url or ""}
-                for reg in app_state._search_engine.get_registries()
+                for reg in search_engine.get_registries()
             ]
         }
 
     @r.post("/api/config/markets")
-    async def update_markets(request: Request):
+    async def update_markets(
+        request: Request,
+        search_engine=Depends(get_search_engine),
+        db=Depends(get_db),
+    ):
         """Add or update a skill market."""
         data = await request.json()
-        if not app_state._search_engine:
+        if not search_engine:
             return {"status": "error", "error": "Search engine not available"}
         from breadmind.tools.registry_search import RegistryConfig
         config = RegistryConfig(
@@ -123,43 +136,51 @@ def setup_config_routes(r: APIRouter, app_state):
         )
         if not config.name:
             return {"status": "error", "error": "name is required"}
-        app_state._search_engine.add_registry(config)
+        search_engine.add_registry(config)
         # Persist
-        if app_state._db:
+        if db:
             markets = [
                 {"name": reg.name, "type": reg.type, "enabled": reg.enabled, "url": reg.url or ""}
-                for reg in app_state._search_engine.get_registries()
+                for reg in search_engine.get_registries()
             ]
-            await app_state._db.set_setting("skill_markets", markets)
+            await db.set_setting("skill_markets", markets)
         return {"status": "ok"}
 
     @r.post("/api/config/markets/toggle")
-    async def toggle_market(request: Request):
+    async def toggle_market(
+        request: Request,
+        search_engine=Depends(get_search_engine),
+        db=Depends(get_db),
+    ):
         """Enable/disable a skill market."""
         data = await request.json()
         name = data.get("name", "")
         enabled = data.get("enabled", True)
-        if app_state._search_engine:
-            app_state._search_engine.toggle_registry(name, enabled)
-            if app_state._db:
+        if search_engine:
+            search_engine.toggle_registry(name, enabled)
+            if db:
                 markets = [
                     {"name": reg.name, "type": reg.type, "enabled": reg.enabled, "url": reg.url or ""}
-                    for reg in app_state._search_engine.get_registries()
+                    for reg in search_engine.get_registries()
                 ]
-                await app_state._db.set_setting("skill_markets", markets)
+                await db.set_setting("skill_markets", markets)
         return {"status": "ok"}
 
     @r.delete("/api/config/markets/{name}")
-    async def delete_market(name: str):
+    async def delete_market(
+        name: str,
+        search_engine=Depends(get_search_engine),
+        db=Depends(get_db),
+    ):
         """Remove a skill market."""
-        if app_state._search_engine:
-            app_state._search_engine.remove_registry(name)
-            if app_state._db:
+        if search_engine:
+            search_engine.remove_registry(name)
+            if db:
                 markets = [
                     {"name": reg.name, "type": reg.type, "enabled": reg.enabled, "url": reg.url or ""}
-                    for reg in app_state._search_engine.get_registries()
+                    for reg in search_engine.get_registries()
                 ]
-                await app_state._db.set_setting("skill_markets", markets)
+                await db.set_setting("skill_markets", markets)
         return {"status": "ok"}
 
     @r.get("/api/config/api-keys")
@@ -182,7 +203,7 @@ def setup_config_routes(r: APIRouter, app_state):
         return {"valid": result.get("valid", False), "reason": result.get("error", "")}
 
     @r.post("/api/config/api-keys")
-    async def update_api_key(request: Request):
+    async def update_api_key(request: Request, db=Depends(get_db)):
         """Update an API key -- encrypted in DB, or fallback to .env."""
         from breadmind.config import _VALID_API_KEY_NAMES, save_api_key_to_db
         data = await request.json()
@@ -208,9 +229,9 @@ def setup_config_routes(r: APIRouter, app_state):
             )
 
         persisted_to = "memory"
-        if app_state._db:
+        if db:
             try:
-                await save_api_key_to_db(app_state._db, key_name, value)
+                await save_api_key_to_db(db, key_name, value)
                 persisted_to = "db_encrypted"
             except Exception as e:
                 logger.warning(f"Failed to save API key to DB: {e}")
@@ -226,7 +247,7 @@ def setup_config_routes(r: APIRouter, app_state):
         return {"status": "ok", "masked": masked, "storage": persisted_to}
 
     @r.post("/api/config/provider")
-    async def update_provider(request: Request):
+    async def update_provider(request: Request, app=Depends(get_app_state)):
         """Update LLM provider settings."""
         from breadmind.config import _VALID_PROVIDERS
         data = await request.json()
@@ -241,12 +262,12 @@ def setup_config_routes(r: APIRouter, app_state):
                     status_code=400,
                     content={"error": f"Invalid provider. Must be one of {list(_VALID_PROVIDERS)}"},
                 )
-            if app_state._config:
-                app_state._config.llm.default_provider = provider
+            if app._config:
+                app._config.llm.default_provider = provider
 
         if model is not None:
-            if app_state._config:
-                app_state._config.llm.default_model = model
+            if app._config:
+                app._config.llm.default_model = model
 
         if max_turns is not None:
             try:
@@ -258,8 +279,8 @@ def setup_config_routes(r: APIRouter, app_state):
                     status_code=400,
                     content={"error": "max_turns must be a positive integer"},
                 )
-            if app_state._config:
-                app_state._config.llm.tool_call_max_turns = max_turns
+            if app._config:
+                app._config.llm.tool_call_max_turns = max_turns
 
         if timeout is not None:
             try:
@@ -271,36 +292,36 @@ def setup_config_routes(r: APIRouter, app_state):
                     status_code=400,
                     content={"error": "timeout must be a positive integer"},
                 )
-            if app_state._config:
-                app_state._config.llm.tool_call_timeout_seconds = timeout
+            if app._config:
+                app._config.llm.tool_call_timeout_seconds = timeout
 
         # Persist to DB
-        if app_state._db and app_state._config:
+        if app._db and app._config:
             try:
-                await app_state._db.set_setting("llm", {
-                    "default_provider": app_state._config.llm.default_provider,
-                    "default_model": app_state._config.llm.default_model,
-                    "tool_call_max_turns": app_state._config.llm.tool_call_max_turns,
-                    "tool_call_timeout_seconds": app_state._config.llm.tool_call_timeout_seconds,
+                await app._db.set_setting("llm", {
+                    "default_provider": app._config.llm.default_provider,
+                    "default_model": app._config.llm.default_model,
+                    "tool_call_max_turns": app._config.llm.tool_call_max_turns,
+                    "tool_call_timeout_seconds": app._config.llm.tool_call_timeout_seconds,
                 })
             except Exception as e:
                 logger.warning(f"Failed to persist LLM settings to DB: {e}")
 
         # Hot-swap agent provider and sync settings
-        if app_state._agent and app_state._config:
+        if app._agent and app._config:
             if provider is not None or model is not None:
                 try:
                     from breadmind.llm.factory import create_provider as _create_provider
-                    new_provider = _create_provider(app_state._config)
-                    await app_state._agent.update_provider(new_provider)
+                    new_provider = _create_provider(app._config)
+                    await app._agent.update_provider(new_provider)
                 except Exception as e:
                     logger.warning(f"Failed to hot-swap provider: {e}")
             if max_turns is not None:
-                app_state._agent.update_max_turns(app_state._config.llm.tool_call_max_turns)
+                app._agent.update_max_turns(app._config.llm.tool_call_max_turns)
             if timeout is not None:
-                app_state._agent.update_timeouts(tool_timeout=app_state._config.llm.tool_call_timeout_seconds)
+                app._agent.update_timeouts(tool_timeout=app._config.llm.tool_call_timeout_seconds)
 
-        return {"status": "ok", "persisted": app_state._db is not None}
+        return {"status": "ok", "persisted": app._db is not None}
 
     @r.get("/api/config/models/{provider}")
     async def list_provider_models(provider: str):
@@ -398,15 +419,15 @@ def setup_config_routes(r: APIRouter, app_state):
         return {"provider": provider, "models": models}
 
     @r.post("/api/config/mcp")
-    async def update_mcp(request: Request):
+    async def update_mcp_config(request: Request, config=Depends(get_config), db=Depends(get_db)):
         """Update MCP configuration."""
         data = await request.json()
         auto_discover = data.get("auto_discover")
         max_restart = data.get("max_restart_attempts")
 
-        if app_state._config:
+        if config:
             if auto_discover is not None:
-                app_state._config.mcp.auto_discover = bool(auto_discover)
+                config.mcp.auto_discover = bool(auto_discover)
             if max_restart is not None:
                 try:
                     max_restart = int(max_restart)
@@ -417,32 +438,37 @@ def setup_config_routes(r: APIRouter, app_state):
                         status_code=400,
                         content={"error": "max_restart_attempts must be a non-negative integer"},
                     )
-                app_state._config.mcp.max_restart_attempts = max_restart
+                config.mcp.max_restart_attempts = max_restart
 
         # Persist to DB
-        if app_state._db and app_state._config:
+        if db and config:
             try:
-                await app_state._db.set_setting("mcp", {
-                    "auto_discover": app_state._config.mcp.auto_discover,
-                    "max_restart_attempts": app_state._config.mcp.max_restart_attempts,
+                await db.set_setting("mcp", {
+                    "auto_discover": config.mcp.auto_discover,
+                    "max_restart_attempts": config.mcp.max_restart_attempts,
                 })
             except Exception as e:
                 logger.warning(f"Failed to persist MCP settings to DB: {e}")
 
-        return {"status": "ok", "persisted": app_state._db is not None}
+        return {"status": "ok", "persisted": db is not None}
 
     @r.get("/api/config/persona")
-    async def get_persona():
+    async def get_persona(config=Depends(get_config)):
         """Get current persona settings."""
         from breadmind.config import DEFAULT_PERSONA, DEFAULT_PERSONA_PRESETS
-        if app_state._config and hasattr(app_state._config, '_persona') and app_state._config._persona:
-            persona = app_state._config._persona
+        if config and hasattr(config, '_persona') and config._persona:
+            persona = config._persona
         else:
             persona = DEFAULT_PERSONA
         return {"persona": persona, "presets": list(DEFAULT_PERSONA_PRESETS.keys())}
 
     @r.post("/api/config/persona")
-    async def update_persona(request: Request):
+    async def update_persona(
+        request: Request,
+        config=Depends(get_config),
+        agent=Depends(get_agent),
+        db=Depends(get_db),
+    ):
         """Update persona settings."""
         from breadmind.config import DEFAULT_PERSONA_PRESETS, DEFAULT_PERSONA, build_system_prompt
         data = await request.json()
@@ -464,38 +490,38 @@ def setup_config_routes(r: APIRouter, app_state):
             persona["system_prompt"] = DEFAULT_PERSONA_PRESETS["professional"]
 
         # Apply to runtime
-        if app_state._config:
-            app_state._config._persona = persona
-        if app_state._agent and hasattr(app_state._agent, 'set_persona'):
-            app_state._agent.set_persona(persona)
+        if config:
+            config._persona = persona
+        if agent and hasattr(agent, 'set_persona'):
+            agent.set_persona(persona)
 
         # Persist to DB
-        if app_state._db:
+        if db:
             try:
-                await app_state._db.set_setting("persona", persona)
+                await db.set_setting("persona", persona)
             except Exception as e:
                 logger.warning(f"Failed to persist persona to DB: {e}")
 
         return {"status": "ok", "persona": persona}
 
     @r.get("/api/config/settings-status")
-    async def get_settings_status():
+    async def get_settings_status(db=Depends(get_db)):
         """Check if settings are DB-persisted."""
-        return {"db_connected": app_state._db is not None}
+        return {"db_connected": db is not None}
 
     # --- Prompt management ---
 
     @r.get("/api/config/prompts")
-    async def get_prompts():
+    async def get_prompts(agent=Depends(get_agent), db=Depends(get_db)):
         """Get all configurable prompts."""
         from breadmind.core.swarm import DEFAULT_ROLES
         from breadmind.mcp.install_assistant import INSTALL_SYSTEM_PROMPT, ANALYZE_PROMPT, TROUBLESHOOT_PROMPT
 
         # Load custom overrides from DB
         custom = {}
-        if app_state._db:
+        if db:
             try:
-                saved = await app_state._db.get_setting("custom_prompts")
+                saved = await db.get_setting("custom_prompts")
                 if saved:
                     custom = saved
             except Exception:
@@ -512,8 +538,8 @@ def setup_config_routes(r: APIRouter, app_state):
         # Behavior prompt (from dedicated DB key, not custom_prompts)
         from breadmind.config import _PROACTIVE_BEHAVIOR_PROMPT
         behavior_prompt = _PROACTIVE_BEHAVIOR_PROMPT
-        if app_state._agent and hasattr(app_state._agent, 'get_behavior_prompt'):
-            behavior_prompt = app_state._agent.get_behavior_prompt()
+        if agent and hasattr(agent, 'get_behavior_prompt'):
+            behavior_prompt = agent.get_behavior_prompt()
 
         return {
             "main_system_prompt": custom.get("main_system_prompt", ""),
@@ -529,15 +555,15 @@ def setup_config_routes(r: APIRouter, app_state):
         }
 
     @r.post("/api/config/prompts")
-    async def update_prompts(request: Request):
+    async def update_prompts(request: Request, app=Depends(get_app_state)):
         """Update custom prompts. Empty string = use default."""
         data = await request.json()
 
         # Load existing
         custom = {}
-        if app_state._db:
+        if app._db:
             try:
-                saved = await app_state._db.get_setting("custom_prompts")
+                saved = await app._db.get_setting("custom_prompts")
                 if saved:
                     custom = saved
             except Exception:
@@ -557,8 +583,8 @@ def setup_config_routes(r: APIRouter, app_state):
 
         # Swarm role prompts -- update SwarmManager directly
         for role_name, prompt in data.get("swarm_roles", {}).items():
-            if app_state._swarm_manager and prompt:
-                app_state._swarm_manager.update_role(role_name, system_prompt=prompt)
+            if app._swarm_manager and prompt:
+                app._swarm_manager.update_role(role_name, system_prompt=prompt)
             role_key = f"swarm_role:{role_name}"
             if prompt:
                 custom[role_key] = prompt
@@ -566,73 +592,77 @@ def setup_config_routes(r: APIRouter, app_state):
                 custom.pop(role_key, None)
 
         # Apply main system prompt to agent
-        if "main_system_prompt" in data and data["main_system_prompt"] and app_state._agent:
-            app_state._agent.set_system_prompt(data["main_system_prompt"])
+        if "main_system_prompt" in data and data["main_system_prompt"] and app._agent:
+            app._agent.set_system_prompt(data["main_system_prompt"])
 
         # Apply behavior prompt to agent
-        if "behavior_prompt" in data and app_state._agent:
+        if "behavior_prompt" in data and app._agent:
             from breadmind.config import _PROACTIVE_BEHAVIOR_PROMPT
             new_bp = data["behavior_prompt"].strip()
             if new_bp:
-                app_state._agent.set_behavior_prompt(new_bp)
+                app._agent.set_behavior_prompt(new_bp)
             else:
                 # Empty = reset to default
-                app_state._agent.set_behavior_prompt(_PROACTIVE_BEHAVIOR_PROMPT)
+                app._agent.set_behavior_prompt(_PROACTIVE_BEHAVIOR_PROMPT)
                 new_bp = _PROACTIVE_BEHAVIOR_PROMPT
             # Persist behavior prompt separately
-            if app_state._db:
+            if app._db:
                 from datetime import datetime, timezone
-                await app_state._db.set_setting("behavior_prompt", {
+                await app._db.set_setting("behavior_prompt", {
                     "prompt": new_bp,
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                     "reason": "manual edit via Settings UI",
                 })
 
         # Persist
-        if app_state._db:
-            await app_state._db.set_setting("custom_prompts", custom)
+        if app._db:
+            await app._db.set_setting("custom_prompts", custom)
 
         # Persist swarm roles if updated
-        if data.get("swarm_roles") and app_state._swarm_manager:
-            await app_state._persist_swarm_roles()
+        if data.get("swarm_roles") and app._swarm_manager:
+            await app._persist_swarm_roles()
 
         return {"status": "ok"}
 
     # --- Monitoring Rules (config section) ---
 
     @r.get("/api/config/monitoring/rules")
-    async def get_monitoring_rules():
-        if app_state._monitoring_engine and hasattr(app_state._monitoring_engine, 'get_rules_config'):
-            rules = app_state._monitoring_engine.get_rules_config()
-            lp = app_state._monitoring_engine.get_loop_protector_config()
+    async def get_monitoring_rules(monitoring_engine=Depends(get_monitoring_engine)):
+        if monitoring_engine and hasattr(monitoring_engine, 'get_rules_config'):
+            rules = monitoring_engine.get_rules_config()
+            lp = monitoring_engine.get_loop_protector_config()
             return {"rules": rules, "loop_protector": lp}
         return {"rules": [], "loop_protector": {}}
 
     @r.post("/api/config/monitoring/rules")
-    async def update_monitoring_rules(request: Request):
+    async def update_monitoring_rules(
+        request: Request,
+        monitoring_engine=Depends(get_monitoring_engine),
+        db=Depends(get_db),
+    ):
         data = await request.json()
-        if not app_state._monitoring_engine:
+        if not monitoring_engine:
             return JSONResponse(status_code=503, content={"error": "Monitoring not configured"})
         # Update individual rules
         for rule_update in data.get("rules", []):
             name = rule_update.get("name")
             if "enabled" in rule_update:
                 if rule_update["enabled"]:
-                    app_state._monitoring_engine.enable_rule(name)
+                    monitoring_engine.enable_rule(name)
                 else:
-                    app_state._monitoring_engine.disable_rule(name)
+                    monitoring_engine.disable_rule(name)
             if "interval_seconds" in rule_update:
-                app_state._monitoring_engine.update_rule_interval(name, rule_update["interval_seconds"])
+                monitoring_engine.update_rule_interval(name, rule_update["interval_seconds"])
         # Update loop protector
         lp = data.get("loop_protector", {})
         if lp:
-            app_state._monitoring_engine.update_loop_protector_config(
+            monitoring_engine.update_loop_protector_config(
                 cooldown_minutes=lp.get("cooldown_minutes"),
                 max_auto_actions=lp.get("max_auto_actions"),
             )
-        if app_state._db:
+        if db:
             try:
-                await app_state._db.set_setting("monitoring_config", data)
+                await db.set_setting("monitoring_config", data)
             except Exception:
                 pass
         return {"status": "ok"}
@@ -640,21 +670,25 @@ def setup_config_routes(r: APIRouter, app_state):
     # --- Messenger Config ---
 
     @r.get("/api/config/messenger")
-    async def get_messenger_config():
-        if app_state._message_router and hasattr(app_state._message_router, 'get_allowed_users'):
-            return {"allowed_users": app_state._message_router.get_allowed_users()}
+    async def get_messenger_config(message_router=Depends(get_message_router)):
+        if message_router and hasattr(message_router, 'get_allowed_users'):
+            return {"allowed_users": message_router.get_allowed_users()}
         return {"allowed_users": {"slack": [], "discord": [], "telegram": []}}
 
     @r.post("/api/config/messenger")
-    async def update_messenger_config(request: Request):
+    async def update_messenger_config(
+        request: Request,
+        message_router=Depends(get_message_router),
+        db=Depends(get_db),
+    ):
         data = await request.json()
-        if not app_state._message_router:
+        if not message_router:
             return JSONResponse(status_code=503, content={"error": "Messenger not configured"})
         for platform, users in data.get("allowed_users", {}).items():
-            app_state._message_router.update_allowed_users(platform, users)
-        if app_state._db:
+            message_router.update_allowed_users(platform, users)
+        if db:
             try:
-                await app_state._db.set_setting("messenger_config", data.get("allowed_users", {}))
+                await db.set_setting("messenger_config", data.get("allowed_users", {}))
             except Exception:
                 pass
         return {"status": "ok"}
@@ -662,22 +696,26 @@ def setup_config_routes(r: APIRouter, app_state):
     # --- Memory Config ---
 
     @r.get("/api/config/memory")
-    async def get_memory_config():
-        if app_state._working_memory and hasattr(app_state._working_memory, 'get_config'):
-            return {"memory": app_state._working_memory.get_config()}
+    async def get_memory_config(working_memory=Depends(get_working_memory)):
+        if working_memory and hasattr(working_memory, 'get_config'):
+            return {"memory": working_memory.get_config()}
         return {"memory": {"max_messages_per_session": 50, "session_timeout_minutes": 30, "active_sessions": 0}}
 
     @r.post("/api/config/memory")
-    async def update_memory_config(request: Request):
+    async def update_memory_config(
+        request: Request,
+        working_memory=Depends(get_working_memory),
+        db=Depends(get_db),
+    ):
         data = await request.json()
-        if app_state._working_memory:
-            app_state._working_memory.update_config(
+        if working_memory:
+            working_memory.update_config(
                 max_messages=data.get("max_messages"),
                 timeout_minutes=data.get("timeout_minutes"),
             )
-        if app_state._db:
+        if db:
             try:
-                await app_state._db.set_setting("memory_config", data)
+                await db.set_setting("memory_config", data)
             except Exception:
                 pass
         return {"status": "ok"}
@@ -690,7 +728,7 @@ def setup_config_routes(r: APIRouter, app_state):
         return {"security": ToolSecurityConfig.get_config()}
 
     @r.post("/api/config/tool-security")
-    async def update_tool_security(request: Request):
+    async def update_tool_security(request: Request, db=Depends(get_db)):
         from breadmind.tools.builtin import ToolSecurityConfig
         data = await request.json()
         ToolSecurityConfig.update(
@@ -699,9 +737,9 @@ def setup_config_routes(r: APIRouter, app_state):
             allowed_ssh_hosts=data.get("allowed_ssh_hosts"),
             base_directory=data.get("base_directory"),
         )
-        if app_state._db:
+        if db:
             try:
-                await app_state._db.set_setting("tool_security", ToolSecurityConfig.get_config())
+                await db.set_setting("tool_security", ToolSecurityConfig.get_config())
             except Exception:
                 pass
         return {"status": "ok"}
@@ -709,25 +747,25 @@ def setup_config_routes(r: APIRouter, app_state):
     # --- Agent Timeouts ---
 
     @r.get("/api/config/timeouts")
-    async def get_timeouts():
-        if app_state._agent and hasattr(app_state._agent, 'get_timeouts'):
-            return {"timeouts": app_state._agent.get_timeouts()}
+    async def get_timeouts(agent=Depends(get_agent)):
+        if agent and hasattr(agent, 'get_timeouts'):
+            return {"timeouts": agent.get_timeouts()}
         return {"timeouts": {"tool_timeout": 30, "chat_timeout": 120, "max_turns": 10}}
 
     @r.post("/api/config/timeouts")
-    async def update_timeouts(request: Request):
+    async def update_timeouts(request: Request, agent=Depends(get_agent), db=Depends(get_db)):
         data = await request.json()
-        if app_state._agent:
-            if hasattr(app_state._agent, 'update_timeouts'):
-                app_state._agent.update_timeouts(
+        if agent:
+            if hasattr(agent, 'update_timeouts'):
+                agent.update_timeouts(
                     tool_timeout=data.get("tool_timeout"),
                     chat_timeout=data.get("chat_timeout"),
                 )
-            if "max_turns" in data and hasattr(app_state._agent, 'update_max_turns'):
-                app_state._agent.update_max_turns(data["max_turns"])
-        if app_state._db:
+            if "max_turns" in data and hasattr(agent, 'update_max_turns'):
+                agent.update_max_turns(data["max_turns"])
+        if db:
             try:
-                await app_state._db.set_setting("agent_timeouts", data)
+                await db.set_setting("agent_timeouts", data)
             except Exception:
                 pass
         return {"status": "ok"}
@@ -735,7 +773,7 @@ def setup_config_routes(r: APIRouter, app_state):
     # --- Logging Level ---
 
     @r.post("/api/config/logging")
-    async def update_logging(request: Request):
+    async def update_logging(request: Request, config=Depends(get_config), db=Depends(get_db)):
         import logging as _logging
         data = await request.json()
         level = data.get("level", "INFO").upper()
@@ -743,11 +781,11 @@ def setup_config_routes(r: APIRouter, app_state):
         if level not in valid:
             return JSONResponse(status_code=400, content={"error": f"Invalid level. Must be one of {valid}"})
         _logging.getLogger().setLevel(getattr(_logging, level))
-        if app_state._config:
-            app_state._config.logging.level = level
-        if app_state._db:
+        if config:
+            config.logging.level = level
+        if db:
             try:
-                await app_state._db.set_setting("logging_config", {"level": level})
+                await db.set_setting("logging_config", {"level": level})
             except Exception:
                 pass
         return {"status": "ok", "level": level}

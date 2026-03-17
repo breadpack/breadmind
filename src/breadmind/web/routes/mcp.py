@@ -3,8 +3,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
+
+from breadmind.web.dependencies import (
+    get_app_state, get_mcp_manager, get_mcp_store, get_search_engine,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -15,9 +19,9 @@ def setup_mcp_routes(r: APIRouter, app_state):
     """Register /api/mcp/* and /api/skills/search, /api/skills/featured routes."""
 
     @r.get("/api/mcp/servers")
-    async def list_mcp_servers():
-        if app_state._mcp_manager:
-            servers = await app_state._mcp_manager.list_servers()
+    async def list_mcp_servers(mcp_manager=Depends(get_mcp_manager)):
+        if mcp_manager:
+            servers = await mcp_manager.list_servers()
             return {"servers": [
                 {"name": s.name, "transport": s.transport, "status": s.status, "tools": s.tools, "source": s.source}
                 for s in servers
@@ -25,10 +29,10 @@ def setup_mcp_routes(r: APIRouter, app_state):
         return {"servers": []}
 
     @r.get("/api/mcp/search")
-    async def mcp_search(q: str = "", limit: int = 10, source: str = ""):
-        if not app_state._mcp_store:
+    async def mcp_search(q: str = "", limit: int = 10, source: str = "", mcp_store=Depends(get_mcp_store)):
+        if not mcp_store:
             return {"results": []}
-        results = await app_state._mcp_store.search(q, limit=limit)
+        results = await mcp_store.search(q, limit=limit)
         # Exclude skill-only sources from MCP search
         results = [r for r in results if r.get("source") not in ("skills.sh", "skillsmp")]
         if source:
@@ -36,9 +40,9 @@ def setup_mcp_routes(r: APIRouter, app_state):
         return {"results": results}
 
     @r.get("/api/mcp/featured")
-    async def mcp_featured(source: str = ""):
+    async def mcp_featured(source: str = "", mcp_store=Depends(get_mcp_store)):
         """Return featured/recommended MCP servers by category."""
-        if not app_state._mcp_store:
+        if not mcp_store:
             return {"categories": []}
         categories = [
             {"name": "Infrastructure", "icon": "\U0001f3d7\ufe0f", "query": "kubernetes docker"},
@@ -52,7 +56,7 @@ def setup_mcp_routes(r: APIRouter, app_state):
         ]
 
         async def fetch_category(cat):
-            results = await app_state._mcp_store.search(cat["query"], limit=4)
+            results = await mcp_store.search(cat["query"], limit=4)
             # Exclude skill-only sources from MCP store
             results = [r for r in results if r.get("source") not in ("skills.sh", "skillsmp")]
             if source:
@@ -66,27 +70,27 @@ def setup_mcp_routes(r: APIRouter, app_state):
     # --- Skill Store endpoints ---
 
     @r.get("/api/skills/search")
-    async def skill_search(q: str = "", limit: int = 10):
+    async def skill_search(q: str = "", limit: int = 10, search_engine=Depends(get_search_engine)):
         """Search skills from skill markets (skills.sh etc.)."""
-        if not app_state._search_engine:
+        if not search_engine:
             return {"results": []}
-        results = await app_state._search_engine.search(q, limit=limit)
+        results = await search_engine.search(q, limit=limit)
         # Filter to skill-type sources only (not MCP)
         skill_sources = {"skills_sh", "skillsmp"}
         filtered = [
             {"name": r.name, "slug": r.slug, "description": r.description,
              "source": r.source, "install_command": r.install_command, "installs": r.installs}
             for r in results if r.source in skill_sources or any(
-                reg.type in skill_sources for reg in app_state._search_engine.get_registries()
+                reg.type in skill_sources for reg in search_engine.get_registries()
                 if reg.name == r.source
             )
         ]
         return {"results": filtered}
 
     @r.get("/api/skills/featured")
-    async def skill_featured():
+    async def skill_featured(search_engine=Depends(get_search_engine)):
         """Return featured skills by category from skill markets."""
-        if not app_state._search_engine:
+        if not search_engine:
             return {"categories": []}
         categories = [
             {"name": "Frontend", "icon": "\U0001f3a8", "queries": ["react", "css", "frontend", "design"]},
@@ -104,7 +108,7 @@ def setup_mcp_routes(r: APIRouter, app_state):
             all_results = []
             seen = set()
             for q in cat["queries"]:
-                results = await app_state._search_engine.search(q, limit=4)
+                results = await search_engine.search(q, limit=4)
                 for r in results:
                     if r.source in skill_sources and r.name not in seen:
                         seen.add(r.name)
@@ -197,19 +201,23 @@ def setup_mcp_routes(r: APIRouter, app_state):
         return {"detail": detail}
 
     @r.post("/api/mcp/install/analyze")
-    async def mcp_install_analyze(request: Request):
-        if not app_state._mcp_store:
+    async def mcp_install_analyze(request: Request, mcp_store=Depends(get_mcp_store)):
+        if not mcp_store:
             return JSONResponse(status_code=503, content={"error": "MCP Store not configured"})
         data = await request.json()
-        analysis = await app_state._mcp_store.analyze_server(data)
+        analysis = await mcp_store.analyze_server(data)
         return {"analysis": analysis}
 
     @r.post("/api/mcp/install/execute")
-    async def mcp_install_execute(request: Request):
-        if not app_state._mcp_store:
+    async def mcp_install_execute(
+        request: Request,
+        mcp_store=Depends(get_mcp_store),
+        app=Depends(get_app_state),
+    ):
+        if not mcp_store:
             return JSONResponse(status_code=503, content={"error": "MCP Store not configured"})
         data = await request.json()
-        result = await app_state._mcp_store.install_server(
+        result = await mcp_store.install_server(
             name=data.get("name", ""),
             slug=data.get("slug", ""),
             command=data.get("command", ""),
@@ -220,53 +228,53 @@ def setup_mcp_routes(r: APIRouter, app_state):
         )
         # Broadcast install event to WebSocket clients
         if result.get("status") == "ok":
-            await app_state.broadcast_event({"type": "mcp_installed", "server": result})
+            await app.broadcast_event({"type": "mcp_installed", "server": result})
         return result
 
     @r.post("/api/mcp/install/troubleshoot")
-    async def mcp_install_troubleshoot(request: Request):
-        if not app_state._mcp_store:
+    async def mcp_install_troubleshoot(request: Request, mcp_store=Depends(get_mcp_store)):
+        if not mcp_store:
             return JSONResponse(status_code=503, content={"error": "MCP Store not configured"})
-        data = await request.json()
-        if not app_state._mcp_store._assistant:
+        if not mcp_store._assistant:
             return JSONResponse(status_code=503, content={"error": "LLM not available for troubleshooting"})
-        fix = await app_state._mcp_store._assistant.troubleshoot(
+        data = await request.json()
+        fix = await mcp_store._assistant.troubleshoot(
             data.get("server_name", ""), data.get("command", ""),
             data.get("args", []), data.get("error_log", ""),
         )
         return {"fix": fix}
 
     @r.get("/api/mcp/installed")
-    async def mcp_installed():
-        if not app_state._mcp_store:
+    async def mcp_installed(mcp_store=Depends(get_mcp_store)):
+        if not mcp_store:
             return {"servers": []}
-        servers = await app_state._mcp_store.list_installed()
+        servers = await mcp_store.list_installed()
         return {"servers": servers}
 
     @r.post("/api/mcp/servers/{name}/start")
-    async def mcp_server_start(name: str):
-        if not app_state._mcp_store:
+    async def mcp_server_start(name: str, mcp_store=Depends(get_mcp_store)):
+        if not mcp_store:
             return JSONResponse(status_code=503, content={"error": "MCP Store not configured"})
-        result = await app_state._mcp_store.start_server(name)
+        result = await mcp_store.start_server(name)
         return result
 
     @r.post("/api/mcp/servers/{name}/stop")
-    async def mcp_server_stop(name: str):
-        if not app_state._mcp_store:
+    async def mcp_server_stop(name: str, mcp_store=Depends(get_mcp_store)):
+        if not mcp_store:
             return JSONResponse(status_code=503, content={"error": "MCP Store not configured"})
-        result = await app_state._mcp_store.stop_server(name)
+        result = await mcp_store.stop_server(name)
         return result
 
     @r.delete("/api/mcp/servers/{name}")
-    async def mcp_server_remove(name: str):
-        if not app_state._mcp_store:
+    async def mcp_server_remove(name: str, mcp_store=Depends(get_mcp_store)):
+        if not mcp_store:
             return JSONResponse(status_code=503, content={"error": "MCP Store not configured"})
-        result = await app_state._mcp_store.remove_server(name)
+        result = await mcp_store.remove_server(name)
         return result
 
     @r.get("/api/mcp/servers/{name}/tools")
-    async def mcp_server_tools(name: str):
-        if not app_state._mcp_store:
+    async def mcp_server_tools(name: str, mcp_store=Depends(get_mcp_store)):
+        if not mcp_store:
             return {"tools": []}
-        tools = await app_state._mcp_store.get_server_tools(name)
+        tools = await mcp_store.get_server_tools(name)
         return {"tools": tools}
