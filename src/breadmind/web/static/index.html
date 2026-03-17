@@ -368,6 +368,7 @@
     </style>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/personal.css">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
     <script>
@@ -445,6 +446,7 @@
         <div class="tab" onclick="switchTab('monitoring')">Monitoring <span class="count" id="eventCount">0</span></div>
         <div class="tab" onclick="switchTab('store')">MCP Store</div>
         <div class="tab" onclick="switchTab('skills')">Skill Store</div>
+        <div class="tab" onclick="switchTab('personal')">📋 비서</div>
         <div class="tab" onclick="switchTab('settings')">Settings</div>
     </div>
     <div class="main">
@@ -544,6 +546,10 @@
                 </div>
             </div>
         </div>
+        <!-- Personal Assistant Tab -->
+        <div class="tab-content" id="tab-personal" style="display:none;flex-direction:column;">
+            <div id="personal-content"></div>
+        </div>
         <!-- Settings Tab -->
         <div class="tab-content" id="tab-settings">
             <div class="settings" style="display:flex;flex-direction:column;height:100%;overflow:hidden;">
@@ -554,8 +560,10 @@
                     <button class="sub-tab" onclick="switchSettingsTab('messenger')" id="stab-messenger">Messenger</button>
                     <button class="sub-tab" onclick="switchSettingsTab('agents')" id="stab-agents">Agents</button>
                     <button class="sub-tab" onclick="switchSettingsTab('system')" id="stab-system">System</button>
+                    <button class="sub-tab" onclick="switchSettingsTab('integrations')" id="stab-integrations">🔗 Integrations</button>
                 </div>
                 <div id="settingsContent" style="flex:1;overflow-y:auto;padding:16px;"><div class="settings-section"><h3>Loading...</h3></div></div>
+                <div id="settings-integrations" style="display:none;flex:1;overflow-y:auto;padding:16px;"><div id="integrations-content"></div></div>
             </div>
         </div>
     </div>
@@ -672,7 +680,7 @@
         }
 
         function switchTab(name) {
-            document.querySelectorAll('.tab').forEach((t, i) => { t.classList.toggle('active', ['chat','monitoring','store','skills','settings'][i] === name); });
+            document.querySelectorAll('.tab').forEach((t, i) => { t.classList.toggle('active', ['chat','monitoring','store','skills','personal','settings'][i] === name); });
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
             document.getElementById('tab-' + name).classList.add('active');
             location.hash = name;
@@ -680,11 +688,14 @@
             if (name === 'monitoring') loadEvents();
             if (name === 'store') { loadFeatured(); loadInstalledServers(); }
             if (name === 'skills') { loadSkillsFeatured(); }
+            if (name === 'personal') { initPersonalTab(); }
         }
 
         function sendMessage() {
-            const text = input.value.trim();
+            let text = input.value.trim();
             if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+            const processed = processQuickAction(text);
+            if (processed) text = processed;
             addMessage(text, 'user');
             ws.send(JSON.stringify({ message: text, session_id: currentSessionId }));
             input.value = '';
@@ -804,6 +815,7 @@
 
         function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
         input.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
+        initQuickActions(input);
 
         // Monitoring
         function addMonitoringEvent(event) {
@@ -1457,9 +1469,18 @@
             _currentSettingsTab = tab;
             localStorage.setItem('breadmind_stab', tab);
             document.querySelectorAll('.sub-tab').forEach(b => b.classList.toggle('active', b.id === 'stab-' + tab));
-            document.querySelectorAll('#settingsContent .settings-section').forEach(s => {
-                s.style.display = s.dataset.stab === tab ? '' : 'none';
-            });
+            const integrationsPanel = document.getElementById('settings-integrations');
+            if (tab === 'integrations') {
+                document.getElementById('settingsContent').style.display = 'none';
+                integrationsPanel.style.display = '';
+                initIntegrationsTab();
+            } else {
+                document.getElementById('settingsContent').style.display = '';
+                integrationsPanel.style.display = 'none';
+                document.querySelectorAll('#settingsContent .settings-section').forEach(s => {
+                    s.style.display = s.dataset.stab === tab ? '' : 'none';
+                });
+            }
         }
 
         async function loadPrompts() {
@@ -3230,7 +3251,7 @@
 
         // Restore tab from URL hash
         const hashTab = location.hash.replace('#', '');
-        if (hashTab && ['chat','monitoring','store','settings'].includes(hashTab)) {
+        if (hashTab && ['chat','monitoring','store','skills','personal','settings'].includes(hashTab)) {
             switchTab(hashTab);
         }
 
@@ -3240,5 +3261,8 @@
             currentSessionId = savedSession;
         }
     </script>
+    <script src="/static/js/personal.js"></script>
+    <script src="/static/js/integrations.js"></script>
+    <script src="/static/js/quick-actions.js"></script>
 </body>
 </html>
