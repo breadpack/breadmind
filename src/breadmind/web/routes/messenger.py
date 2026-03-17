@@ -1,4 +1,4 @@
-"""Messenger routes: auto-connect wizard, lifecycle, security."""
+"""Messenger routes: platforms, tokens, auto-connect wizard, lifecycle, security."""
 from __future__ import annotations
 
 import logging
@@ -7,6 +7,55 @@ from fastapi import Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 logger = logging.getLogger(__name__)
+
+# --- Messenger platform config data ---
+
+_PLATFORM_CONFIGS = {
+    "slack": {"name": "Slack", "icon": "\U0001f4ac", "fields": [
+        {"name": "bot_token", "label": "Bot Token", "placeholder": "xoxb-...", "secret": True},
+        {"name": "app_token", "label": "App Token", "placeholder": "xapp-...", "secret": True},
+    ]},
+    "discord": {"name": "Discord", "icon": "\U0001f3ae", "fields": [
+        {"name": "bot_token", "label": "Bot Token", "placeholder": "Bot token", "secret": True},
+    ]},
+    "telegram": {"name": "Telegram", "icon": "\u2708\ufe0f", "fields": [
+        {"name": "bot_token", "label": "Bot Token", "placeholder": "From @BotFather", "secret": True},
+    ]},
+    "whatsapp": {"name": "WhatsApp", "icon": "\U0001f4f1", "fields": [
+        {"name": "account_sid", "label": "Twilio Account SID", "placeholder": "AC...", "secret": True},
+        {"name": "auth_token", "label": "Twilio Auth Token", "placeholder": "Auth token", "secret": True},
+        {"name": "from_number", "label": "WhatsApp Number", "placeholder": "whatsapp:+14155238886", "secret": False},
+    ]},
+    "gmail": {"name": "Gmail", "icon": "\u2709\ufe0f", "fields": [
+        {"name": "client_id", "label": "OAuth Client ID", "placeholder": "xxx.apps.googleusercontent.com", "secret": True},
+        {"name": "client_secret", "label": "OAuth Client Secret", "placeholder": "GOCSPX-...", "secret": True},
+        {"name": "refresh_token", "label": "Refresh Token", "placeholder": "1//...", "secret": True},
+    ]},
+    "signal": {"name": "Signal", "icon": "\U0001f4e8", "fields": [
+        {"name": "phone_number", "label": "Phone Number", "placeholder": "+1234567890", "secret": False},
+        {"name": "signal_cli_path", "label": "signal-cli Path", "placeholder": "signal-cli", "secret": False},
+    ]},
+}
+
+_TOKEN_KEYS = {
+    "slack": ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"],
+    "discord": ["DISCORD_BOT_TOKEN"],
+    "telegram": ["TELEGRAM_BOT_TOKEN"],
+    "whatsapp": ["WHATSAPP_TWILIO_ACCOUNT_SID", "WHATSAPP_TWILIO_AUTH_TOKEN"],
+    "gmail": ["GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET"],
+    "signal": ["SIGNAL_PHONE_NUMBER"],
+}
+
+_TOKEN_MAP = {
+    "slack": {"bot_token": "SLACK_BOT_TOKEN", "app_token": "SLACK_APP_TOKEN"},
+    "discord": {"bot_token": "DISCORD_BOT_TOKEN"},
+    "telegram": {"bot_token": "TELEGRAM_BOT_TOKEN"},
+    "whatsapp": {"account_sid": "WHATSAPP_TWILIO_ACCOUNT_SID", "auth_token": "WHATSAPP_TWILIO_AUTH_TOKEN", "from_number": "WHATSAPP_FROM_NUMBER"},
+    "gmail": {"client_id": "GMAIL_CLIENT_ID", "client_secret": "GMAIL_CLIENT_SECRET", "refresh_token": "GMAIL_REFRESH_TOKEN"},
+    "signal": {"phone_number": "SIGNAL_PHONE_NUMBER", "signal_cli_path": "SIGNAL_CLI_PATH"},
+}
+
+_VALID_PLATFORMS = {"slack", "discord", "telegram", "whatsapp", "gmail", "signal"}
 
 
 def _wizard_state_to_dict(state) -> dict:
@@ -43,7 +92,249 @@ def _wizard_state_to_dict(state) -> dict:
 
 
 def setup_messenger_routes(app, app_state):
-    """Register messenger auto-connect, lifecycle, and security routes."""
+    """Register messenger platform config, auto-connect, lifecycle, and security routes."""
+
+    # ── Platform Config & Token Routes ──
+
+    @app.get("/api/messenger/platforms")
+    async def messenger_platforms():
+        """Get all messenger platforms with their status and config fields."""
+        platforms = {}
+        for platform, cfg in _PLATFORM_CONFIGS.items():
+            tokens_set = all(bool(os.environ.get(k, "")) for k in _TOKEN_KEYS.get(platform, []))
+            connected = False
+            if app_state._message_router and hasattr(app_state._message_router, 'get_platform_status'):
+                status = app_state._message_router.get_platform_status()
+                connected = status.get(platform, {}).get("connected", False)
+            allowed = []
+            if app_state._message_router and hasattr(app_state._message_router, 'get_allowed_users'):
+                allowed = app_state._message_router.get_allowed_users().get(platform, [])
+
+            platforms[platform] = {
+                **cfg,
+                "configured": tokens_set,
+                "connected": connected,
+                "allowed_users": allowed,
+            }
+        return {"platforms": platforms}
+
+    @app.post("/api/messenger/{platform}/token")
+    async def set_messenger_token(platform: str, request: Request):
+        """Save messenger platform tokens."""
+        data = await request.json()
+        if platform not in _VALID_PLATFORMS:
+            return JSONResponse(status_code=400, content={"error": f"Invalid platform: {platform}"})
+
+        saved = {}
+        for field_name, env_key in _TOKEN_MAP.get(platform, {}).items():
+            value = data.get(field_name, "")
+            if value:
+                os.environ[env_key] = value
+                if app_state._db:
+                    try:
+                        await app_state._db.set_setting(f"messenger_token:{env_key}", {"value": value})
+                    except Exception as e:
+                        logger.warning(f"Failed to save messenger token to DB: {e}")
+                saved[field_name] = env_key
+
+        return {"status": "ok", "saved": list(saved.keys()), "platform": platform}
+
+    @app.post("/api/messenger/{platform}/test")
+    async def test_messenger(platform: str):
+        """Send a test message to verify connection."""
+        if platform not in _VALID_PLATFORMS:
+            return JSONResponse(status_code=400, content={"error": f"Invalid platform: {platform}"})
+        if not app_state._message_router:
+            return JSONResponse(status_code=503, content={"error": "Message router not configured"})
+        gw = app_state._message_router._gateways.get(platform)
+        if not gw:
+            return {"status": "not_connected", "message": f"{platform} gateway not initialized. Save tokens and restart."}
+        try:
+            return {"status": "ok", "message": f"{platform} gateway is available"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    @app.get("/api/messenger/{platform}/setup-url")
+    async def messenger_setup_url(platform: str):
+        """Generate setup/invite URLs for messenger platforms."""
+        if platform == "slack":
+            client_id = os.environ.get("SLACK_CLIENT_ID", "")
+            if not client_id:
+                return {"url": None, "steps": [
+                    {"step": 1, "text": "Go to Slack API", "link": "https://api.slack.com/apps"},
+                    {"step": 2, "text": "Click 'Create New App' -> 'From scratch'"},
+                    {"step": 3, "text": "Add Bot Token Scopes: chat:write, app_mentions:read, channels:read, im:read, im:write"},
+                    {"step": 4, "text": "Enable Socket Mode and get an App Token (xapp-...)"},
+                    {"step": 5, "text": "Install app to your workspace"},
+                    {"step": 6, "text": "Copy Bot Token (xoxb-...) and App Token here"},
+                ]}
+            redirect_uri = f"http://localhost:{app_state._config.web.port if app_state._config else 8080}/api/messenger/slack/oauth-callback"
+            scopes = "chat:write,app_mentions:read,channels:read,im:read,im:write,im:history"
+            url = f"https://slack.com/oauth/v2/authorize?client_id={client_id}&scope={scopes}&redirect_uri={redirect_uri}"
+            return {"url": url, "steps": []}
+
+        elif platform == "discord":
+            client_id = os.environ.get("DISCORD_CLIENT_ID", "")
+            if not client_id:
+                return {"url": None, "steps": [
+                    {"step": 1, "text": "Go to Discord Developer Portal", "link": "https://discord.com/developers/applications"},
+                    {"step": 2, "text": "Click 'New Application' -> name it 'BreadMind'"},
+                    {"step": 3, "text": "Go to 'Bot' tab -> click 'Add Bot'"},
+                    {"step": 4, "text": "Enable: Message Content Intent, Server Members Intent"},
+                    {"step": 5, "text": "Copy the Bot Token here"},
+                    {"step": 6, "text": "Or enter Client ID below for auto-invite link"},
+                ]}
+            permissions = 274877975552  # Send Messages, Read Messages, Add Reactions, Manage Messages
+            url = f"https://discord.com/oauth2/authorize?client_id={client_id}&permissions={permissions}&scope=bot"
+            return {"url": url, "steps": []}
+
+        elif platform == "telegram":
+            return {"url": "https://t.me/BotFather", "steps": [
+                {"step": 1, "text": "Open BotFather in Telegram", "link": "https://t.me/BotFather"},
+                {"step": 2, "text": "Send /newbot and follow the prompts"},
+                {"step": 3, "text": "Copy the HTTP API token (e.g., 123456:ABC-DEF...)"},
+                {"step": 4, "text": "Paste the token in the Bot Token field above"},
+            ]}
+
+        elif platform == "whatsapp":
+            return {"url": "https://console.twilio.com/", "steps": [
+                {"step": 1, "text": "Go to Twilio Console", "link": "https://console.twilio.com/"},
+                {"step": 2, "text": "Enable WhatsApp Sandbox under Messaging"},
+                {"step": 3, "text": "Copy Account SID and Auth Token"},
+                {"step": 4, "text": "Note your WhatsApp Sandbox number (whatsapp:+14155238886)"},
+                {"step": 5, "text": "Set webhook URL to: http://<your-host>/api/webhook/receive/whatsapp"},
+            ]}
+
+        elif platform == "gmail":
+            client_id = os.environ.get("GMAIL_CLIENT_ID", "")
+            if not client_id:
+                return {"url": None, "steps": [
+                    {"step": 1, "text": "Go to Google Cloud Console", "link": "https://console.cloud.google.com/apis/credentials"},
+                    {"step": 2, "text": "Create OAuth 2.0 Client ID (Web application)"},
+                    {"step": 3, "text": "Add redirect URI: http://localhost:<port>/api/messenger/gmail/oauth-callback"},
+                    {"step": 4, "text": "Enable Gmail API in your project"},
+                    {"step": 5, "text": "Enter Client ID and Client Secret here, then click Connect"},
+                ]}
+            port = app_state._config.web.port if app_state._config else 8080
+            redirect_uri = f"http://localhost:{port}/api/messenger/gmail/oauth-callback"
+            scopes = "https://www.googleapis.com/auth/gmail.modify"
+            url = f"https://accounts.google.com/o/oauth2/v2/auth?client_id={client_id}&redirect_uri={redirect_uri}&response_type=code&scope={scopes}&access_type=offline&prompt=consent"
+            return {"url": url, "steps": []}
+
+        elif platform == "signal":
+            return {"url": "https://github.com/AsamK/signal-cli", "steps": [
+                {"step": 1, "text": "Install signal-cli", "link": "https://github.com/AsamK/signal-cli"},
+                {"step": 2, "text": "Register your phone number: signal-cli -a +NUMBER register"},
+                {"step": 3, "text": "Verify with SMS code: signal-cli -a +NUMBER verify CODE"},
+                {"step": 4, "text": "Enter your phone number in the field above"},
+            ]}
+
+        return JSONResponse(status_code=400, content={"error": "Invalid platform"})
+
+    @app.get("/api/messenger/slack/oauth-callback")
+    async def slack_oauth_callback(code: str = "", error: str = ""):
+        """Handle Slack OAuth callback."""
+        if error:
+            return HTMLResponse(f"<html><body><h1>Slack OAuth Error</h1><p>{error}</p><p><a href='/'>Back to BreadMind</a></p></body></html>")
+        if not code:
+            return HTMLResponse("<html><body><h1>Missing code</h1><p><a href='/'>Back to BreadMind</a></p></body></html>")
+
+        client_id = os.environ.get("SLACK_CLIENT_ID", "")
+        client_secret = os.environ.get("SLACK_CLIENT_SECRET", "")
+        if not client_id or not client_secret:
+            return HTMLResponse("<html><body><h1>Slack OAuth not configured</h1><p>Set SLACK_CLIENT_ID and SLACK_CLIENT_SECRET</p></body></html>")
+
+        import aiohttp
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post("https://slack.com/api/oauth.v2.access", data={
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "code": code,
+                }) as resp:
+                    data = await resp.json()
+                    if data.get("ok"):
+                        bot_token = data.get("access_token", "")
+                        os.environ["SLACK_BOT_TOKEN"] = bot_token
+                        if app_state._db:
+                            try:
+                                from breadmind.config import encrypt_value
+                                await app_state._db.set_setting("messenger_token:SLACK_BOT_TOKEN", {"encrypted": encrypt_value(bot_token)})
+                            except Exception:
+                                pass
+                        # Notify WebSocket clients
+                        await app_state.broadcast_event({"type": "messenger_connected", "platform": "slack"})
+                        return HTMLResponse(
+                            "<html><body style='background:#0d1117;color:#e2e8f0;font-family:sans-serif;text-align:center;padding:60px;'>"
+                            "<h1>Slack Connected!</h1><p>Bot token saved. You can close this window.</p>"
+                            "<script>setTimeout(function(){window.close();},3000);</script>"
+                            "<p style='color:#64748b;font-size:13px;'>This window will close in 3 seconds...</p>"
+                            "<p><a href='/' style='color:#60a5fa;'>Back to BreadMind</a></p></body></html>"
+                        )
+                    else:
+                        err = data.get("error", "unknown")
+                        return HTMLResponse(f"<html><body><h1>Slack OAuth Failed</h1><p>{err}</p></body></html>")
+        except Exception as e:
+            return HTMLResponse(f"<html><body><h1>Error</h1><p>{e}</p></body></html>")
+
+    # --- Additional Messenger endpoints (WhatsApp, Gmail) ---
+
+    @app.post("/api/webhook/receive/whatsapp")
+    async def receive_whatsapp_webhook(request: Request):
+        """Handle incoming WhatsApp messages via Twilio webhook."""
+        if not app_state._message_router:
+            return JSONResponse(status_code=503, content={"error": "Messenger not configured"})
+        gw = app_state._message_router._gateways.get("whatsapp")
+        if not gw:
+            return JSONResponse(status_code=503, content={"error": "WhatsApp gateway not configured"})
+        form_data = dict(await request.form())
+        if hasattr(gw, 'handle_incoming_webhook'):
+            await gw.handle_incoming_webhook(form_data)
+        return {"status": "ok"}
+
+    @app.get("/api/messenger/gmail/oauth-callback")
+    async def gmail_oauth_callback(code: str = "", error: str = ""):
+        """Handle Gmail OAuth callback."""
+        if error:
+            return HTMLResponse(f"<html><body><h1>Gmail OAuth Error</h1><p>{error}</p></body></html>")
+        if not code:
+            return HTMLResponse("<html><body><h1>Missing code</h1></body></html>")
+        import aiohttp
+        client_id = os.environ.get("GMAIL_CLIENT_ID", "")
+        client_secret = os.environ.get("GMAIL_CLIENT_SECRET", "")
+        if not client_id or not client_secret:
+            return HTMLResponse("<html><body><h1>Gmail OAuth not configured</h1></body></html>")
+        try:
+            port = app_state._config.web.port if app_state._config else 8080
+            redirect_uri = f"http://localhost:{port}/api/messenger/gmail/oauth-callback"
+            async with aiohttp.ClientSession() as session:
+                async with session.post("https://oauth2.googleapis.com/token", data={
+                    "code": code,
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "redirect_uri": redirect_uri,
+                    "grant_type": "authorization_code",
+                }) as resp:
+                    data = await resp.json()
+                    if "refresh_token" in data:
+                        os.environ["GMAIL_REFRESH_TOKEN"] = data["refresh_token"]
+                        if app_state._db:
+                            try:
+                                await app_state._db.set_setting("messenger_token:GMAIL_REFRESH_TOKEN",
+                                                                   {"value": data["refresh_token"]})
+                            except Exception:
+                                pass
+                        await app_state.broadcast_event({"type": "messenger_connected", "platform": "gmail"})
+                        return HTMLResponse(
+                            "<html><body style='background:#0d1117;color:#e2e8f0;font-family:sans-serif;text-align:center;padding:60px;'>"
+                            "<h1>Gmail Connected!</h1><p>Refresh token saved. You can close this window.</p>"
+                            "<script>setTimeout(function(){window.close();},3000);</script></body></html>"
+                        )
+                    else:
+                        err = data.get("error_description", data.get("error", "unknown"))
+                        return HTMLResponse(f"<html><body><h1>Gmail OAuth Failed</h1><p>{err}</p></body></html>")
+        except Exception as e:
+            return HTMLResponse(f"<html><body><h1>Error</h1><p>{e}</p></body></html>")
 
     # ── Auto-Connect Wizard Routes ──
 
