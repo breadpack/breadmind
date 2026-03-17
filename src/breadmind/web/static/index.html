@@ -607,6 +607,12 @@
                     addMessage(data.message, 'bot');
                     sendBtn.disabled = false; sendBtn.textContent = 'Send';
                     loadSessions(); // Refresh session list (title may have been set)
+                    // Auto-refresh personal tab if response mentions task/event operations
+                    const respContent = data.message || '';
+                    const isPersonalAction = /할 일 (생성|업데이트|삭제|완료)|일정 (생성|수정|삭제)|리마인더 설정|Task (created|updated|deleted|completed)|Event (created|updated|deleted)/i.test(respContent);
+                    if (isPersonalAction && typeof refreshPersonalTab === 'function') {
+                        setTimeout(() => refreshPersonalTab(), 500);
+                    }
                 }
                 else if (data.type === 'session_history') {
                     // Replace chat with session history
