@@ -136,11 +136,14 @@ def add_messenger_subparser(subparsers):
     setup_p.add_argument("--platform", choices=[
         "slack", "discord", "telegram", "whatsapp", "gmail", "signal"
     ])
+    setup_p.add_argument("--config-dir", dest="config_dir", default=None)
     setup_p.set_defaults(func=lambda args: asyncio.run(cmd_setup(args)))
 
     status_p = msg_sub.add_parser("status", help="Check messenger status")
+    status_p.add_argument("--config-dir", dest="config_dir", default=None)
     status_p.set_defaults(func=lambda args: asyncio.run(cmd_status(args)))
 
     restart_p = msg_sub.add_parser("restart", help="Restart messenger gateway")
     restart_p.add_argument("platform", nargs="?", help="Platform to restart")
+    restart_p.add_argument("--config-dir", dest="config_dir", default=None)
     restart_p.set_defaults(func=lambda args: asyncio.run(cmd_restart(args)))

@@ -130,7 +130,8 @@ class GatewayLifecycleManager:
             status.state = GatewayState.DISCONNECTED
             status.last_error = str(e)
             logger.warning("Gateway start failed for %s: %s", platform, e)
-            return await self._retry_connect(platform)
+            asyncio.create_task(self._retry_connect(platform))
+            return False
 
     async def stop_gateway(self, platform: str) -> bool:
         """단일 게이트웨이 중지."""
