@@ -353,7 +353,7 @@ async def run():
                 episodic_memory=episodic_memory,
                 semantic_memory=semantic_memory,
                 profiler=profiler,
-                max_context_tokens=4000,
+                max_context_tokens=config.limits.max_context_tokens,
                 skill_store=skill_store,
             )
         except Exception:
@@ -429,13 +429,13 @@ async def run():
     async def check_updates_periodically():
         import aiohttp
         while True:
-            await asyncio.sleep(3600)  # Check every hour
+            await asyncio.sleep(config.polling.update_check_interval)
             try:
                 current = "0.1.0"
                 async with aiohttp.ClientSession() as session:
                     async with session.get(
                         "https://pypi.org/pypi/breadmind/json",
-                        timeout=aiohttp.ClientTimeout(total=10),
+                        timeout=aiohttp.ClientTimeout(total=config.timeouts.pypi_check),
                     ) as resp:
                         if resp.status == 200:
                             data = await resp.json()
@@ -492,7 +492,7 @@ async def run():
             # Periodic flush of expansion data
             async def _flush_expansion_data():
                 while True:
-                    await asyncio.sleep(300)  # 5 minutes
+                    await asyncio.sleep(config.polling.data_flush_interval)
                     try:
                         await performance_tracker.flush_to_db()
                         await skill_store.flush_to_db()
@@ -517,7 +517,7 @@ async def run():
             # Periodic memory promotion (working → episodic → semantic)
             async def _auto_promote_memory():
                 while True:
-                    await asyncio.sleep(600)  # Every 10 minutes
+                    await asyncio.sleep(config.polling.auto_cleanup_interval)
                     if context_builder:
                         try:
                             result = await context_builder.auto_promote(message_threshold=8)
