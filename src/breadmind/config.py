@@ -31,7 +31,6 @@ class LoggingConfig:
 class LLMConfig:
     default_provider: str = "claude"
     default_model: str = "claude-sonnet-4-6"
-    fallback_chain: list[str] = field(default_factory=lambda: ["claude", "ollama"])
     tool_call_max_turns: int = 10
     tool_call_timeout_seconds: int = 30
 
@@ -42,11 +41,19 @@ class DatabaseConfig:
     port: int = 5432
     name: str = "breadmind"
     user: str = "breadmind"
-    password: str = "breadmind_dev"
+    password: str = ""
 
     @property
     def dsn(self) -> str:
-        return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.name}"
+        pw = self.password
+        if not pw:
+            pw = os.environ.get("BREADMIND_DB_PASSWORD", "")
+        if not pw:
+            raise ValueError(
+                "Database password is not configured. "
+                "Set 'password' in config.yaml or the BREADMIND_DB_PASSWORD environment variable."
+            )
+        return f"postgresql://{self.user}:{pw}@{self.host}:{self.port}/{self.name}"
 
 
 @dataclass
@@ -332,118 +339,27 @@ def _expand_env(obj):
     return obj
 
 
-_VALID_API_KEY_NAMES = ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "XAI_API_KEY")
-
-_env_file_path: str | None = None
-
-
-def set_env_file_path(path: str):
-    """Set the .env file path for save_env_var."""
-    global _env_file_path
-    _env_file_path = path
-
-
-def _get_or_create_master_key() -> bytes:
-    """Get master encryption key from env, or generate and save one."""
-    global _env_file_path
-    key_str = os.environ.get("BREADMIND_MASTER_KEY", "")
-    if key_str:
-        return key_str.encode()
-    # Auto-generate and save to .env
-    from cryptography.fernet import Fernet
-    new_key = Fernet.generate_key()
-    # Use config dir, not project root
-    if _env_file_path:
-        save_env_var("BREADMIND_MASTER_KEY", new_key.decode())
-    else:
-        # Fallback to default config dir
-        default_path = os.path.join(get_default_config_dir(), ".env")
-        Path(default_path).parent.mkdir(parents=True, exist_ok=True)
-        # Temporarily set path, save, then restore
-        old_path = _env_file_path
-        _env_file_path = default_path
-        save_env_var("BREADMIND_MASTER_KEY", new_key.decode())
-        _env_file_path = old_path
-    return new_key
+# Re-export env/secrets functions for backward compatibility.
+# Implementation lives in config_env.py.
+from breadmind.config_env import (  # noqa: F401
+    _VALID_API_KEY_NAMES,
+    set_env_file_path,
+    encrypt_value,
+    decrypt_value,
+    save_env_var,
+    load_env_file,
+    save_api_key_to_db,
+    load_api_keys_from_db,
+)
 
 
-def encrypt_value(plaintext: str) -> str:
-    """Encrypt a string using Fernet symmetric encryption."""
-    from cryptography.fernet import Fernet
-    key = _get_or_create_master_key()
-    f = Fernet(key)
-    return f.encrypt(plaintext.encode()).decode()
+async def apply_db_settings(config: AppConfig, db) -> dict:
+    """Load settings from DB and apply to config, overriding file-based defaults.
 
-
-def decrypt_value(ciphertext: str) -> str:
-    """Decrypt a Fernet-encrypted string."""
-    from cryptography.fernet import Fernet
-    key = _get_or_create_master_key()
-    f = Fernet(key)
-    return f.decrypt(ciphertext.encode()).decode()
-
-
-def save_env_var(key: str, value: str):
-    """Save/update an environment variable to .env file."""
-    if _env_file_path:
-        env_path = Path(_env_file_path)
-    else:
-        env_path = Path(__file__).parent.parent.parent / ".env"
-    lines = []
-    found = False
-    if env_path.exists():
-        lines = env_path.read_text().splitlines()
-        for i, line in enumerate(lines):
-            if line.startswith(f"{key}="):
-                lines[i] = f"{key}={value}"
-                found = True
-                break
-    if not found:
-        lines.append(f"{key}={value}")
-    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    # Also set in current process
-    os.environ[key] = value
-
-
-def load_env_file(path: str):
-    """Load environment variables from a .env file.
-    Uses setdefault so existing env vars are not overwritten."""
-    env_path = Path(path)
-    if not env_path.exists():
-        return
-    for line in env_path.read_text(encoding="utf-8-sig").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        os.environ.setdefault(key.strip(), value.strip())
-
-
-async def save_api_key_to_db(db, key_name: str, plaintext_value: str):
-    """Encrypt and save an API key to the database."""
-    encrypted = encrypt_value(plaintext_value)
-    await db.set_setting(f"apikey:{key_name}", {
-        "encrypted": encrypted,
-        "key_name": key_name,
-    })
-    # Also set in runtime environment
-    os.environ[key_name] = plaintext_value
-
-
-async def load_api_keys_from_db(db):
-    """Load all encrypted API keys from DB and set in environment."""
-    for key_name in _VALID_API_KEY_NAMES:
-        try:
-            data = await db.get_setting(f"apikey:{key_name}")
-            if data and "encrypted" in data:
-                plaintext = decrypt_value(data["encrypted"])
-                os.environ[key_name] = plaintext
-        except Exception:
-            pass  # Key not found or decryption failed
-
-
-async def apply_db_settings(config: AppConfig, db) -> None:
-    """Load settings from DB and apply to config, overriding file-based defaults."""
+    Returns a dict of extra settings that have no direct config field,
+    so callers can use them without additional DB queries.
+    """
+    extra: dict = {}
     try:
         llm_settings = await db.get_setting("llm")
         if llm_settings:
@@ -486,12 +402,15 @@ async def apply_db_settings(config: AppConfig, db) -> None:
                 for m in saved_markets if m.get("name")
             ]
 
-        # Safety settings restoration
-        safety_blacklist = await db.get_setting("safety_blacklist")
-        # safety_approval = await db.get_setting("safety_approval")
-        # safety_permissions = await db.get_setting("safety_permissions")
-        # These values have no direct config field, so they are left
-        # for callers that need them via db.get_setting() directly.
+        # Load extra settings (safety, scheduler, webhook, monitoring, etc.)
+        _EXTRA_SETTING_KEYS = (
+            "safety_blacklist", "safety_approval", "safety_permissions",
+            "scheduler_cron", "scheduler_heartbeat",
+            "webhook_endpoints", "monitoring_config", "memory_config",
+            "tool_security", "agent_timeouts", "logging_config",
+        )
+        for setting_key in _EXTRA_SETTING_KEYS:
+            extra[setting_key] = await db.get_setting(setting_key)
 
         # Messenger token restoration
         for token_key in ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "DISCORD_BOT_TOKEN",
@@ -507,6 +426,7 @@ async def apply_db_settings(config: AppConfig, db) -> None:
                 pass
     except Exception:
         pass  # DB not available, use file-based config
+    return extra
 
 
 def load_safety_config(config_dir: str = "config") -> dict:
