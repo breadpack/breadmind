@@ -140,21 +140,20 @@ async def run():
     # Connect to database and load persisted settings
     # Falls back to file-based settings store when DB is unavailable
     db = None
+    db_extra_settings: dict = {}
     try:
         from breadmind.storage.database import Database
-        db_cfg = config.database
-        dsn = f"postgresql://{db_cfg.user}:{db_cfg.password}@{db_cfg.host}:{db_cfg.port}/{db_cfg.name}"
-        db = Database(dsn)
+        db = Database(config.database.dsn)
         await db.connect()
         from breadmind.config import apply_db_settings
-        await apply_db_settings(config, db)
+        db_extra_settings = await apply_db_settings(config, db)
         print("  Database connected, settings loaded")
     except Exception as e:
         print(f"  Database not available ({e}), using file-based settings")
         from breadmind.storage.settings_store import FileSettingsStore
         db = FileSettingsStore(os.path.join(config_dir, "settings.json"))
         from breadmind.config import apply_db_settings
-        await apply_db_settings(config, db)
+        db_extra_settings = await apply_db_settings(config, db)
         print(f"  Settings: {config_dir}/settings.json")
 
     # First-run setup wizard (CLI mode only, web has its own UI)
