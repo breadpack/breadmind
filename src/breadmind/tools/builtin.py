@@ -289,6 +289,22 @@ async def messenger_connect(platform: str) -> str:
     if platform not in valid:
         return f"Invalid platform '{platform}'. Choose from: {', '.join(valid)}"
 
+    # Try orchestrator-based auto-connect first
+    if _orchestrator is not None:
+        try:
+            state = await _orchestrator.start_connection(platform, "chat")
+            if state.status == "failed":
+                logger.warning("Orchestrator failed for %s, falling back to legacy: %s", platform, state.error)
+            else:
+                msg = state.message or f"{platform} 연결 위자드가 시작되었습니다."
+                if state.step_info and state.step_info.action_url:
+                    msg += f"\n[OPEN_URL]{state.step_info.action_url}[/OPEN_URL]"
+                msg += f"\n(세션 ID: {state.session_id})"
+                return msg
+        except Exception as e:
+            logger.warning("Orchestrator error for %s, falling back to legacy: %s", platform, e)
+
+    # Legacy behavior (fallback)
     if platform == "whatsapp":
         sid = os.environ.get("WHATSAPP_TWILIO_ACCOUNT_SID", "")
         if sid:
@@ -332,6 +348,16 @@ async def messenger_connect(platform: str) -> str:
 
     elif platform == "telegram":
         return "[OPEN_URL]https://t.me/BotFather[/OPEN_URL] Telegram BotFather를 열었습니다. /newbot 명령으로 봇을 만들고, 발급된 토큰을 Settings 페이지의 Telegram Bot Token 필드에 입력해주세요."
+
+
+# --- Orchestrator for auto-connect ---
+_orchestrator = None
+
+
+def set_orchestrator(orchestrator):
+    """Wire the connection orchestrator for messenger_connect tool."""
+    global _orchestrator
+    _orchestrator = orchestrator
 
 
 # --- Swarm role management ---
