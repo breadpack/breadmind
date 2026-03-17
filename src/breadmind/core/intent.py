@@ -17,6 +17,10 @@ class IntentCategory(str, Enum):
     CONFIGURE = "configure"   # Change settings (config, setup, enable)
     LEARN = "learn"           # Store/retrieve knowledge (remember, forget)
     CHAT = "chat"             # General conversation, greeting
+    SCHEDULE = "schedule"     # Calendar/event management (meeting, appointment)
+    TASK = "task"             # Task/todo management (todo, reminder, checklist)
+    SEARCH_FILES = "search_files"  # File search/document lookup
+    CONTACT = "contact"       # Contact/person lookup
 
 
 @dataclass
@@ -33,6 +37,18 @@ _PATTERNS: list[tuple[re.Pattern, IntentCategory, float]] = [
     # DIAGNOSE — problem signals
     (re.compile(r"(오류|에러|error|fail|crash|죽|down|느려|slow|timeout|장애|문제|왜.*안|not\s+work|broken|hung|oom|kill)", re.I), IntentCategory.DIAGNOSE, 0.4),
     (re.compile(r"(로그|log|trace|debug|원인|cause|분석|analyz)", re.I), IntentCategory.DIAGNOSE, 0.3),
+
+    # SCHEDULE — calendar/event management
+    (re.compile(r"일정|회의|약속|캘린더|calendar|schedule|meeting|언제.*시간|예약", re.I), IntentCategory.SCHEDULE, 0.7),
+
+    # TASK — todo/task management
+    (re.compile(r"할\s*일|해야\s*할|완료|체크|리마인더|마감|todo|task|remind", re.I), IntentCategory.TASK, 0.7),
+
+    # SEARCH_FILES — file/document search
+    (re.compile(r"파일|문서|드라이브|drive|document|다운로드|download", re.I), IntentCategory.SEARCH_FILES, 0.6),
+
+    # CONTACT — contact/person lookup
+    (re.compile(r"연락처|전화번호|이메일\s*주소|담당자|contact", re.I), IntentCategory.CONTACT, 0.7),
 
     # EXECUTE — action verbs
     (re.compile(r"(실행|배포|deploy|restart|재시작|설치|install|삭제|delete|remove|생성|create|시작|start|stop|중지|kill|업데이트|update|upgrade|롤백|rollback|스케일|scale|clean|정리)", re.I), IntentCategory.EXECUTE, 0.4),
@@ -73,6 +89,24 @@ _TOOL_HINTS: dict[IntentCategory, set[str]] = {
     IntentCategory.CONFIGURE: {"file_read", "file_write"},
     IntentCategory.LEARN: {"memory_save", "memory_search"},
     IntentCategory.CHAT: set(),
+    IntentCategory.SCHEDULE: {"event_create", "event_list", "event_update", "event_delete"},
+    IntentCategory.TASK: {"task_create", "task_list", "task_update", "task_delete", "reminder_set"},
+    IntentCategory.SEARCH_FILES: {"file_search", "file_read", "file_list"},
+    IntentCategory.CONTACT: {"contact_search", "contact_create"},
+}
+
+
+_CATEGORY_PRIORITY: dict[IntentCategory, int] = {
+    IntentCategory.SCHEDULE: 0,
+    IntentCategory.TASK: 1,
+    IntentCategory.CONTACT: 2,
+    IntentCategory.SEARCH_FILES: 3,
+    IntentCategory.DIAGNOSE: 4,
+    IntentCategory.EXECUTE: 5,
+    IntentCategory.CONFIGURE: 6,
+    IntentCategory.QUERY: 7,
+    IntentCategory.LEARN: 8,
+    IntentCategory.CHAT: 9,
 }
 
 
@@ -88,9 +122,13 @@ def classify(message: str) -> Intent:
         if pattern.search(message):
             scores[category] += boost
 
-    # Pick highest-scoring category
-    best_category = max(scores, key=scores.get)  # type: ignore[arg-type]
-    best_score = scores[best_category]
+    # Pick highest-scoring category (priority breaks ties)
+    sorted_candidates = sorted(
+        scores.items(),
+        key=lambda item: (-item[1], _CATEGORY_PRIORITY.get(item[0], 99)),
+    )
+    best_category = sorted_candidates[0][0]
+    best_score = sorted_candidates[0][1]
 
     # If no pattern matched strongly, default to QUERY (safe fallback)
     if best_score < 0.2:
@@ -140,6 +178,10 @@ _THINK_BUDGETS: dict[IntentCategory, int] = {
     IntentCategory.CONFIGURE: 4096,  # Settings — impact assessment
     IntentCategory.EXECUTE: 10240,   # Actions — multi-step execution planning
     IntentCategory.DIAGNOSE: 16384,  # Troubleshooting — deep root-cause analysis, multiple hypotheses
+    IntentCategory.SCHEDULE: 5120,   # Calendar ops — date/time reasoning
+    IntentCategory.TASK: 5120,       # Task management — priority assessment
+    IntentCategory.SEARCH_FILES: 5120,  # File search — query formulation
+    IntentCategory.CONTACT: 3072,    # Contact lookup — simple matching
 }
 
 
