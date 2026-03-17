@@ -36,6 +36,7 @@ class CoreAgent:
         tool_gap_detector: ToolGapDetector | None = None,
         context_builder: object | None = None,
         behavior_prompt: str | None = None,
+        profiler: object | None = None,
     ):
         self._provider = provider
         self._tools = tool_registry
@@ -56,6 +57,7 @@ class CoreAgent:
         self._notifications: list[str] = []
         self._behavior_tracker: object | None = None
         self._progress_callback: object | None = None
+        self._profiler = profiler
 
         # If behavior_prompt provided, rebuild system_prompt with it
         if behavior_prompt is not None:
@@ -249,6 +251,10 @@ class CoreAgent:
             data=intent_data,
             source="agent",
         ))
+
+        # Record intent for adaptive user profiling
+        if self._profiler:
+            self._profiler.record_intent(user, intent.category.value)
 
         # Build initial messages
         system_msg = LLMMessage(role="system", content=self._system_prompt)
