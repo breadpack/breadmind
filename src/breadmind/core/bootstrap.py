@@ -66,6 +66,8 @@ class AppComponents:
     audit_logger: Any = None
     metrics_collector: Any = None
     tool_gap_detector: Any = None
+    adapter_registry: Any = None
+    personal_scheduler: Any = None
     event_bus: EventBus | None = None
 
 
@@ -288,6 +290,32 @@ async def init_memory(db, provider, config, registry, mcp_manager, search_engine
     except (ImportError, Exception):
         pass
 
+    # --- Personal assistant adapter registry ---
+    adapter_registry = None
+    try:
+        from breadmind.personal.adapters.base import AdapterRegistry
+        from breadmind.personal.adapters.builtin_task import BuiltinTaskAdapter
+        from breadmind.personal.adapters.builtin_event import BuiltinEventAdapter
+        from breadmind.personal.context_provider import PersonalContextProvider
+
+        adapter_registry = AdapterRegistry()
+        if db:
+            adapter_registry.register(BuiltinTaskAdapter(db))
+            adapter_registry.register(BuiltinEventAdapter(db))
+
+        # Register personal context provider
+        if context_builder:
+            context_builder.register_provider(PersonalContextProvider(adapter_registry))
+
+        # Register personal assistant tools
+        from breadmind.personal.tools import register_personal_tools
+        if registry:
+            register_personal_tools(registry, adapter_registry, user_id="default")
+
+        print("  Personal assistant: ready")
+    except Exception as e:
+        print(f"  Personal assistant: not available ({e})")
+
     return {
         "working_memory": working_memory,
         "episodic_memory": episodic_memory,
@@ -300,6 +328,7 @@ async def init_memory(db, provider, config, registry, mcp_manager, search_engine
         "context_builder": context_builder,
         "profiler": profiler,
         "mcp_store": mcp_store,
+        "adapter_registry": adapter_registry,
     }
 
 
@@ -572,6 +601,7 @@ async def bootstrap_all(
         components.context_builder = mem.get("context_builder")
         components.profiler = mem.get("profiler")
         components.mcp_store = mem.get("mcp_store")
+        components.adapter_registry = mem.get("adapter_registry")
         logger.info("Phase 3 complete: memory initialized")
     except Exception as e:
         logger.error("Phase 3 failed (memory): %s", e)
@@ -614,5 +644,18 @@ async def bootstrap_all(
             logger.info("Phase 5 complete: messenger initialized")
         except Exception as e:
             logger.error("Phase 5 failed (messenger): %s", e)
+
+    # ── Personal Scheduler (after messenger) ───────────────────────
+    if components.adapter_registry is not None and message_router is not None:
+        try:
+            from breadmind.personal.proactive import PersonalScheduler
+            personal_scheduler = PersonalScheduler(
+                components.adapter_registry, message_router,
+            )
+            await personal_scheduler.start()
+            components.personal_scheduler = personal_scheduler
+            logger.info("PersonalScheduler started")
+        except Exception as e:
+            logger.warning("PersonalScheduler not started: %s", e)
 
     return components
