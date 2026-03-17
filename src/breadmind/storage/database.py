@@ -1,9 +1,12 @@
 import json
+import logging
 
 import asyncpg
 from contextlib import asynccontextmanager
 
 from breadmind.storage.models import EpisodicNote, KGEntity, KGRelation
+
+logger = logging.getLogger(__name__)
 
 
 class Database:
@@ -415,10 +418,55 @@ class Database:
 
     # --- Conversations ---
 
+    @staticmethod
+    def _encrypt_messages(messages: list[dict]) -> str:
+        """Encrypt messages JSON for storage.
+
+        Returns encrypted string on success, or plain JSON string if
+        encryption is unavailable (no master key) or fails.
+        """
+        messages_json = json.dumps(messages, ensure_ascii=False)
+        try:
+            from breadmind.config_env import encrypt_value
+            return encrypt_value(messages_json)
+        except Exception:
+            # No master key or encryption failure → store plaintext
+            return messages_json
+
+    @staticmethod
+    def _decrypt_messages(raw) -> list[dict]:
+        """Decrypt messages from DB, with fallback to plaintext.
+
+        Handles three cases:
+        1. Encrypted string → decrypt then parse JSON
+        2. Plain JSON string → parse directly
+        3. Already-parsed list/dict (asyncpg auto-parses JSONB) → return as-is
+        """
+        if not isinstance(raw, str):
+            # asyncpg already parsed JSONB into Python object
+            return raw if isinstance(raw, list) else []
+
+        # Try decryption first
+        try:
+            from breadmind.config_env import decrypt_value
+            decrypted = decrypt_value(raw)
+            return json.loads(decrypted)
+        except Exception:
+            pass
+
+        # Fallback: plain JSON string (pre-encryption data)
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, list) else []
+        except (json.JSONDecodeError, TypeError):
+            logger.warning("Failed to parse conversation messages, returning empty list")
+            return []
+
     async def save_conversation(self, session_id: str, user: str, channel: str,
                                 title: str, messages: list[dict], created_at=None, last_active=None):
-        """Upsert conversation to DB."""
+        """Upsert conversation to DB. Messages are encrypted at rest."""
         from datetime import datetime, timezone
+        encrypted_messages = self._encrypt_messages(messages)
         async with self.acquire() as conn:
             await conn.execute("""
                 INSERT INTO conversations (session_id, user_id, channel, title, messages, created_at, last_active)
@@ -428,12 +476,12 @@ class Database:
                     title = EXCLUDED.title,
                     last_active = EXCLUDED.last_active
             """, session_id, user, channel, title,
-                json.dumps(messages),
+                json.dumps(encrypted_messages),
                 created_at or datetime.now(timezone.utc),
                 last_active or datetime.now(timezone.utc))
 
     async def load_conversation(self, session_id: str) -> dict | None:
-        """Load a conversation from DB."""
+        """Load a conversation from DB. Messages are decrypted transparently."""
         async with self.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT * FROM conversations WHERE session_id = $1", session_id)
@@ -444,7 +492,7 @@ class Database:
                 "user": row["user_id"],
                 "channel": row["channel"],
                 "title": row["title"],
-                "messages": json.loads(row["messages"]) if isinstance(row["messages"], str) else row["messages"],
+                "messages": self._decrypt_messages(row["messages"]),
                 "created_at": row["created_at"],
                 "last_active": row["last_active"],
             }
