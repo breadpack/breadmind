@@ -67,12 +67,17 @@ class WebApp:
             origins = config.security.cors_origins
         else:
             origins = ["http://localhost:8080", "http://127.0.0.1:8080"]
+        # Support BREADMIND_CORS_ORIGINS env var override
+        import os as _os
+        env_cors = _os.environ.get("BREADMIND_CORS_ORIGINS")
+        if env_cors:
+            origins = [o.strip() for o in env_cors.split(",") if o.strip()]
         self.app.add_middleware(
             CORSMiddleware,
             allow_origins=origins,
             allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
+            allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            allow_headers=["Content-Type", "Authorization", "X-Request-ID"],
         )
 
         self._connections: list[WebSocket] = []
@@ -136,15 +141,40 @@ class WebApp:
     def _setup_routes(self):
         app = self.app
 
+        # --- Security headers middleware ---
+
+        @app.middleware("http")
+        async def add_security_headers(request: Request, call_next):
+            response = await call_next(request)
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["X-XSS-Protection"] = "1; mode=block"
+            response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+            return response
+
         # --- Auth middleware ---
 
         @app.middleware("http")
         async def auth_middleware(request: Request, call_next):
             path = request.url.path
             # Skip auth for certain paths
-            skip_paths = ["/api/auth/", "/api/setup/", "/health", "/api/webhook/receive/", "/api/workers/install-script"]
+            skip_paths = ["/api/auth/", "/health", "/api/webhook/receive/", "/api/workers/install-script"]
             if any(path.startswith(p) for p in skip_paths):
                 return await call_next(request)
+
+            # Setup endpoints: only skip auth during first run
+            if path.startswith("/api/setup/"):
+                setup_allowed = False
+                if not self._db:
+                    setup_allowed = True
+                else:
+                    try:
+                        from breadmind.core.setup_wizard import is_first_run_async
+                        setup_allowed = await is_first_run_async(self._db)
+                    except Exception:
+                        setup_allowed = True
+                if setup_allowed:
+                    return await call_next(request)
 
             # Skip if auth not enabled
             if not self._auth or not self._auth.enabled:
