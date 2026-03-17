@@ -416,6 +416,7 @@ async def init_agent(config, provider, registry, guard, db, memory_components):
         tool_gap_detector=memory_components["tool_gap_detector"],
         context_builder=memory_components.get("context_builder"),
         behavior_prompt=saved_behavior_prompt,
+        profiler=memory_components.get("profiler"),
     )
     if audit_logger is not None:
         agent_kwargs["audit_logger"] = audit_logger
