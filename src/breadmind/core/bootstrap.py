@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
+from breadmind.core.events import get_event_bus, EventBus
+
 logger = logging.getLogger(__name__)
 
 
@@ -37,6 +39,7 @@ class AppComponents:
     audit_logger: Any = None
     metrics_collector: Any = None
     tool_gap_detector: Any = None
+    event_bus: EventBus | None = None
 
 
 def _detect_package_managers() -> list[str]:

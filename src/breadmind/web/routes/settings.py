@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import logging
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
+
+from breadmind.web.dependencies import get_config, get_db
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +43,10 @@ def setup_settings_routes(r: APIRouter, app_state):
     ]
 
     @r.get("/api/config/timeouts-system")
-    async def get_timeouts_system():
+    async def get_timeouts_system(config=Depends(get_config)):
         """Return current system-wide timeout settings."""
-        if app_state._config and hasattr(app_state._config, "timeouts"):
-            t = app_state._config.timeouts
+        if config and hasattr(config, "timeouts"):
+            t = config.timeouts
             return {f: getattr(t, f) for f in _TIMEOUT_FIELDS}
         # Defaults from TimeoutsConfig
         from breadmind.config_types import TimeoutsConfig
@@ -52,13 +54,13 @@ def setup_settings_routes(r: APIRouter, app_state):
         return {f: getattr(d, f) for f in _TIMEOUT_FIELDS}
 
     @r.post("/api/config/timeouts-system")
-    async def update_timeouts_system(request: Request):
+    async def update_timeouts_system(request: Request, config=Depends(get_config), db=Depends(get_db)):
         """Update system-wide timeout settings (all values 1-3600)."""
         data = await request.json()
-        if not app_state._config or not hasattr(app_state._config, "timeouts"):
+        if not config or not hasattr(config, "timeouts"):
             return JSONResponse(status_code=503, content={"error": "Config not available"})
 
-        t = app_state._config.timeouts
+        t = config.timeouts
         for field in _TIMEOUT_FIELDS:
             if field in data:
                 val, err = _validate_int(data[field], field, 1, 3600)
@@ -67,15 +69,15 @@ def setup_settings_routes(r: APIRouter, app_state):
                 setattr(t, field, val)
 
         # Persist
-        if app_state._db:
+        if db:
             try:
-                await app_state._db.set_setting(
+                await db.set_setting(
                     "system_timeouts", {f: getattr(t, f) for f in _TIMEOUT_FIELDS}
                 )
             except Exception as e:
                 logger.warning("Failed to persist system_timeouts: %s", e)
 
-        return {"status": "ok", "persisted": app_state._db is not None}
+        return {"status": "ok", "persisted": db is not None}
 
     # ── 2. Retry Config ───────────────────────────────────────────────
 
@@ -89,23 +91,23 @@ def setup_settings_routes(r: APIRouter, app_state):
     }
 
     @r.get("/api/config/retry")
-    async def get_retry():
+    async def get_retry(config=Depends(get_config)):
         """Return current retry settings."""
-        if app_state._config and hasattr(app_state._config, "retry"):
-            rc = app_state._config.retry
+        if config and hasattr(config, "retry"):
+            rc = config.retry
             return {f: getattr(rc, f) for f in _RETRY_FIELDS}
         from breadmind.config_types import RetryConfig
         d = RetryConfig()
         return {f: getattr(d, f) for f in _RETRY_FIELDS}
 
     @r.post("/api/config/retry")
-    async def update_retry(request: Request):
+    async def update_retry(request: Request, config=Depends(get_config), db=Depends(get_db)):
         """Update retry settings."""
         data = await request.json()
-        if not app_state._config or not hasattr(app_state._config, "retry"):
+        if not config or not hasattr(config, "retry"):
             return JSONResponse(status_code=503, content={"error": "Config not available"})
 
-        rc = app_state._config.retry
+        rc = config.retry
         for field, (lo, hi) in _RETRY_FIELDS.items():
             if field in data:
                 val, err = _validate_int(data[field], field, lo, hi)
@@ -113,15 +115,15 @@ def setup_settings_routes(r: APIRouter, app_state):
                     return JSONResponse(status_code=400, content={"error": err})
                 setattr(rc, field, val)
 
-        if app_state._db:
+        if db:
             try:
-                await app_state._db.set_setting(
+                await db.set_setting(
                     "retry_config", {f: getattr(rc, f) for f in _RETRY_FIELDS}
                 )
             except Exception as e:
                 logger.warning("Failed to persist retry_config: %s", e)
 
-        return {"status": "ok", "persisted": app_state._db is not None}
+        return {"status": "ok", "persisted": db is not None}
 
     # ── 3. Limits Config ──────────────────────────────────────────────
 
@@ -140,10 +142,10 @@ def setup_settings_routes(r: APIRouter, app_state):
     }
 
     @r.get("/api/config/limits")
-    async def get_limits():
+    async def get_limits(config=Depends(get_config)):
         """Return current limits settings."""
-        if app_state._config and hasattr(app_state._config, "limits"):
-            lc = app_state._config.limits
+        if config and hasattr(config, "limits"):
+            lc = config.limits
             result = {f: getattr(lc, f) for f in _LIMITS_INT_FIELDS}
             result.update({f: getattr(lc, f) for f in _LIMITS_FLOAT_FIELDS})
             return result
@@ -154,13 +156,13 @@ def setup_settings_routes(r: APIRouter, app_state):
         return result
 
     @r.post("/api/config/limits")
-    async def update_limits(request: Request):
+    async def update_limits(request: Request, config=Depends(get_config), db=Depends(get_db)):
         """Update limits settings."""
         data = await request.json()
-        if not app_state._config or not hasattr(app_state._config, "limits"):
+        if not config or not hasattr(config, "limits"):
             return JSONResponse(status_code=503, content={"error": "Config not available"})
 
-        lc = app_state._config.limits
+        lc = config.limits
         for field, (lo, hi) in _LIMITS_INT_FIELDS.items():
             if field in data:
                 val, err = _validate_int(data[field], field, lo, hi)
@@ -175,15 +177,15 @@ def setup_settings_routes(r: APIRouter, app_state):
                     return JSONResponse(status_code=400, content={"error": err})
                 setattr(lc, field, val)
 
-        if app_state._db:
+        if db:
             try:
                 payload = {f: getattr(lc, f) for f in _LIMITS_INT_FIELDS}
                 payload.update({f: getattr(lc, f) for f in _LIMITS_FLOAT_FIELDS})
-                await app_state._db.set_setting("limits_config", payload)
+                await db.set_setting("limits_config", payload)
             except Exception as e:
                 logger.warning("Failed to persist limits_config: %s", e)
 
-        return {"status": "ok", "persisted": app_state._db is not None}
+        return {"status": "ok", "persisted": db is not None}
 
     # ── 4. Polling Config ─────────────────────────────────────────────
 
@@ -193,23 +195,23 @@ def setup_settings_routes(r: APIRouter, app_state):
     ]
 
     @r.get("/api/config/polling")
-    async def get_polling():
+    async def get_polling(config=Depends(get_config)):
         """Return current polling interval settings."""
-        if app_state._config and hasattr(app_state._config, "polling"):
-            pc = app_state._config.polling
+        if config and hasattr(config, "polling"):
+            pc = config.polling
             return {f: getattr(pc, f) for f in _POLLING_FIELDS}
         from breadmind.config_types import PollingConfig
         d = PollingConfig()
         return {f: getattr(d, f) for f in _POLLING_FIELDS}
 
     @r.post("/api/config/polling")
-    async def update_polling(request: Request):
+    async def update_polling(request: Request, config=Depends(get_config), db=Depends(get_db)):
         """Update polling interval settings (all values 1-86400)."""
         data = await request.json()
-        if not app_state._config or not hasattr(app_state._config, "polling"):
+        if not config or not hasattr(config, "polling"):
             return JSONResponse(status_code=503, content={"error": "Config not available"})
 
-        pc = app_state._config.polling
+        pc = config.polling
         for field in _POLLING_FIELDS:
             if field in data:
                 val, err = _validate_int(data[field], field, 1, 86400)
@@ -217,15 +219,15 @@ def setup_settings_routes(r: APIRouter, app_state):
                     return JSONResponse(status_code=400, content={"error": err})
                 setattr(pc, field, val)
 
-        if app_state._db:
+        if db:
             try:
-                await app_state._db.set_setting(
+                await db.set_setting(
                     "polling_config", {f: getattr(pc, f) for f in _POLLING_FIELDS}
                 )
             except Exception as e:
                 logger.warning("Failed to persist polling_config: %s", e)
 
-        return {"status": "ok", "persisted": app_state._db is not None}
+        return {"status": "ok", "persisted": db is not None}
 
     # ── 5. Memory GC Config ───────────────────────────────────────────
 
@@ -240,10 +242,10 @@ def setup_settings_routes(r: APIRouter, app_state):
     }
 
     @r.get("/api/config/memory-gc")
-    async def get_memory_gc():
+    async def get_memory_gc(config=Depends(get_config)):
         """Return current memory GC settings."""
-        if app_state._config and hasattr(app_state._config, "memory_gc"):
-            gc = app_state._config.memory_gc
+        if config and hasattr(config, "memory_gc"):
+            gc = config.memory_gc
             result = {f: getattr(gc, f) for f in _GC_INT_FIELDS}
             result.update({f: getattr(gc, f) for f in _GC_FLOAT_FIELDS})
             return result
@@ -254,13 +256,13 @@ def setup_settings_routes(r: APIRouter, app_state):
         return result
 
     @r.post("/api/config/memory-gc")
-    async def update_memory_gc(request: Request):
+    async def update_memory_gc(request: Request, config=Depends(get_config), db=Depends(get_db)):
         """Update memory GC settings."""
         data = await request.json()
-        if not app_state._config or not hasattr(app_state._config, "memory_gc"):
+        if not config or not hasattr(config, "memory_gc"):
             return JSONResponse(status_code=503, content={"error": "Config not available"})
 
-        gc = app_state._config.memory_gc
+        gc = config.memory_gc
         for field, (lo, hi) in _GC_INT_FIELDS.items():
             if field in data:
                 val, err = _validate_int(data[field], field, lo, hi)
@@ -275,12 +277,12 @@ def setup_settings_routes(r: APIRouter, app_state):
                     return JSONResponse(status_code=400, content={"error": err})
                 setattr(gc, field, val)
 
-        if app_state._db:
+        if db:
             try:
                 payload = {f: getattr(gc, f) for f in _GC_INT_FIELDS}
                 payload.update({f: getattr(gc, f) for f in _GC_FLOAT_FIELDS})
-                await app_state._db.set_setting("memory_gc_config", payload)
+                await db.set_setting("memory_gc_config", payload)
             except Exception as e:
                 logger.warning("Failed to persist memory_gc_config: %s", e)
 
-        return {"status": "ok", "persisted": app_state._db is not None}
+        return {"status": "ok", "persisted": db is not None}

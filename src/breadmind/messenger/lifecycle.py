@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from breadmind.messenger.auto_connect.base import GatewayState, HealthStatus
 from breadmind.messenger.platforms import create_gateway, get_token_env_map
+from breadmind.core.events import get_event_bus, Event, EventType
 
 logger = logging.getLogger(__name__)
 
@@ -236,7 +237,8 @@ class GatewayLifecycleManager:
         await self._router.stop_all()
 
     async def _emit_event(self, event_type: str, platform: str) -> None:
-        """이벤트 발행."""
+        """이벤트 발행 (legacy callback + EventBus)."""
+        # Legacy callback (kept for backward compat)
         if self._event_callback:
             try:
                 await self._event_callback(
@@ -244,3 +246,18 @@ class GatewayLifecycleManager:
                 )
             except Exception as e:
                 logger.warning("Event callback error: %s", e)
+
+        # Central EventBus publish
+        _EVENT_MAP = {
+            "messenger_connected": EventType.MESSENGER_CONNECTED,
+            "messenger_disconnected": EventType.MESSENGER_DISCONNECTED,
+            "messenger_reconnected": EventType.MESSENGER_RECONNECTED,
+            "messenger_failed": EventType.MESSENGER_FAILED,
+        }
+        bus_type = _EVENT_MAP.get(event_type)
+        if bus_type:
+            await get_event_bus().publish_fire_and_forget(Event(
+                type=bus_type,
+                data={"platform": platform},
+                source=f"messenger.{platform}",
+            ))
