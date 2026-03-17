@@ -466,6 +466,8 @@ class CoreAgent:
             "browser", "mcp_search", "mcp_install", "mcp_list",
             "skill_manage", "memory_save", "memory_search",
             "swarm_role", "messenger_connect",
+            "task_create", "task_list", "event_create", "event_list",
+            "reminder_set",
         }
 
         if len(tools) <= max_tools:
