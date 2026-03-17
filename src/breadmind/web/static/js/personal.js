@@ -78,7 +78,13 @@
     async function renderTasks(container) {
         const tasks = await fetchJSON(`${API_BASE}/tasks`);
         if (!tasks.length) {
-            container.innerHTML = '<div class="empty-state">할 일이 없습니다. + 버튼으로 추가하세요.</div>';
+            container.innerHTML = `<div class="empty-state">
+                <div class="empty-icon">📋</div>
+                <h3>할 일이 없습니다</h3>
+                <p>첫 번째 할 일을 추가해보세요</p>
+                <button class="btn-primary" onclick="document.getElementById('personal-add-btn').click()">+ 할 일 추가</button>
+                <p class="empty-hint">또는 채팅에서 <code>/task 할 일 내용</code> 입력</p>
+            </div>`;
             return;
         }
 
@@ -119,7 +125,16 @@
     async function renderEvents(container) {
         const events = await fetchJSON(`${API_BASE}/events`);
         if (!events.length) {
-            container.innerHTML = '<div class="empty-state">예정된 일정이 없습니다.</div>';
+            container.innerHTML = `<div class="empty-state">
+                <div class="empty-icon">📅</div>
+                <h3>예정된 일정이 없습니다</h3>
+                <p>새 일정을 추가하거나 Google Calendar을 연결하세요</p>
+                <div class="empty-actions">
+                    <button class="btn-primary" onclick="document.getElementById('personal-add-btn').click()">+ 일정 추가</button>
+                    <button class="btn-secondary" onclick="switchTab('settings'); setTimeout(()=>switchSettingsTab('integrations'),100);">서비스 연결</button>
+                </div>
+                <p class="empty-hint">채팅: <code>/event 회의 --at 15:00</code></p>
+            </div>`;
             return;
         }
 
@@ -143,7 +158,14 @@
     async function renderContacts(container) {
         const contacts = await fetchJSON(`${API_BASE}/contacts`);
         if (!contacts.length) {
-            container.innerHTML = '<div class="empty-state">연락처가 없습니다.</div>';
+            container.innerHTML = `<div class="empty-state">
+                <div class="empty-icon">📇</div>
+                <h3>연락처가 없습니다</h3>
+                <p>연락처를 추가하거나 Google Contacts를 연결하세요</p>
+                <div class="empty-actions">
+                    <button class="btn-primary" onclick="document.getElementById('personal-add-btn').click()">+ 연락처 추가</button>
+                </div>
+            </div>`;
             return;
         }
 
