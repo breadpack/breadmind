@@ -3270,7 +3270,7 @@
         }
 
         // Show onboarding tour for first-time visitors
-        setTimeout(checkOnboarding, 1000);
+        setTimeout(function() { if (typeof checkOnboarding === 'function') checkOnboarding(); }, 1000);
     </script>
     <script src="/static/js/toast.js"></script>
     <script src="/static/js/onboarding.js"></script>
