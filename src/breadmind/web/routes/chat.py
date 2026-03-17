@@ -35,7 +35,8 @@ def setup_chat_routes(r: APIRouter, app_state):
         return {"status": "ok"}
 
     @r.websocket("/ws/chat")
-    async def websocket_chat(websocket: WebSocket, app=Depends(get_app_state)):
+    async def websocket_chat(websocket: WebSocket):
+        app = websocket.app.state.app_state
         # Auth check for WebSocket — extract and store token for re-validation
         session_token = None
         if app._auth and app._auth.enabled:
