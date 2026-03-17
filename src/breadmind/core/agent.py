@@ -4,13 +4,13 @@ import asyncio
 import json
 import logging
 import time
-import uuid
 from typing import TYPE_CHECKING
 
-from breadmind.llm.base import LLMProvider, LLMMessage, LLMResponse, ToolCall
+from breadmind.llm.base import LLMProvider, LLMMessage, LLMResponse
 from breadmind.tools.registry import ToolRegistry, ToolResult
-from breadmind.core.safety import SafetyGuard, SafetyResult
+from breadmind.core.safety import SafetyGuard
 from breadmind.core.audit import AuditLogger
+from breadmind.core.tool_executor import ToolExecutor, ToolExecutionContext
 
 if TYPE_CHECKING:
     from breadmind.memory.working import WorkingMemory
@@ -39,6 +39,7 @@ class CoreAgent:
         self._provider = provider
         self._tools = tool_registry
         self._guard = safety_guard
+        self._tool_executor = ToolExecutor(tool_registry, safety_guard, tool_timeout)
         self._system_prompt = system_prompt
         self._max_turns = max_turns
         self._working_memory = working_memory
@@ -76,6 +77,7 @@ class CoreAgent:
         """Update timeout settings at runtime."""
         if tool_timeout is not None and tool_timeout >= 1:
             self._tool_timeout = tool_timeout
+            self._tool_executor.tool_timeout = tool_timeout
         if chat_timeout is not None and chat_timeout >= 1:
             self._chat_timeout = chat_timeout
 
@@ -358,8 +360,7 @@ class CoreAgent:
                     )
                 return final_content
 
-            # Process tool calls — collect tasks for parallel execution
-            # First, add the assistant message with all tool calls
+            # Process tool calls — add assistant message, then delegate to ToolExecutor
             assistant_msg = LLMMessage(
                 role="assistant", content=response.content, tool_calls=response.tool_calls,
             )
@@ -367,139 +368,21 @@ class CoreAgent:
             if self._working_memory is not None:
                 self._working_memory.add_message(session_id, assistant_msg)
 
-            # Categorize tool calls
-            executable_calls: list[ToolCall] = []
-            for tc in response.tool_calls:
-                safety = self._guard.check(tc.name, tc.arguments, user=user, channel=channel)
-
-                # Log safety decision
-                if self._audit_logger:
-                    self._audit_logger.log_safety_check(
-                        user, channel, tc.name, safety.value,
-                    )
-
-                if safety == SafetyResult.DENY:
-                    logger.info(json.dumps({"event": "safety_deny", "tool": tc.name, "user": user}))
-                    tool_msg = LLMMessage(
-                        role="tool",
-                        content=f"[success=False] BLOCKED: {tc.name} is in the blacklist.",
-                        tool_call_id=tc.id, name=tc.name,
-                    )
-                    messages.append(tool_msg)
-                    if self._working_memory is not None:
-                        self._working_memory.add_message(session_id, tool_msg)
-                    continue
-
-                if safety == SafetyResult.REQUIRE_APPROVAL:
-                    approval_id = str(uuid.uuid4())
-                    self._pending_approvals[approval_id] = {
-                        "tool": tc.name, "args": tc.arguments,
-                        "user": user, "channel": channel, "status": "pending",
-                    }
-                    tool_msg = LLMMessage(
-                        role="tool",
-                        content=f"[approval_required] Tool '{tc.name}' requires approval. Approval ID: {approval_id}. Ask the user to approve.",
-                        tool_call_id=tc.id, name=tc.name,
-                    )
-                    messages.append(tool_msg)
-                    if self._working_memory is not None:
-                        self._working_memory.add_message(session_id, tool_msg)
-                    if self._audit_logger:
-                        self._audit_logger.log_approval_request(user, channel, tc.name, "pending")
-                    # Push approval request to UI immediately via progress callback
-                    await self._notify_progress(
-                        "approval_request",
-                        json.dumps({
-                            "approval_id": approval_id,
-                            "tool": tc.name,
-                            "args": tc.arguments,
-                        }),
-                    )
-                    continue
-
-                # Check cooldown (only for automated/monitoring channels)
-                if channel.startswith("system:") or channel.startswith("monitoring:"):
-                    cooldown_target = f"{user}:{channel}"
-                    if not self._guard.check_cooldown(cooldown_target, tc.name):
-                        tool_msg = LLMMessage(
-                            role="tool",
-                            content=f"[success=False] COOLDOWN: {tc.name} is in cooldown. Please wait before retrying.",
-                            tool_call_id=tc.id, name=tc.name,
-                        )
-                        messages.append(tool_msg)
-                        if self._working_memory is not None:
-                            self._working_memory.add_message(session_id, tool_msg)
-                        continue
-
-                executable_calls.append(tc)
-
-            # Execute allowed tool calls in parallel
-            if executable_calls:
-                tool_names = ", ".join(tc.name for tc in executable_calls)
-                await self._notify_progress("tool_call", tool_names)
-
-                async def _execute_one(tc: ToolCall) -> tuple[ToolCall, str, float]:
-                    t_start = time.monotonic()
-                    try:
-                        result = await asyncio.wait_for(
-                            self._tools.execute(tc.name, tc.arguments),
-                            timeout=self._tool_timeout,
-                        )
-                        # Check for tool gap
-                        if result.not_found and self._tool_gap_detector:
-                            try:
-                                gap_result = await self._tool_gap_detector.check_and_resolve(
-                                    tc.name, tc.arguments, user, channel,
-                                )
-                                elapsed = (time.monotonic() - t_start) * 1000
-                                return tc, f"[success=False] {gap_result.message}", elapsed
-                            except Exception as e:
-                                logger.error(f"ToolGapDetector error: {e}")
-                        elapsed = (time.monotonic() - t_start) * 1000
-                        prefix = f"[success={result.success}]"
-                        return tc, f"{prefix} {result.output}", elapsed
-                    except asyncio.TimeoutError:
-                        elapsed = (time.monotonic() - t_start) * 1000
-                        return tc, f"[success=False] Tool execution timed out after {self._tool_timeout}s.", elapsed
-                    except Exception as e:
-                        elapsed = (time.monotonic() - t_start) * 1000
-                        logger.exception(f"Tool execution error: {tc.name}")
-                        return tc, f"[success=False] Tool execution error: {e}", elapsed
-
-                results = await asyncio.gather(
-                    *[_execute_one(tc) for tc in executable_calls]
-                )
-
-                for tc, output, elapsed_ms in results:
-                    success = "[success=True]" in output
-                    logger.info(json.dumps({
-                        "event": "tool_call",
-                        "tool": tc.name,
-                        "success": success,
-                        "duration_ms": round(elapsed_ms, 2),
-                    }))
-                    if self._audit_logger:
-                        self._audit_logger.log_tool_call(
-                            user, channel, tc.name, tc.arguments,
-                            output, success, elapsed_ms,
-                        )
-
-                    # Detect newly installed tools from shell_exec output
-                    if tc.name == "shell_exec" and success and self._context_builder:
-                        sm = getattr(self._context_builder, '_semantic', None)
-                        if sm:
-                            cmd = tc.arguments.get("command", "")
-                            asyncio.create_task(
-                                self._detect_new_tool(cmd, output)
-                            )
-
-                    tool_msg = LLMMessage(
-                        role="tool", content=output,
-                        tool_call_id=tc.id, name=tc.name,
-                    )
-                    messages.append(tool_msg)
-                    if self._working_memory is not None:
-                        self._working_memory.add_message(session_id, tool_msg)
+            exec_ctx = ToolExecutionContext(
+                user=user,
+                channel=channel,
+                session_id=session_id,
+                working_memory=self._working_memory,
+                audit_logger=self._audit_logger,
+                tool_gap_detector=self._tool_gap_detector,
+                context_builder=self._context_builder,
+                pending_approvals=self._pending_approvals,
+                notify_progress=self._notify_progress,
+                on_new_tool_detected=self._detect_new_tool,
+            )
+            await self._tool_executor.process_tool_calls(
+                response.tool_calls, messages, exec_ctx,
+            )
 
         logger.info(json.dumps({"event": "session_end", "user": user, "channel": channel, "reason": "max_turns"}))
         final = "Maximum tool call turns reached. Please try a simpler request."

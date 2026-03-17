@@ -16,11 +16,40 @@ import asyncio
 import logging
 import os
 import platform
-import re
-import shutil
 from dataclasses import dataclass, field
 
+from breadmind.core.env_detectors import (
+    scan_cpu,
+    scan_disks,
+    scan_infra,
+    scan_memory,
+    scan_network,
+    scan_services,
+    scan_tools,
+)
+from breadmind.core.tool_change_detector import (  # noqa: F401 — re-export
+    _extract_tool_from_install_cmd,
+    _extract_tool_from_uninstall_cmd,
+    detect_new_tool,
+    detect_removed_tool,
+    reconcile_tools,
+)
+
 logger = logging.getLogger(__name__)
+
+# Re-export all public names so existing ``from breadmind.core.env_scanner import …``
+# statements keep working without changes.
+__all__ = [
+    "ScanResult",
+    "scan_environment",
+    "scan_dynamic",
+    "store_scan_in_memory",
+    "detect_new_tool",
+    "detect_removed_tool",
+    "reconcile_tools",
+    "_extract_tool_from_install_cmd",
+    "_extract_tool_from_uninstall_cmd",
+]
 
 
 @dataclass
@@ -118,456 +147,16 @@ async def scan_environment() -> ScanResult:
 
     # Run all scans concurrently
     await asyncio.gather(
-        _scan_cpu(result),
-        _scan_memory(result),
-        _scan_disks(result),
-        _scan_tools(result),
-        _scan_infra(result),
-        _scan_network(result),
-        _scan_services(result),
+        scan_cpu(result),
+        scan_memory(result),
+        scan_disks(result),
+        scan_tools(result),
+        scan_infra(result),
+        scan_network(result),
+        scan_services(result),
     )
 
     return result
-
-
-async def _run_cmd(cmd: str, timeout: int = 10) -> tuple[bool, str]:
-    """Run a shell command and return (success, output)."""
-    try:
-        proc = await asyncio.create_subprocess_shell(
-            cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        if proc.returncode == 0:
-            return True, stdout.decode("utf-8", errors="replace").strip()
-        return False, ""
-    except (asyncio.TimeoutError, OSError, Exception):
-        return False, ""
-
-
-async def _scan_cpu(result: ScanResult):
-    """Detect CPU model."""
-    system = platform.system()
-    if system == "Windows":
-        ok, out = await _run_cmd('wmic cpu get Name /value')
-        if ok:
-            for line in out.splitlines():
-                if line.startswith("Name="):
-                    result.cpu_info = line.split("=", 1)[1].strip()
-                    break
-    elif system == "Darwin":
-        ok, out = await _run_cmd('sysctl -n machdep.cpu.brand_string')
-        if ok:
-            result.cpu_info = out.strip()
-    else:
-        ok, out = await _run_cmd("grep 'model name' /proc/cpuinfo | head -1")
-        if ok and ":" in out:
-            result.cpu_info = out.split(":", 1)[1].strip()
-
-
-async def _scan_memory(result: ScanResult):
-    """Detect total and available memory."""
-    system = platform.system()
-    if system == "Windows":
-        ok, out = await _run_cmd(
-            'powershell -Command "Get-CimInstance Win32_OperatingSystem | '
-            'Select-Object TotalVisibleMemorySize,FreePhysicalMemory | '
-            'Format-List"'
-        )
-        if ok:
-            for line in out.splitlines():
-                line = line.strip()
-                if "TotalVisibleMemorySize" in line and ":" in line:
-                    try:
-                        kb = int(line.split(":", 1)[1].strip())
-                        result.memory_total_gb = kb / (1024 * 1024)
-                    except ValueError:
-                        pass
-                elif "FreePhysicalMemory" in line and ":" in line:
-                    try:
-                        kb = int(line.split(":", 1)[1].strip())
-                        result.memory_available_gb = kb / (1024 * 1024)
-                    except ValueError:
-                        pass
-    else:
-        ok, out = await _run_cmd("free -b | grep Mem")
-        if ok and out:
-            parts = out.split()
-            if len(parts) >= 4:
-                try:
-                    result.memory_total_gb = int(parts[1]) / (1024**3)
-                    result.memory_available_gb = int(parts[3]) / (1024**3)
-                except (ValueError, IndexError):
-                    pass
-
-
-async def _scan_disks(result: ScanResult):
-    """Detect disk usage."""
-    system = platform.system()
-    if system == "Windows":
-        ok, out = await _run_cmd(
-            'powershell -Command "Get-PSDrive -PSProvider FileSystem | '
-            'Select-Object Name,Used,Free | Format-Table -AutoSize"'
-        )
-        if ok:
-            for line in out.splitlines():
-                parts = line.split()
-                if len(parts) >= 3 and len(parts[0]) == 1 and parts[0].isalpha():
-                    try:
-                        used = int(parts[1])
-                        free = int(parts[2])
-                        total = used + free
-                        if total > 0:
-                            result.disks.append({
-                                "drive": f"{parts[0]}:",
-                                "total_gb": total / (1024**3),
-                                "free_gb": free / (1024**3),
-                                "percent_used": (used / total) * 100,
-                            })
-                    except (ValueError, ZeroDivisionError):
-                        pass
-    else:
-        ok, out = await _run_cmd("df -B1 --output=target,size,avail,pcent / /home 2>/dev/null || df -k /")
-        if ok:
-            for line in out.splitlines()[1:]:
-                parts = line.split()
-                if len(parts) >= 4:
-                    try:
-                        mount = parts[0]
-                        total = int(parts[1]) / (1024**3)
-                        avail = int(parts[2]) / (1024**3)
-                        pct = parts[3].rstrip('%')
-                        result.disks.append({
-                            "drive": mount,
-                            "total_gb": total,
-                            "free_gb": avail,
-                            "percent_used": float(pct),
-                        })
-                    except (ValueError, IndexError):
-                        pass
-
-
-async def _scan_tools(result: ScanResult):
-    """Detect installed CLI tools and package managers."""
-    # Common tools to check
-    tools = {
-        "git": "git --version",
-        "python": "python --version",
-        "node": "node --version",
-        "npm": "npm --version",
-        "go": "go version",
-        "rust": "rustc --version",
-        "java": "java -version 2>&1",
-        "dotnet": "dotnet --version",
-        "terraform": "terraform --version",
-        "ansible": "ansible --version",
-        "helm": "helm version --short",
-        "curl": "curl --version",
-        "wget": "wget --version",
-        "ssh": "ssh -V 2>&1",
-        "nginx": "nginx -v 2>&1",
-        "postgres": "psql --version",
-        "redis": "redis-cli --version",
-        "mysql": "mysql --version",
-    }
-
-    # Package managers
-    pkg_mgrs = {
-        "apt": "apt --version",
-        "yum": "yum --version",
-        "dnf": "dnf --version",
-        "brew": "brew --version",
-        "choco": "choco --version",
-        "winget": "winget --version",
-        "scoop": "scoop --version",
-        "pip": "pip --version",
-        "conda": "conda --version",
-    }
-
-    async def _check_tool(name, cmd):
-        ok, out = await _run_cmd(cmd, timeout=5)
-        if ok and out:
-            # Extract first line, truncate
-            version = out.splitlines()[0][:80]
-            return name, version
-        # Fallback: check if binary exists
-        if shutil.which(name):
-            return name, "installed"
-        return name, None
-
-    # Run all checks concurrently
-    tool_tasks = [_check_tool(name, cmd) for name, cmd in tools.items()]
-    pkg_tasks = [_check_tool(name, cmd) for name, cmd in pkg_mgrs.items()]
-    all_results = await asyncio.gather(*tool_tasks, *pkg_tasks)
-
-    tool_names = set(tools.keys())
-    for name, version in all_results:
-        if version is None:
-            continue
-        if name in tool_names:
-            result.installed_tools[name] = version
-        else:
-            result.package_managers.append(name)
-
-
-async def _scan_infra(result: ScanResult):
-    """Detect infrastructure tools (Docker, K8s)."""
-    # Docker
-    ok, out = await _run_cmd("docker version --format '{{.Server.Version}}' 2>/dev/null || docker --version")
-    if ok:
-        result.docker_version = out.splitlines()[0][:60]
-
-    # Kubernetes
-    ok, out = await _run_cmd("kubectl version --client --short 2>/dev/null || kubectl version --client")
-    if ok:
-        result.k8s_version = out.splitlines()[0][:80]
-
-        ok2, out2 = await _run_cmd("kubectl config get-contexts -o name")
-        if ok2 and out2:
-            result.k8s_contexts = [c.strip() for c in out2.splitlines() if c.strip()]
-
-        ok3, out3 = await _run_cmd("kubectl config current-context")
-        if ok3:
-            result.k8s_current_context = out3.strip()
-
-
-async def _scan_network(result: ScanResult):
-    """Detect IP addresses."""
-    system = platform.system()
-    if system == "Windows":
-        ok, out = await _run_cmd(
-            'powershell -Command "(Get-NetIPAddress -AddressFamily IPv4 '
-            '| Where-Object {$_.IPAddress -ne \'127.0.0.1\'}).IPAddress"'
-        )
-        if ok:
-            result.ip_addresses = [ip.strip() for ip in out.splitlines() if ip.strip()]
-    else:
-        ok, out = await _run_cmd("hostname -I 2>/dev/null || ifconfig | grep 'inet ' | awk '{print $2}'")
-        if ok:
-            result.ip_addresses = [ip.strip() for ip in out.split() if ip.strip() and ip != "127.0.0.1"]
-
-
-async def _scan_services(result: ScanResult):
-    """Detect notable running services."""
-    system = platform.system()
-    notable = {
-        "nginx", "apache", "httpd", "postgres", "postgresql", "mysql", "mariadb",
-        "redis", "mongodb", "docker", "containerd", "kubelet", "elasticsearch",
-        "grafana", "prometheus", "jenkins", "gitlab", "node", "java", "dotnet",
-        "sshd", "code", "pveproxy", "proxmox",
-    }
-
-    if system == "Windows":
-        ok, out = await _run_cmd(
-            'powershell -Command "Get-Process | Select-Object -Unique Name | Format-Table -HideTableHeaders"',
-            timeout=15,
-        )
-        if ok:
-            procs = {p.strip().lower() for p in out.splitlines() if p.strip()}
-            result.running_services = sorted(procs & notable)
-    else:
-        ok, out = await _run_cmd("ps -eo comm --no-headers | sort -u", timeout=10)
-        if ok:
-            procs = {p.strip().lower() for p in out.splitlines() if p.strip()}
-            result.running_services = sorted(procs & notable)
-
-
-# Install command patterns — when detected in shell_exec output, trigger tool discovery
-_INSTALL_PATTERNS = re.compile(
-    r"(?:successfully installed|is already installed|"
-    r"Setting up |Unpacking |installed successfully|"
-    r"choco install|winget install|scoop install|"
-    r"apt install|yum install|dnf install|brew install|"
-    r"pip install|npm install|cargo install|go install|"
-    r"Installation complete|installed \d+ package)",
-    re.I,
-)
-
-
-async def detect_new_tool(command: str, output: str, semantic_memory) -> str | None:
-    """Check if a shell command installed a new tool and update KG if so.
-
-    Called after shell_exec completes. Returns tool name if detected, else None.
-    Lightweight: no LLM, just pattern matching + shutil.which.
-    """
-    if not output or not semantic_memory:
-        return None
-
-    # Check if output looks like an install
-    if not _INSTALL_PATTERNS.search(output):
-        return None
-
-    # Extract potential tool name from the command
-    tool_name = _extract_tool_from_install_cmd(command)
-    if not tool_name:
-        return None
-
-    # Verify the tool actually exists now
-    if not shutil.which(tool_name):
-        return None
-
-    # Check if we already know about it
-    entity_id = f"tool:{tool_name}"
-    existing = await semantic_memory.get_entity(entity_id)
-    if existing:
-        return None  # Already known
-
-    # Get version if possible
-    version = "installed"
-    try:
-        ok, ver = await _run_cmd(f"{tool_name} --version", timeout=5)
-        if ok and ver:
-            version = ver.splitlines()[0][:80]
-    except Exception:
-        pass
-
-    # Store in KG
-    from breadmind.storage.models import KGEntity, KGRelation
-    hostname = platform.node()
-
-    await semantic_memory.add_entity(KGEntity(
-        id=entity_id,
-        entity_type="infra_component",
-        name=tool_name,
-        properties={"version": version, "host": hostname, "discovered": "runtime"},
-    ))
-    await semantic_memory.add_relation(KGRelation(
-        source_id=f"host:{hostname}",
-        target_id=entity_id,
-        relation_type="has_tool",
-    ))
-
-    logger.info("New tool discovered at runtime: %s (%s)", tool_name, version)
-    return tool_name
-
-
-_UNINSTALL_PATTERNS = re.compile(
-    r"(?:successfully uninstalled|removed|purged|"
-    r"uninstalled successfully|has been removed|"
-    r"choco uninstall|winget uninstall|scoop uninstall|"
-    r"apt remove|apt-get remove|apt purge|yum remove|dnf remove|"
-    r"brew uninstall|pip uninstall|npm uninstall|"
-    r"cargo uninstall|Removing )",
-    re.I,
-)
-
-
-async def detect_removed_tool(command: str, output: str, semantic_memory) -> str | None:
-    """Check if a shell command removed a tool and update KG if so.
-
-    Called after shell_exec completes. Returns tool name if detected, else None.
-    """
-    if not output or not semantic_memory:
-        return None
-
-    if not _UNINSTALL_PATTERNS.search(output):
-        return None
-
-    tool_name = _extract_tool_from_uninstall_cmd(command)
-    if not tool_name:
-        return None
-
-    # Verify the tool is actually gone
-    if shutil.which(tool_name):
-        return None  # Still exists (maybe partial uninstall)
-
-    # Check if we know about it
-    entity_id = f"tool:{tool_name}"
-    existing = await semantic_memory.get_entity(entity_id)
-    if not existing:
-        return None  # Not in our KG
-
-    # Remove from KG
-    semantic_memory._entities.pop(entity_id, None)
-    # Remove relations pointing to/from this entity
-    semantic_memory._relations = [
-        r for r in semantic_memory._relations
-        if r.source_id != entity_id and r.target_id != entity_id
-    ]
-
-    logger.info("Tool removed detected at runtime: %s", tool_name)
-    return tool_name
-
-
-def _extract_tool_from_uninstall_cmd(command: str) -> str | None:
-    """Extract the tool/package name from an uninstall command."""
-    patterns = [
-        re.compile(r"pip3?\s+uninstall\s+(?:-[^\s]+\s+)*([a-zA-Z0-9_-]+)", re.I),
-        re.compile(r"npm\s+(?:uninstall|remove)\s+(?:-[^\s]+\s+)*([a-zA-Z0-9@/_-]+)", re.I),
-        re.compile(r"(?:apt|apt-get)\s+(?:remove|purge)\s+(?:-[^\s]+\s+)*([a-zA-Z0-9._-]+)", re.I),
-        re.compile(r"(?:yum|dnf)\s+(?:remove|erase)\s+(?:-[^\s]+\s+)*([a-zA-Z0-9._-]+)", re.I),
-        re.compile(r"brew\s+uninstall\s+([a-zA-Z0-9._-]+)", re.I),
-        re.compile(r"choco\s+uninstall\s+([a-zA-Z0-9._-]+)", re.I),
-        re.compile(r"winget\s+uninstall\s+([a-zA-Z0-9._-]+)", re.I),
-        re.compile(r"scoop\s+uninstall\s+([a-zA-Z0-9._-]+)", re.I),
-        re.compile(r"cargo\s+uninstall\s+([a-zA-Z0-9_-]+)", re.I),
-    ]
-    for pat in patterns:
-        m = pat.search(command)
-        if m:
-            name = m.group(1).split("/")[-1].split("@")[0]
-            return name
-    return None
-
-
-async def reconcile_tools(semantic_memory) -> list[str]:
-    """Check all tool entities in KG and remove those no longer installed.
-
-    Called during periodic tool rescan. Returns list of removed tool names.
-    """
-    removed: list[str] = []
-    tool_entities = [
-        (eid, e) for eid, e in list(semantic_memory._entities.items())
-        if eid.startswith("tool:") and e.entity_type == "infra_component"
-    ]
-
-    for entity_id, entity in tool_entities:
-        tool_name = entity_id[5:]  # Strip "tool:" prefix
-        # Skip infrastructure tools that may not be simple binaries
-        if tool_name in ("docker", "kubernetes"):
-            continue
-        if not shutil.which(tool_name):
-            semantic_memory._entities.pop(entity_id, None)
-            semantic_memory._relations = [
-                r for r in semantic_memory._relations
-                if r.source_id != entity_id and r.target_id != entity_id
-            ]
-            removed.append(tool_name)
-            logger.info("Tool no longer found: %s (removed from KG)", tool_name)
-
-    return removed
-
-
-def _extract_tool_from_install_cmd(command: str) -> str | None:
-    """Extract the tool/package name from an install command."""
-    # Match common install patterns
-    patterns = [
-        # pip install <pkg>
-        re.compile(r"pip3?\s+install\s+(?:-[^\s]+\s+)*([a-zA-Z0-9_-]+)", re.I),
-        # npm install -g <pkg>
-        re.compile(r"npm\s+install\s+(?:-[^\s]+\s+)*([a-zA-Z0-9@/_-]+)", re.I),
-        # apt/yum/dnf install <pkg>
-        re.compile(r"(?:apt|yum|dnf|apt-get)\s+install\s+(?:-[^\s]+\s+)*([a-zA-Z0-9._-]+)", re.I),
-        # brew install <pkg>
-        re.compile(r"brew\s+install\s+([a-zA-Z0-9._-]+)", re.I),
-        # choco install <pkg>
-        re.compile(r"choco\s+install\s+([a-zA-Z0-9._-]+)", re.I),
-        # winget install <pkg>
-        re.compile(r"winget\s+install\s+([a-zA-Z0-9._-]+)", re.I),
-        # scoop install <pkg>
-        re.compile(r"scoop\s+install\s+([a-zA-Z0-9._-]+)", re.I),
-        # cargo install <pkg>
-        re.compile(r"cargo\s+install\s+([a-zA-Z0-9_-]+)", re.I),
-        # go install <pkg>
-        re.compile(r"go\s+install\s+([a-zA-Z0-9./_-]+)", re.I),
-    ]
-    for pat in patterns:
-        m = pat.search(command)
-        if m:
-            name = m.group(1).split("/")[-1].split("@")[0]  # Strip scope/version
-            return name
-    return None
 
 
 async def scan_dynamic(include_tools: bool = False) -> ScanResult:
@@ -584,14 +173,14 @@ async def scan_dynamic(include_tools: bool = False) -> ScanResult:
     result.cpu_cores = os.cpu_count() or 0
 
     tasks = [
-        _scan_memory(result),
-        _scan_disks(result),
-        _scan_network(result),
-        _scan_services(result),
+        scan_memory(result),
+        scan_disks(result),
+        scan_network(result),
+        scan_services(result),
     ]
     if include_tools:
-        tasks.append(_scan_tools(result))
-        tasks.append(_scan_infra(result))
+        tasks.append(scan_tools(result))
+        tasks.append(scan_infra(result))
 
     await asyncio.gather(*tasks)
 
@@ -658,12 +247,10 @@ async def store_scan_in_memory(
     stored["entities"] += 1
 
     # 3. Upsert entities for each IP address
-    # Remove old IP relations first to handle IP changes
     old_rels = await semantic_memory.get_relations(f"host:{scan.hostname}")
     old_ip_ids = {r.target_id for r in old_rels if r.relation_type == "has_address"}
     new_ip_ids = {f"ip:{ip}" for ip in scan.ip_addresses}
 
-    # Remove stale IP entities
     for stale_id in old_ip_ids - new_ip_ids:
         semantic_memory._entities.pop(stale_id, None)
 
@@ -675,7 +262,6 @@ async def store_scan_in_memory(
             properties={"type": "ip_address", "host": scan.hostname},
         )
         await semantic_memory.add_entity(ip_entity)
-        # Only add relation if it doesn't already exist
         if f"ip:{ip}" not in old_ip_ids:
             await semantic_memory.add_relation(KGRelation(
                 source_id=f"host:{scan.hostname}",

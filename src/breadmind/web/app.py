@@ -11,9 +11,12 @@ from typing import Callable
 from breadmind.web.routes import (
     setup_chat_routes,
     setup_config_routes,
+    setup_container_routes,
     setup_tools_routes,
     setup_mcp_routes,
     setup_monitoring_routes,
+    setup_scheduler_routes,
+    setup_subagent_routes,
     setup_swarm_routes,
     setup_system_routes,
 )
@@ -216,6 +219,9 @@ class WebApp:
         setup_mcp_routes(app, self)
         setup_monitoring_routes(app, self)
         setup_swarm_routes(app, self)
+        setup_scheduler_routes(app, self)
+        setup_subagent_routes(app, self)
+        setup_container_routes(app, self)
         setup_settings_routes(app, self)
         setup_messenger_routes(app, self)
         setup_worker_routes(app, self)
