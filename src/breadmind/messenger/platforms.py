@@ -239,3 +239,50 @@ register_platform(PlatformMeta(
     ),
     description="Signal messenger integration via signal-cli",
 ))
+
+register_platform(PlatformMeta(
+    name="teams",
+    display_name="Microsoft Teams",
+    icon="\U0001f4bc",
+    gateway_class_path="breadmind.messenger.teams_gw.TeamsGateway",
+    connector_class_path="breadmind.messenger.auto_connect.teams.TeamsAutoConnector",
+    ui_fields=(
+        UIField(name="app_id", label="Microsoft App ID", env_key="TEAMS_APP_ID",
+                placeholder="Azure Bot App ID", secret=True),
+        UIField(name="app_password", label="App Password", env_key="TEAMS_APP_PASSWORD",
+                placeholder="Azure Bot App Password", secret=True),
+    ),
+    description="Microsoft Teams bot integration via Bot Framework",
+))
+
+register_platform(PlatformMeta(
+    name="line",
+    display_name="LINE",
+    icon="\U0001f4ac",
+    gateway_class_path="breadmind.messenger.line_gw.LINEGateway",
+    connector_class_path="breadmind.messenger.auto_connect.line.LINEAutoConnector",
+    ui_fields=(
+        UIField(name="channel_token", label="Channel Access Token", env_key="LINE_CHANNEL_TOKEN",
+                placeholder="Channel Access Token from LINE Developers", secret=True),
+        UIField(name="channel_secret", label="Channel Secret", env_key="LINE_CHANNEL_SECRET",
+                placeholder="Channel Secret from LINE Developers", secret=True),
+    ),
+    description="LINE Messaging API integration",
+))
+
+register_platform(PlatformMeta(
+    name="matrix",
+    display_name="Matrix",
+    icon="\U0001f310",
+    gateway_class_path="breadmind.messenger.matrix_gw.MatrixGateway",
+    connector_class_path="breadmind.messenger.auto_connect.matrix.MatrixAutoConnector",
+    ui_fields=(
+        UIField(name="homeserver", label="Homeserver URL", env_key="MATRIX_HOMESERVER_URL",
+                placeholder="https://matrix.org", secret=False),
+        UIField(name="access_token", label="Access Token", env_key="MATRIX_ACCESS_TOKEN",
+                placeholder="Matrix access token", secret=True),
+        UIField(name="user_id", label="User ID", env_key="MATRIX_USER_ID",
+                placeholder="@bot:matrix.org", secret=False),
+    ),
+    description="Matrix protocol integration",
+))
