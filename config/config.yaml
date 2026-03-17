@@ -1,7 +1,6 @@
 llm:
   default_provider: claude
   default_model: claude-sonnet-4-6
-  fallback_chain: [claude, ollama]
   tool_call_max_turns: 10
   tool_call_timeout_seconds: 30
 
@@ -27,4 +26,4 @@ database:
   port: ${DB_PORT:-5432}
   name: ${DB_NAME:-breadmind}
   user: ${DB_USER:-breadmind}
-  password: ${DB_PASSWORD:-breadmind_dev}
+  password: ${DB_PASSWORD}
