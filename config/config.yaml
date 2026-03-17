@@ -1,6 +1,33 @@
+# ============================================================
+# BreadMind Configuration
+# ============================================================
+# 인프라 설정 (런타임 변경 불가 - config.yaml에서만 관리)
+# ============================================================
+
+database:
+  host: ${DB_HOST:-localhost}
+  port: ${DB_PORT:-5432}
+  name: ${DB_NAME:-breadmind}
+  user: ${DB_USER:-breadmind}
+  password: ${DB_PASSWORD}
+
+web:
+  host: "127.0.0.1"
+  port: 8080
+
+security:
+  auth_enabled: false
+  password_hash: ""
+  session_timeout: 86400
+  cors_origins:
+    - "http://localhost:8080"
+    - "http://127.0.0.1:8080"
+  require_https: false
+
 llm:
   default_provider: claude
   default_model: claude-sonnet-4-6
+  fallback_chain: [claude, ollama]
   tool_call_max_turns: 10
   tool_call_timeout_seconds: 30
 
@@ -12,6 +39,14 @@ providers:
     type: ollama
     base_url: http://localhost:11434
 
+mcp:
+  auto_discover: true
+  max_restart_attempts: 3
+  servers: {}
+
+network:
+  mode: standalone
+
 auth:
   messenger:
     slack:
@@ -21,52 +56,41 @@ auth:
     telegram:
       allowed_users: []
 
-database:
-  host: ${DB_HOST:-localhost}
-  port: ${DB_PORT:-5432}
-  name: ${DB_NAME:-breadmind}
-  user: ${DB_USER:-breadmind}
-  password: ${DB_PASSWORD}
+# ============================================================
+# 아래 설정들은 Settings UI에서 런타임으로 변경 가능합니다.
+# 초기 기본값으로만 사용되며, UI에서 변경하면 DB에 저장됩니다.
+# DB에 저장된 값이 있으면 이 파일의 값보다 우선합니다.
+# ============================================================
 
-memory:
-  gc:
-    interval_seconds: 3600
-    decay_threshold: 0.1
-    max_cached_notes: 500
-    kg_max_age_days: 90
-    env_refresh_interval: 6
+# 기본값 참조용 (UI에서 관리)
+# timeouts:
+#   tool_call: 30          # 도구 호출 타임아웃 (초)
+#   chat: 120              # 채팅 응답 타임아웃 (초)
+#   max_turns: 10          # 최대 도구 호출 턴 수
+#   mcp_startup: 30        # MCP 서버 시작 타임아웃 (초)
+#   health_check: 10       # 헬스체크 타임아웃 (초)
 
-timeouts:
-  tool_call: 30
-  llm_api: 120
-  ssh_command: 300
-  health_check: 5
-  pypi_check: 10
-  http_default: 10
-  skill_discovery: 30
+# retry:
+#   max_attempts: 3        # 최대 재시도 횟수
+#   base_delay: 1.0        # 기본 대기 시간 (초)
+#   max_delay: 60.0        # 최대 대기 시간 (초)
+#   backoff_multiplier: 2.0  # 백오프 배수
 
-retry:
-  max_retries: 3
-  llm_max_retries: 3
-  gateway_max_retries: 10
-  base_backoff: 1
-  max_backoff: 300
-  health_check_interval: 30
+# limits:
+#   max_messages_per_session: 200  # 세션당 최대 메시지 수
+#   max_sessions: 50              # 최대 동시 세션 수
+#   max_file_size_mb: 10          # 최대 파일 크기 (MB)
+#   max_tool_output_chars: 50000  # 도구 출력 최대 문자 수
+#   max_concurrent_tools: 5       # 동시 도구 실행 수
 
-limits:
-  max_tools: 30
-  max_context_tokens: 4000
-  max_per_domain_skills: 1
-  audit_log_recent: 50
-  embedding_cache_size: 500
-  low_performance_threshold: 0.5
-  top_roles_limit: 5
-  smart_retriever_token_budget: 2000
-  smart_retriever_limit: 5
+# polling:
+#   health_check_interval: 60    # 헬스체크 간격 (초)
+#   metrics_interval: 30         # 메트릭 수집 간격 (초)
+#   messenger_poll_interval: 5   # 메신저 폴링 간격 (초)
+#   cleanup_interval: 300        # 정리 작업 간격 (초)
 
-polling:
-  signal_interval: 5
-  gmail_interval: 30
-  update_check_interval: 3600
-  data_flush_interval: 300
-  auto_cleanup_interval: 600
+# memory_gc:
+#   interval_seconds: 3600       # GC 실행 간격 (초)
+#   max_session_age_hours: 24    # 세션 최대 보존 시간
+#   max_idle_minutes: 60         # 유휴 세션 타임아웃 (분)
+#   compact_threshold_mb: 100    # 메모리 압축 임계값 (MB)
