@@ -11,6 +11,11 @@ from breadmind.messenger.auto_connect.base import (
     SetupStep,
     WizardState,
 )
+from breadmind.messenger.platforms import (
+    create_connector,
+    get_all_platforms,
+    get_field_to_env_map,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,23 +42,13 @@ class ConnectionOrchestrator:
         self._register_connectors()
 
     def _register_connectors(self) -> None:
-        from breadmind.messenger.auto_connect.telegram import TelegramAutoConnector
-        from breadmind.messenger.auto_connect.slack import SlackAutoConnector
-        from breadmind.messenger.auto_connect.discord import DiscordAutoConnector
-        from breadmind.messenger.auto_connect.whatsapp import WhatsAppAutoConnector
-        from breadmind.messenger.auto_connect.gmail import GmailAutoConnector
-        from breadmind.messenger.auto_connect.signal import SignalAutoConnector
-
-        for cls in [
-            TelegramAutoConnector,
-            SlackAutoConnector,
-            DiscordAutoConnector,
-            WhatsAppAutoConnector,
-            GmailAutoConnector,
-            SignalAutoConnector,
-        ]:
-            connector = cls()
-            self._connectors[connector.platform] = connector
+        for name in get_all_platforms():
+            try:
+                connector = create_connector(name)
+                if connector:
+                    self._connectors[connector.platform] = connector
+            except (ImportError, AttributeError) as e:
+                logger.warning("Cannot load connector for %s: %s", name, e)
 
     async def start_connection(
         self, platform: str, interface: str = "web"
@@ -132,7 +127,7 @@ class ConnectionOrchestrator:
             wizard.credentials.update(user_input)
 
             # 토큰 저장
-            token_map = self._get_token_env_map(wizard.platform)
+            token_map = get_field_to_env_map(wizard.platform)
             for field_name, env_key in token_map.items():
                 if field_name in user_input and user_input[field_name]:
                     await self._security.store_token(
@@ -254,33 +249,6 @@ class ConnectionOrchestrator:
         ]
         for sid in expired:
             del self._sessions[sid]
-
-    @staticmethod
-    def _get_token_env_map(platform: str) -> dict[str, str]:
-        """필드 이름 → 환경변수 매핑."""
-        maps = {
-            "telegram": {"bot_token": "TELEGRAM_BOT_TOKEN"},
-            "slack": {
-                "bot_token": "SLACK_BOT_TOKEN",
-                "app_token": "SLACK_APP_TOKEN",
-            },
-            "discord": {"bot_token": "DISCORD_BOT_TOKEN"},
-            "whatsapp": {
-                "account_sid": "WHATSAPP_TWILIO_ACCOUNT_SID",
-                "auth_token": "WHATSAPP_TWILIO_AUTH_TOKEN",
-                "from_number": "WHATSAPP_FROM_NUMBER",
-            },
-            "gmail": {
-                "client_id": "GMAIL_CLIENT_ID",
-                "client_secret": "GMAIL_CLIENT_SECRET",
-                "refresh_token": "GMAIL_REFRESH_TOKEN",
-            },
-            "signal": {
-                "phone_number": "SIGNAL_PHONE_NUMBER",
-                "signal_cli_path": "SIGNAL_CLI_PATH",
-            },
-        }
-        return maps.get(platform, {})
 
     def get_connector(self, platform: str) -> AutoConnector | None:
         """플랫폼별 AutoConnector 조회."""

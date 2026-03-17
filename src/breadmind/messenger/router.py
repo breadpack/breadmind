@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from typing import Callable, Any
 from abc import ABC, abstractmethod
 
+from breadmind.messenger.platforms import get_platform_configs, get_platform_names
+
 logger = logging.getLogger(__name__)
 
 @dataclass
@@ -31,61 +33,10 @@ class ApprovalRequest:
     platform: str
     user_id: str
 
-PLATFORM_CONFIGS: dict[str, dict] = {
-    "slack": {
-        "name": "Slack",
-        "icon": "\U0001f4ac",
-        "fields": [
-            {"name": "bot_token", "label": "Bot Token", "placeholder": "xoxb-...", "secret": True},
-            {"name": "app_token", "label": "App Token (Socket Mode)", "placeholder": "xapp-...", "secret": True},
-        ],
-    },
-    "discord": {
-        "name": "Discord",
-        "icon": "\U0001f3ae",
-        "fields": [
-            {"name": "bot_token", "label": "Bot Token", "placeholder": "Bot token from Discord Developer Portal", "secret": True},
-        ],
-    },
-    "telegram": {
-        "name": "Telegram",
-        "icon": "\u2708\ufe0f",
-        "fields": [
-            {"name": "bot_token", "label": "Bot Token", "placeholder": "123456:ABC-DEF... from @BotFather", "secret": True},
-        ],
-    },
-    "whatsapp": {
-        "name": "WhatsApp",
-        "icon": "\U0001f4f1",
-        "fields": [
-            {"name": "account_sid", "label": "Twilio Account SID", "placeholder": "AC...", "secret": True},
-            {"name": "auth_token", "label": "Twilio Auth Token", "placeholder": "Auth token", "secret": True},
-            {"name": "from_number", "label": "WhatsApp Number", "placeholder": "whatsapp:+14155238886", "secret": False},
-        ],
-    },
-    "gmail": {
-        "name": "Gmail",
-        "icon": "\u2709\ufe0f",
-        "fields": [
-            {"name": "client_id", "label": "OAuth Client ID", "placeholder": "xxx.apps.googleusercontent.com", "secret": True},
-            {"name": "client_secret", "label": "OAuth Client Secret", "placeholder": "GOCSPX-...", "secret": True},
-            {"name": "refresh_token", "label": "Refresh Token", "placeholder": "1//...", "secret": True},
-        ],
-    },
-    "signal": {
-        "name": "Signal",
-        "icon": "\U0001f4e8",
-        "fields": [
-            {"name": "phone_number", "label": "Phone Number", "placeholder": "+1234567890", "secret": False},
-            {"name": "signal_cli_path", "label": "signal-cli Path", "placeholder": "signal-cli", "secret": False},
-        ],
-    },
-}
-
 
 def get_all_platform_configs() -> dict[str, dict]:
     """Return the full platform configuration dictionary."""
-    return dict(PLATFORM_CONFIGS)
+    return get_platform_configs()
 
 
 class MessengerGateway(ABC):
@@ -184,7 +135,7 @@ class MessageRouter:
                 "allowed_users": self._allowed_users.get(name, []),
             }
         # Always include all platforms even if no gateway
-        for p in PLATFORM_CONFIGS:
+        for p in get_platform_names():
             if p not in result:
                 result[p] = {"connected": False, "enabled": False, "allowed_users": self._allowed_users.get(p, [])}
         return result
@@ -197,7 +148,7 @@ class MessageRouter:
 
     def get_platform_config(self, platform: str) -> dict:
         """Get config needed for a platform (what tokens are required, etc)."""
-        return PLATFORM_CONFIGS.get(platform, {"fields": []})
+        return get_platform_configs().get(platform, {"fields": []})
 
     async def start_all(self):
         for name, gw in self._gateways.items():

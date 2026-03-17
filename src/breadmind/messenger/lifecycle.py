@@ -4,29 +4,12 @@ import asyncio
 import logging
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from breadmind.messenger.auto_connect.base import GatewayState, HealthStatus
+from breadmind.messenger.platforms import create_gateway, get_token_env_map
 
 logger = logging.getLogger(__name__)
-
-
-TOKEN_ENV_MAP = {
-    "slack": ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"],
-    "discord": ["DISCORD_BOT_TOKEN"],
-    "telegram": ["TELEGRAM_BOT_TOKEN"],
-    "whatsapp": [
-        "WHATSAPP_TWILIO_ACCOUNT_SID",
-        "WHATSAPP_TWILIO_AUTH_TOKEN",
-        "WHATSAPP_FROM_NUMBER",
-    ],
-    "gmail": [
-        "GMAIL_CLIENT_ID",
-        "GMAIL_CLIENT_SECRET",
-        "GMAIL_REFRESH_TOKEN",
-    ],
-    "signal": ["SIGNAL_PHONE_NUMBER"],
-}
 
 
 @dataclass
@@ -55,7 +38,7 @@ class GatewayLifecycleManager:
         self._health_task: asyncio.Task | None = None
         self._running = False
 
-        for platform in TOKEN_ENV_MAP:
+        for platform in get_token_env_map():
             self._statuses[platform] = GatewayStatus(
                 platform=platform,
                 state=GatewayState.UNCONFIGURED,
@@ -63,12 +46,12 @@ class GatewayLifecycleManager:
 
     def _is_configured(self, platform: str) -> bool:
         """플랫폼에 필요한 토큰이 모두 설정되어 있는지 확인."""
-        keys = TOKEN_ENV_MAP.get(platform, [])
+        keys = get_token_env_map().get(platform, [])
         return all(os.environ.get(k) for k in keys)
 
     async def _load_tokens_from_db(self) -> None:
         """DB에서 토큰을 환경변수로 로드."""
-        for platform, keys in TOKEN_ENV_MAP.items():
+        for platform, keys in get_token_env_map().items():
             for key in keys:
                 if not os.environ.get(key):
                     result = await self._db.get_setting(f"messenger_token:{key}")
@@ -82,7 +65,7 @@ class GatewayLifecycleManager:
         await self._load_tokens_from_db()
         results = {}
 
-        for platform in TOKEN_ENV_MAP:
+        for platform in get_token_env_map():
             auto_start = await self._db.get_setting(
                 f"messenger_auto_start:{platform}"
             )
@@ -187,26 +170,9 @@ class GatewayLifecycleManager:
     async def _create_gateway(self, platform: str):
         """플랫폼에 맞는 게이트웨이 인스턴스 생성."""
         try:
-            if platform == "slack":
-                from breadmind.messenger.slack import SlackGateway
-                return SlackGateway()
-            elif platform == "discord":
-                from breadmind.messenger.discord_gw import DiscordGateway
-                return DiscordGateway()
-            elif platform == "telegram":
-                from breadmind.messenger.telegram_gw import TelegramGateway
-                return TelegramGateway()
-            elif platform == "whatsapp":
-                from breadmind.messenger.whatsapp_gw import WhatsAppGateway
-                return WhatsAppGateway()
-            elif platform == "gmail":
-                from breadmind.messenger.gmail_gw import GmailGateway
-                return GmailGateway()
-            elif platform == "signal":
-                from breadmind.messenger.signal_gw import SignalGateway
-                return SignalGateway()
-        except ImportError as e:
-            logger.warning("Cannot import gateway for %s: %s", platform, e)
+            return await create_gateway(platform)
+        except (ImportError, ValueError) as e:
+            logger.warning("Cannot create gateway for %s: %s", platform, e)
         return None
 
     async def _health_check_loop(self) -> None:
