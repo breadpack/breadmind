@@ -112,6 +112,10 @@ async def run():
 
     db = await init_database(config, config_dir)
 
+    # Load persisted settings from DB (including previously dead settings)
+    from breadmind.config import apply_db_settings
+    db_extra_settings: dict = await apply_db_settings(config, db)
+
     # First-run setup wizard (CLI mode only, web has its own UI)
     if not args.web:
         from breadmind.core.setup_wizard import is_first_run_async, run_cli_wizard
