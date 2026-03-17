@@ -380,4 +380,79 @@
             }
         }
     });
+
+    // --- Sidebar Widget (Chat tab) ---
+    async function sidebarFetch(url, opts = {}) {
+        const headers = { 'Content-Type': 'application/json' };
+        const token = document.cookie.match(/session_token=([^;]+)/)?.[1];
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        const resp = await fetch(url, { ...opts, headers: { ...headers, ...opts.headers } });
+        if (!resp.ok) throw new Error(resp.status);
+        return resp.json();
+    }
+
+    function sidebarEscape(str) {
+        const div = document.createElement('div');
+        div.textContent = str || '';
+        return div.innerHTML;
+    }
+
+    window.loadSidebarAssistant = async function() {
+        const tasksEl = document.getElementById('sidebar-tasks');
+        const eventsEl = document.getElementById('sidebar-events');
+        if (!tasksEl || !eventsEl) return;
+
+        // Load pending tasks
+        try {
+            const tasks = await sidebarFetch('/api/personal/tasks?status=pending');
+            if (tasks.length === 0) {
+                tasksEl.innerHTML = '<div style="color:rgba(255,255,255,0.3);font-size:11px;padding:4px 0;">할 일 없음</div>';
+            } else {
+                tasksEl.innerHTML = tasks.slice(0, 5).map(t => {
+                    const due = t.due_at ? `<span style="color:#f59e0b;font-size:10px;margin-left:4px;">${new Date(t.due_at).toLocaleDateString('ko',{month:'numeric',day:'numeric'})}</span>` : '';
+                    const pri = t.priority === 'urgent' ? '🔴 ' : t.priority === 'high' ? '🟡 ' : '';
+                    return `<div style="display:flex;align-items:center;gap:6px;padding:4px 0;font-size:12px;color:rgba(255,255,255,0.7);border-bottom:1px solid rgba(255,255,255,0.05);">
+                        <span style="cursor:pointer;opacity:0.4;" onclick="sidebarTaskDone('${t.id}')" title="완료">☐</span>
+                        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${pri}${sidebarEscape(t.title)}</span>
+                        ${due}
+                    </div>`;
+                }).join('');
+                if (tasks.length > 5) {
+                    tasksEl.innerHTML += `<div style="color:rgba(255,255,255,0.3);font-size:10px;padding:2px 0;">+${tasks.length - 5}개 더</div>`;
+                }
+            }
+        } catch (e) {
+            tasksEl.innerHTML = '';
+        }
+
+        // Load upcoming events
+        try {
+            const events = await sidebarFetch('/api/personal/events');
+            if (events.length === 0) {
+                eventsEl.innerHTML = '<div style="color:rgba(255,255,255,0.3);font-size:11px;padding:4px 0;">예정된 일정 없음</div>';
+            } else {
+                eventsEl.innerHTML = '<div style="color:rgba(255,255,255,0.5);font-size:10px;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px;">📅 일정</div>' +
+                    events.slice(0, 3).map(e => {
+                        const time = e.all_day ? '종일' : new Date(e.start_at).toLocaleTimeString('ko',{hour:'2-digit',minute:'2-digit'});
+                        return `<div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:12px;color:rgba(255,255,255,0.7);">
+                            <span style="color:#818cf8;font-size:11px;min-width:40px;">${time}</span>
+                            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${sidebarEscape(e.title)}</span>
+                        </div>`;
+                    }).join('');
+            }
+        } catch (e) {
+            eventsEl.innerHTML = '';
+        }
+    };
+
+    window.sidebarTaskDone = async function(taskId) {
+        try {
+            await sidebarFetch(`/api/personal/tasks/${taskId}`, { method: 'PATCH', body: JSON.stringify({ status: 'done' }) });
+            if (typeof showToast === 'function') showToast('할 일 완료!', 'success');
+            loadSidebarAssistant();
+            if (typeof refreshPersonalTab === 'function') refreshPersonalTab();
+        } catch (e) {
+            if (typeof showToast === 'function') showToast('실패: ' + e.message, 'error');
+        }
+    };
 })();
