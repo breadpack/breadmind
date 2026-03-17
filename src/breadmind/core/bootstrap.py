@@ -67,6 +67,7 @@ class AppComponents:
     metrics_collector: Any = None
     tool_gap_detector: Any = None
     adapter_registry: Any = None
+    oauth_manager: Any = None
     personal_scheduler: Any = None
     event_bus: EventBus | None = None
 
@@ -292,6 +293,7 @@ async def init_memory(db, provider, config, registry, mcp_manager, search_engine
 
     # --- Personal assistant adapter registry ---
     adapter_registry = None
+    oauth_manager = None
     try:
         from breadmind.personal.adapters.base import AdapterRegistry
         from breadmind.personal.adapters.builtin_task import BuiltinTaskAdapter
@@ -312,9 +314,39 @@ async def init_memory(db, provider, config, registry, mcp_manager, search_engine
         if registry:
             register_personal_tools(registry, adapter_registry, user_id="default")
 
+        # --- Phase 2: OAuth Manager ---
+        from breadmind.personal.oauth import OAuthManager
+        oauth_manager = OAuthManager(db)
+
+        # --- Phase 2-3: Google adapters (require OAuth) ---
+        # These are registered but only functional after OAuth authentication
+        from breadmind.personal.adapters.google_calendar import GoogleCalendarAdapter
+        from breadmind.personal.adapters.google_drive import GoogleDriveAdapter
+        from breadmind.personal.adapters.google_contacts import GoogleContactsAdapter
+
+        adapter_registry.register(GoogleCalendarAdapter(oauth_manager))
+        adapter_registry.register(GoogleDriveAdapter(oauth_manager))
+        adapter_registry.register(GoogleContactsAdapter(oauth_manager))
+
+        # --- Phase 3b: Third-party adapters (require API tokens) ---
+        # These are registered but only functional after authenticate() is called
+        from breadmind.personal.adapters.notion import NotionAdapter
+        from breadmind.personal.adapters.jira import JiraAdapter
+        from breadmind.personal.adapters.github_issues import GitHubIssuesAdapter
+
+        adapter_registry.register(NotionAdapter())
+        adapter_registry.register(JiraAdapter())
+        adapter_registry.register(GitHubIssuesAdapter())
+
         print("  Personal assistant: ready")
     except Exception as e:
         print(f"  Personal assistant: not available ({e})")
+
+    # Phase 4 messenger gateways available:
+    # - teams_gw.TeamsGateway (app_id, app_password)
+    # - line_gw.LINEGateway (channel_token, channel_secret)
+    # - matrix_gw.MatrixGateway (homeserver, access_token, user_id)
+    # These are started by GatewayLifecycleManager when configured via CLI/web.
 
     return {
         "working_memory": working_memory,
@@ -329,6 +361,7 @@ async def init_memory(db, provider, config, registry, mcp_manager, search_engine
         "profiler": profiler,
         "mcp_store": mcp_store,
         "adapter_registry": adapter_registry,
+        "oauth_manager": oauth_manager,
     }
 
 
@@ -602,6 +635,7 @@ async def bootstrap_all(
         components.profiler = mem.get("profiler")
         components.mcp_store = mem.get("mcp_store")
         components.adapter_registry = mem.get("adapter_registry")
+        components.oauth_manager = mem.get("oauth_manager")
         logger.info("Phase 3 complete: memory initialized")
     except Exception as e:
         logger.error("Phase 3 failed (memory): %s", e)
