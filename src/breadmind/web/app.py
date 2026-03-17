@@ -23,6 +23,7 @@ from breadmind.web.routes import (
 )
 from breadmind.web.routes.messenger import setup_messenger_routes
 from breadmind.web.routes.settings import setup_settings_routes
+from breadmind.web.routes.oauth import router as oauth_router
 from breadmind.web.routes.workers import setup_worker_routes
 
 logger = logging.getLogger(__name__)
@@ -280,6 +281,7 @@ class WebApp:
         setup_messenger_routes(app, self)
         setup_worker_routes(app, self)
         setup_chat_routes(app, self)
+        app.include_router(oauth_router)
 
     async def _persist_swarm_roles(self):
         """Save all swarm roles to DB."""
