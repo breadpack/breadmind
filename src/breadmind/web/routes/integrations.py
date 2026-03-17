@@ -163,6 +163,45 @@ async def disconnect_service(request: Request, service_id: str) -> dict:
     return {"disconnected": True, "service": service_id}
 
 
+@router.get("/health")
+async def integration_health(request: Request) -> list[dict]:
+    """Check health of all integration tokens."""
+    monitor = getattr(request.app.state, "token_monitor", None)
+    if not monitor:
+        # Fallback: check OAuth only
+        oauth_mgr = getattr(request.app.state, "oauth_manager", None)
+        if not oauth_mgr:
+            return []
+
+        import time
+
+        statuses = []
+        for provider in ["google", "microsoft"]:
+            creds = await oauth_mgr.get_credentials(provider)
+            if creds:
+                expires_in = (creds.expires_at - time.time()) / 3600
+                statuses.append({
+                    "service": provider,
+                    "healthy": not creds.is_expired,
+                    "message": "정상" if not creds.is_expired else "토큰 만료",
+                    "expires_in_hours": round(expires_in, 1),
+                })
+        return statuses
+
+    await monitor.check_all()
+    alerts = await monitor.get_alerts()
+    return [
+        {
+            "service": s.service_id,
+            "name": s.service_name,
+            "healthy": s.healthy,
+            "message": s.message,
+            "expires_in_hours": s.expires_in_hours,
+        }
+        for s in alerts
+    ]
+
+
 @router.get("/summary")
 async def integration_summary(request: Request) -> dict:
     """Quick summary of all integration statuses."""
