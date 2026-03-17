@@ -7,6 +7,26 @@ from dataclasses import dataclass, asdict
 
 logger = logging.getLogger("breadmind.audit")
 
+_SENSITIVE_KEYS = frozenset({
+    "api_key", "password", "token", "secret", "key", "credential",
+    "authorization", "auth", "private_key", "access_token", "refresh_token",
+})
+
+
+def _mask_sensitive(data: dict, depth: int = 0) -> dict:
+    """Recursively mask values whose keys contain sensitive identifiers."""
+    if depth > 3:
+        return data
+    masked = {}
+    for k, v in data.items():
+        if any(sk in k.lower() for sk in _SENSITIVE_KEYS):
+            masked[k] = "***REDACTED***"
+        elif isinstance(v, dict):
+            masked[k] = _mask_sensitive(v, depth + 1)
+        else:
+            masked[k] = v
+    return masked
+
 
 @dataclass
 class AuditEntry:
@@ -62,7 +82,7 @@ class AuditLogger:
             channel=channel,
             details={
                 "tool_name": tool_name,
-                "arguments": arguments,
+                "arguments": _mask_sensitive(arguments) if isinstance(arguments, dict) else arguments,
                 "result": result[:1000] if isinstance(result, str) and len(result) > 1000 else result,
                 "duration_ms": duration_ms,
             },
