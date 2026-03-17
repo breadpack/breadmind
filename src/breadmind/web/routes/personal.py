@@ -63,6 +63,50 @@ def _get_registry(request: Request):
         raise HTTPException(503, "Personal assistant not available")
     return registry
 
+
+def _get_default_adapter(registry, domain: str):
+    """Get the best adapter for creating new items.
+
+    Priority: connected external service > builtin.
+    If multiple external services are connected, prefer the first authenticated one.
+    Falls back to builtin if nothing else is available.
+    """
+    adapters = registry.list_adapters(domain)
+    builtin = None
+    for adapter in adapters:
+        if adapter.source == "builtin":
+            builtin = adapter
+            continue
+        # Check if external adapter is authenticated (has credentials)
+        # External adapters typically have _api_key, _token, _oauth, etc.
+        if _is_authenticated(adapter):
+            return adapter
+    # Fallback to builtin
+    if builtin:
+        return builtin
+    if adapters:
+        return adapters[0]
+    raise HTTPException(503, f"No {domain} adapter available")
+
+
+def _is_authenticated(adapter) -> bool:
+    """Check if an external adapter has been authenticated."""
+    # OAuth-based adapters have _oauth with credentials
+    oauth = getattr(adapter, "_oauth", None)
+    if oauth:
+        # Can't await here, so check if oauth manager exists
+        return True  # Will fail gracefully at API call time if not actually authed
+    # API key-based adapters
+    if getattr(adapter, "_api_key", None):
+        return True
+    # Token-based adapters
+    if getattr(adapter, "_token", None):
+        return True
+    # Jira-style auth
+    if getattr(adapter, "_auth_header", None):
+        return True
+    return False
+
 def _parse_dt(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -117,14 +161,14 @@ async def create_task(request: Request, body: TaskCreate):
     registry = _get_registry(request)
     from breadmind.personal.models import Task
 
-    adapter = registry.get_adapter("task", "builtin")
+    adapter = _get_default_adapter(registry, "task")
     task = Task(
         id="", title=body.title, description=body.description,
         priority=body.priority, due_at=_parse_dt(body.due_at),
         tags=body.tags, assignee=body.assignee, user_id="default",
     )
     task_id = await adapter.create_item(task)
-    return {"id": task_id, "title": body.title}
+    return {"id": task_id, "title": body.title, "source": adapter.source}
 
 
 @router.patch("/tasks/{task_id}")
@@ -188,7 +232,7 @@ async def create_event(request: Request, body: EventCreate):
     from breadmind.personal.models import Event, normalize_recurrence
     from datetime import timedelta
 
-    adapter = registry.get_adapter("event", "builtin")
+    adapter = _get_default_adapter(registry, "event")
     start = _parse_dt(body.start_at)
     end = _parse_dt(body.end_at) if body.end_at else start + timedelta(hours=1)
 
@@ -199,7 +243,7 @@ async def create_event(request: Request, body: EventCreate):
         recurrence=normalize_recurrence(body.recurrence), user_id="default",
     )
     event_id = await adapter.create_item(event)
-    return {"id": event_id, "title": body.title}
+    return {"id": event_id, "title": body.title, "source": adapter.source}
 
 
 @router.patch("/events/{event_id}")
@@ -248,16 +292,14 @@ async def create_contact(request: Request, body: ContactCreate):
     registry = _get_registry(request)
     from breadmind.personal.models import Contact
 
-    adapters = registry.list_adapters("contact")
-    if not adapters:
-        raise HTTPException(503, "No contact adapter available")
+    adapter = _get_default_adapter(registry, "contact")
 
     contact = Contact(
         id="", name=body.name, email=body.email, phone=body.phone,
         organization=body.organization, tags=body.tags, notes=body.notes,
         user_id="default",
     )
-    contact_id = await adapters[0].create_item(contact)
+    contact_id = await adapter.create_item(contact)
     return {"id": contact_id, "name": body.name}
 
 
