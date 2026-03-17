@@ -471,8 +471,14 @@
                         <div id="sidebar-tasks"></div>
                         <div id="sidebar-events" style="margin-top:8px;"></div>
                     </div>
-                    <div class="section"><h2>Tools</h2><div id="toolList"><div class="tool-item">Loading...</div></div></div>
-                    <div class="section"><h2>MCP Servers</h2><div id="serverList"><div class="tool-item">Loading...</div></div></div>
+                    <div class="section">
+                        <h2 style="cursor:pointer;display:flex;align-items:center;gap:4px;" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none';this.querySelector('span').textContent=this.nextElementSibling.style.display==='none'?'▸':'▾'"><span style="font-size:10px;color:rgba(255,255,255,0.3)">▸</span> Tools</h2>
+                        <div id="toolList" style="display:none"><div class="tool-item">Loading...</div></div>
+                    </div>
+                    <div class="section">
+                        <h2 style="cursor:pointer;display:flex;align-items:center;gap:4px;" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none';this.querySelector('span').textContent=this.nextElementSibling.style.display==='none'?'▸':'▾'"><span style="font-size:10px;color:rgba(255,255,255,0.3)">▸</span> MCP Servers</h2>
+                        <div id="serverList" style="display:none"><div class="tool-item">Loading...</div></div>
+                    </div>
                 </div>
                 <div class="chat-area">
                     <div class="messages" id="messages">
