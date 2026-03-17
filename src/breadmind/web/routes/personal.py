@@ -83,14 +83,9 @@ async def list_tasks(
     status: str | None = None,
     priority: str | None = None,
     due_before: str | None = None,
-    source: str = "builtin",
+    source: str = "all",
 ):
     registry = _get_registry(request)
-    try:
-        adapter = registry.get_adapter("task", source)
-    except KeyError:
-        raise HTTPException(404, f"Task adapter '{source}' not found")
-
     filters: dict[str, Any] = {"user_id": "default"}
     if status:
         filters["status"] = status
@@ -99,8 +94,22 @@ async def list_tasks(
     if due_before:
         filters["due_before"] = _parse_dt(due_before)
 
-    tasks = await adapter.list_items(filters=filters)
-    return [_task_to_dict(t) for t in tasks]
+    if source == "all":
+        adapters = registry.list_adapters("task")
+    else:
+        try:
+            adapters = [registry.get_adapter("task", source)]
+        except KeyError:
+            raise HTTPException(404, f"Task adapter '{source}' not found")
+
+    all_tasks = []
+    for adapter in adapters:
+        try:
+            tasks = await adapter.list_items(filters=filters)
+            all_tasks.extend(tasks)
+        except Exception:
+            pass  # Skip adapters that fail (e.g., not authenticated)
+    return [_task_to_dict(t) for t in all_tasks]
 
 
 @router.post("/tasks", status_code=201)
@@ -144,22 +153,33 @@ async def list_events(
     request: Request,
     start_after: str | None = None,
     start_before: str | None = None,
-    source: str = "builtin",
+    source: str = "all",
 ):
     registry = _get_registry(request)
-    try:
-        adapter = registry.get_adapter("event", source)
-    except KeyError:
-        raise HTTPException(404, f"Event adapter '{source}' not found")
-
     filters: dict[str, Any] = {"user_id": "default"}
     if start_after:
         filters["start_after"] = _parse_dt(start_after)
     if start_before:
         filters["start_before"] = _parse_dt(start_before)
 
-    events = await adapter.list_items(filters=filters)
-    return [_event_to_dict(e) for e in events]
+    if source == "all":
+        adapters = registry.list_adapters("event")
+    else:
+        try:
+            adapters = [registry.get_adapter("event", source)]
+        except KeyError:
+            raise HTTPException(404, f"Event adapter '{source}' not found")
+
+    all_events = []
+    for adapter in adapters:
+        try:
+            events = await adapter.list_items(filters=filters)
+            all_events.extend(events)
+        except Exception:
+            pass
+    # Sort by start_at
+    all_events.sort(key=lambda e: e.start_at if e.start_at else datetime.min.replace(tzinfo=timezone.utc))
+    return [_event_to_dict(e) for e in all_events]
 
 
 @router.post("/events", status_code=201)
