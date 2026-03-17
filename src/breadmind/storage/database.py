@@ -100,6 +100,96 @@ class Database:
                 );
                 CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id);
                 CREATE INDEX IF NOT EXISTS idx_conversations_active ON conversations(last_active DESC);
+
+                -- Personal assistant tables
+                CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+                CREATE TABLE IF NOT EXISTS tasks (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    status VARCHAR(20) DEFAULT 'pending',
+                    priority VARCHAR(10) DEFAULT 'medium',
+                    due_at TIMESTAMPTZ,
+                    recurrence TEXT,
+                    tags TEXT[] DEFAULT '{}',
+                    source VARCHAR(50) DEFAULT 'builtin',
+                    source_id TEXT,
+                    assignee TEXT,
+                    parent_id UUID REFERENCES tasks(id) ON DELETE SET NULL,
+                    user_id TEXT NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS events (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    start_at TIMESTAMPTZ NOT NULL,
+                    end_at TIMESTAMPTZ NOT NULL,
+                    all_day BOOLEAN DEFAULT FALSE,
+                    location TEXT,
+                    attendees TEXT[] DEFAULT '{}',
+                    reminder_minutes INT[] DEFAULT '{15}',
+                    recurrence TEXT,
+                    source VARCHAR(50) DEFAULT 'builtin',
+                    source_id TEXT,
+                    user_id TEXT NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS contacts (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    name TEXT NOT NULL,
+                    email TEXT,
+                    phone TEXT,
+                    platform_ids JSONB DEFAULT '{}',
+                    organization TEXT,
+                    tags TEXT[] DEFAULT '{}',
+                    notes TEXT,
+                    user_id TEXT NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS files_meta (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    name TEXT NOT NULL,
+                    path_or_url TEXT NOT NULL,
+                    mime_type TEXT,
+                    size_bytes BIGINT DEFAULT 0,
+                    source VARCHAR(50) DEFAULT 'local',
+                    source_id TEXT,
+                    parent_folder TEXT,
+                    user_id TEXT NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS sync_state (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    adapter_domain VARCHAR(50) NOT NULL,
+                    adapter_source VARCHAR(50) NOT NULL,
+                    user_id TEXT NOT NULL,
+                    last_synced_at TIMESTAMPTZ,
+                    sync_token TEXT,
+                    UNIQUE(adapter_domain, adapter_source, user_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS sync_conflicts (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    entity_table VARCHAR(50) NOT NULL,
+                    entity_id UUID NOT NULL,
+                    local_data JSONB NOT NULL,
+                    remote_data JSONB NOT NULL,
+                    resolution VARCHAR(20) NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_tasks_user_status ON tasks(user_id, status);
+                CREATE INDEX IF NOT EXISTS idx_tasks_due_at ON tasks(due_at) WHERE status = 'pending';
+                CREATE INDEX IF NOT EXISTS idx_events_user_time ON events(user_id, start_at);
+                CREATE INDEX IF NOT EXISTS idx_contacts_user ON contacts(user_id);
+                CREATE INDEX IF NOT EXISTS idx_files_meta_user_source ON files_meta(user_id, source);
             """)
 
         # pgvector extension (optional)
