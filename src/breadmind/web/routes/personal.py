@@ -8,6 +8,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from breadmind.personal.cache import get_cache
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/personal", tags=["personal"])
@@ -61,6 +63,10 @@ def _get_registry(request: Request):
     registry = getattr(request.app.state, "adapter_registry", None)
     if not registry:
         raise HTTPException(503, "Personal assistant not available")
+    # Lazy init cache with registry
+    cache = get_cache()
+    if not cache._registry:
+        cache.set_registry(registry)
     return registry
 
 
@@ -157,6 +163,14 @@ async def list_tasks(
     source: str = "all",
 ):
     registry = _get_registry(request)
+
+    # Check cache first
+    cache = get_cache()
+    cache_key = f"task:{status or 'all'}:{source}"
+    cached = await cache.get(cache_key)
+    if cached is not None:
+        return [_task_to_dict(t) for t in cached]
+
     filters: dict[str, Any] = {"user_id": "default"}
     if status:
         filters["status"] = status
@@ -180,6 +194,8 @@ async def list_tasks(
             all_tasks.extend(tasks)
         except Exception:
             pass  # Skip adapters that fail (e.g., not authenticated)
+
+    await cache.set(cache_key, all_tasks, ttl=60)
     return [_task_to_dict(t) for t in all_tasks]
 
 
@@ -196,6 +212,7 @@ async def create_task(request: Request, body: TaskCreate):
         tags=body.tags, assignee=body.assignee, user_id="default",
     )
     task_id = await adapter.create_item(task)
+    await get_cache().invalidate("task")
     return {"id": task_id, "title": body.title, "source": adapter.source}
 
 
@@ -207,6 +224,7 @@ async def update_task(request: Request, task_id: str, body: TaskUpdate):
     if "due_at" in changes:
         changes["due_at"] = _parse_dt(changes["due_at"])
     await adapter.update_item(task_id, changes)
+    await get_cache().invalidate("task")
     return {"updated": True, "id": task_id}
 
 
@@ -215,6 +233,7 @@ async def delete_task(request: Request, task_id: str):
     registry = _get_registry(request)
     adapter = registry.get_adapter("task", "builtin")
     await adapter.delete_item(task_id)
+    await get_cache().invalidate("task")
     return {"deleted": True, "id": task_id}
 
 
@@ -228,6 +247,14 @@ async def list_events(
     source: str = "all",
 ):
     registry = _get_registry(request)
+
+    # Check cache first
+    cache = get_cache()
+    cache_key = f"event:{start_after or 'none'}:{start_before or 'none'}:{source}"
+    cached = await cache.get(cache_key)
+    if cached is not None:
+        return [_event_to_dict(e) for e in cached]
+
     filters: dict[str, Any] = {"user_id": "default"}
     if start_after:
         filters["start_after"] = _parse_dt(start_after)
@@ -251,6 +278,8 @@ async def list_events(
             pass
     # Sort by start_at
     all_events.sort(key=lambda e: e.start_at if e.start_at else datetime.min.replace(tzinfo=timezone.utc))
+
+    await cache.set(cache_key, all_events, ttl=60)
     return [_event_to_dict(e) for e in all_events]
 
 
@@ -272,6 +301,7 @@ async def create_event(request: Request, body: EventCreate):
         recurrence=normalize_recurrence(body.recurrence), user_id="default",
     )
     event_id = await adapter.create_item(event)
+    await get_cache().invalidate("event")
     return {"id": event_id, "title": body.title, "source": adapter.source}
 
 
@@ -285,6 +315,7 @@ async def update_event(request: Request, event_id: str, body: EventUpdate):
     if "end_at" in changes:
         changes["end_at"] = _parse_dt(changes["end_at"])
     await adapter.update_item(event_id, changes)
+    await get_cache().invalidate("event")
     return {"updated": True, "id": event_id}
 
 
@@ -293,6 +324,7 @@ async def delete_event(request: Request, event_id: str):
     registry = _get_registry(request)
     adapter = registry.get_adapter("event", "builtin")
     await adapter.delete_item(event_id)
+    await get_cache().invalidate("event")
     return {"deleted": True, "id": event_id}
 
 
