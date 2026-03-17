@@ -689,8 +689,10 @@
 
         function switchTab(name) {
             document.querySelectorAll('.tab').forEach((t, i) => { t.classList.toggle('active', ['chat','monitoring','store','skills','personal','settings'][i] === name); });
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-            document.getElementById('tab-' + name).classList.add('active');
+            document.querySelectorAll('.tab-content').forEach(c => { c.classList.remove('active'); c.style.display = 'none'; });
+            const activeTab = document.getElementById('tab-' + name);
+            activeTab.classList.add('active');
+            activeTab.style.display = 'flex';
             location.hash = name;
             if (name === 'settings') loadSettings();
             if (name === 'monitoring') loadEvents();
