@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
-from breadmind.personal.models import Event, Task, normalize_recurrence
+from breadmind.personal.models import Contact, Event, File, Task, normalize_recurrence
 
 if TYPE_CHECKING:
     from breadmind.personal.adapters.base import AdapterRegistry
@@ -258,6 +258,131 @@ async def reminder_set(
 
 
 # ---------------------------------------------------------------------------
+# Contact tools
+# ---------------------------------------------------------------------------
+
+
+async def contact_search(
+    query: str,
+    registry: AdapterRegistry,
+    user_id: str,
+) -> str:
+    """연락처를 검색합니다."""
+    try:
+        adapter = registry.get_adapter("contact", "builtin")
+    except KeyError:
+        adapters = registry.list_adapters("contact")
+        if not adapters:
+            return "연락처 어댑터가 설정되지 않았습니다."
+        adapter = adapters[0]
+
+    contacts = await adapter.list_items(
+        filters={"user_id": user_id, "query": query}, limit=10,
+    )
+    if not contacts:
+        return f"'{query}'에 대한 연락처를 찾을 수 없습니다."
+
+    lines = ["연락처 검색 결과:"]
+    for c in contacts:
+        parts = [f"  - {c.name}"]
+        if c.email:
+            parts.append(c.email)
+        if c.phone:
+            parts.append(c.phone)
+        if c.organization:
+            parts.append(c.organization)
+        lines.append(" | ".join(parts))
+    return "\n".join(lines)
+
+
+async def contact_create(
+    name: str,
+    registry: AdapterRegistry,
+    user_id: str,
+    email: str | None = None,
+    phone: str | None = None,
+    organization: str | None = None,
+) -> str:
+    """연락처를 추가합니다."""
+    try:
+        adapter = registry.get_adapter("contact", "builtin")
+    except KeyError:
+        adapters = registry.list_adapters("contact")
+        if not adapters:
+            return "연락처 어댑터가 설정되지 않았습니다."
+        adapter = adapters[0]
+
+    contact = Contact(
+        id="", name=name, email=email, phone=phone,
+        organization=organization, user_id=user_id,
+    )
+    contact_id = await adapter.create_item(contact)
+    return f"연락처 추가 완료: {name} [ID: {contact_id}]"
+
+
+# ---------------------------------------------------------------------------
+# File tools
+# ---------------------------------------------------------------------------
+
+
+async def file_search(
+    query: str,
+    registry: AdapterRegistry,
+    user_id: str,
+    source: str | None = None,
+) -> str:
+    """파일을 검색합니다."""
+    adapters = registry.list_adapters("file")
+    if source:
+        try:
+            adapters = [registry.get_adapter("file", source)]
+        except KeyError:
+            return f"파일 어댑터 '{source}'를 찾을 수 없습니다."
+    if not adapters:
+        return "파일 어댑터가 설정되지 않았습니다."
+
+    all_files: list[File] = []
+    for adapter in adapters:
+        files = await adapter.list_items(
+            filters={"user_id": user_id, "name_contains": query}, limit=10,
+        )
+        all_files.extend(files)
+
+    if not all_files:
+        return f"'{query}'에 대한 파일을 찾을 수 없습니다."
+
+    lines = ["파일 검색 결과:"]
+    for f in all_files:
+        size_str = _format_size(f.size_bytes) if f.size_bytes else ""
+        source_str = f" [{f.source}]" if f.source != "local" else ""
+        lines.append(
+            f"  - {f.name} ({f.mime_type}"
+            f"{', ' + size_str if size_str else ''}){source_str}",
+        )
+    return "\n".join(lines)
+
+
+async def file_list(
+    registry: AdapterRegistry,
+    user_id: str,
+    source: str | None = None,
+) -> str:
+    """파일 목록을 조회합니다."""
+    return await file_search(
+        query="", registry=registry, user_id=user_id, source=source,
+    )
+
+
+def _format_size(size_bytes: int) -> str:
+    """Format bytes to human-readable size."""
+    for unit in ["B", "KB", "MB", "GB"]:
+        if size_bytes < 1024:
+            return f"{size_bytes:.0f}{unit}"
+        size_bytes /= 1024
+    return f"{size_bytes:.1f}TB"
+
+
+# ---------------------------------------------------------------------------
 # Registration helper
 # ---------------------------------------------------------------------------
 
@@ -283,6 +408,10 @@ def register_personal_tools(
         (event_update, "캘린더 일정을 업데이트합니다. event_id 필수."),
         (event_delete, "캘린더 일정을 삭제합니다. event_id 필수."),
         (reminder_set, "리마인더를 설정합니다. message/remind_at 필수, recurrence 선택."),
+        (contact_search, "연락처를 검색합니다. query 필수."),
+        (contact_create, "연락처를 추가합니다. name 필수, email/phone/organization 선택."),
+        (file_search, "파일을 검색합니다. query 필수, source 선택."),
+        (file_list, "파일 목록을 조회합니다. source 선택."),
     ]
 
     for func, description in tool_defs:
