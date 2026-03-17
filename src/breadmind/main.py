@@ -365,6 +365,12 @@ async def run():
                 lifecycle_manager=messenger_components["lifecycle"] if messenger_components else None,
                 orchestrator=messenger_components["orchestrator"] if messenger_components else None,
             )
+            # Expose personal assistant components to web routes
+            if memory_components.get("adapter_registry"):
+                web_app.app.state.adapter_registry = memory_components["adapter_registry"]
+            if memory_components.get("oauth_manager"):
+                web_app.app.state.oauth_manager = memory_components["oauth_manager"]
+
             # Wire EventBus → WebSocket broadcast (all events forwarded to UI)
             async def _event_to_websocket(event):
                 await web_app.broadcast_event({
