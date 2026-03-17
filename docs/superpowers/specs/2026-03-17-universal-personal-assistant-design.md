@@ -638,3 +638,42 @@ OAuth credential을 공유하여 Google Drive, Contacts를 빠르게 추가.
 | 사용자 적응 | 단일 프로필 | 역할 자동 감지 (developer/general) + 도구 노출 조절 |
 | 인프라 관리 | 없음 | K8s/Proxmox/OpenWrt 자연어 관리 |
 | 보안 | PRISM (CVE 발견됨) | 다층 방어 (블랙리스트+승인+쿨다운+감사+HMAC) |
+
+## 12. Implementation Status (2026-03-17)
+
+All four phases have been implemented and tested.
+
+### Phase 1: Architecture + Task/Event ✅
+- 5 domain models (Task, Event, Contact, File, Message)
+- ServiceAdapter ABC + AdapterRegistry
+- BuiltinTaskAdapter + BuiltinEventAdapter (PostgreSQL CRUD)
+- 9 LLM tools (task_create/list/update/delete, event_create/list/update/delete, reminder_set)
+- Intent expansion (SCHEDULE, TASK, SEARCH_FILES, CONTACT + priority rules)
+- ContextProvider plugin pattern + PersonalContextProvider
+- UserProfiler role/domain management
+- PersonalScheduler (reminders, deadlines)
+- Full bootstrap DI integration
+
+### Phase 2: Google Calendar + OAuth ✅
+- OAuthManager (Google/Microsoft OAuth 2.0)
+- GoogleCalendarAdapter (Calendar API v3, bidirectional)
+
+### Phase 3a: Google Services ✅
+- GoogleDriveAdapter (Drive API v3, file CRUD)
+- GoogleContactsAdapter (People API, contact CRUD)
+
+### Phase 3b: Productivity Tools ✅
+- NotionAdapter (database pages as tasks)
+- JiraAdapter (REST API v3, issue CRUD)
+- GitHubIssuesAdapter (REST API, issue CRUD)
+
+### Phase 4: Experience Enhancement ✅
+- Urgency scoring (critical/high/normal/low)
+- Proactive enhancement (daily summary, overdue detection)
+- TeamsGateway (Bot Framework)
+- LINEGateway (Messaging API)
+- MatrixGateway (Client-Server API with sync loop)
+
+### Test Coverage
+- 21 test files, 157 tests, 0 failures
+- All imports verified across all phases
