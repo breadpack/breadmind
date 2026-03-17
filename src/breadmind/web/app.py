@@ -287,6 +287,11 @@ class WebApp:
         app.include_router(integrations_router)
         app.include_router(personal_router)
 
+        # --- Static files (JS, CSS) ---
+        static_dir = Path(__file__).parent / "static"
+        if static_dir.exists():
+            app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
     async def _persist_swarm_roles(self):
         """Save all swarm roles to DB."""
         if self._db and self._swarm_manager:

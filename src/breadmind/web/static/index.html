@@ -823,7 +823,7 @@
 
         function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
         input.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
-        initQuickActions(input);
+        if (typeof initQuickActions === 'function') initQuickActions(input);
 
         // Monitoring
         function addMonitoringEvent(event) {
