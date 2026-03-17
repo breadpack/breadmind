@@ -27,3 +27,46 @@ database:
   name: ${DB_NAME:-breadmind}
   user: ${DB_USER:-breadmind}
   password: ${DB_PASSWORD}
+
+memory:
+  gc:
+    interval_seconds: 3600
+    decay_threshold: 0.1
+    max_cached_notes: 500
+    kg_max_age_days: 90
+    env_refresh_interval: 6
+
+timeouts:
+  tool_call: 30
+  llm_api: 120
+  ssh_command: 300
+  health_check: 5
+  pypi_check: 10
+  http_default: 10
+  skill_discovery: 30
+
+retry:
+  max_retries: 3
+  llm_max_retries: 3
+  gateway_max_retries: 10
+  base_backoff: 1
+  max_backoff: 300
+  health_check_interval: 30
+
+limits:
+  max_tools: 30
+  max_context_tokens: 4000
+  max_per_domain_skills: 1
+  audit_log_recent: 50
+  embedding_cache_size: 500
+  low_performance_threshold: 0.5
+  top_roles_limit: 5
+  smart_retriever_token_budget: 2000
+  smart_retriever_limit: 5
+
+polling:
+  signal_interval: 5
+  gmail_interval: 30
+  update_check_interval: 3600
+  data_flush_interval: 300
+  auto_cleanup_interval: 600

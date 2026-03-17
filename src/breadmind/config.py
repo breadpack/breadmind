@@ -4,6 +4,14 @@ import yaml
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from breadmind.config_types import (
+    MemoryGCConfig,
+    TimeoutsConfig,
+    RetryConfig,
+    LimitsConfig,
+    PollingConfig,
+)
+
 def _get_valid_providers() -> tuple[str, ...]:
     try:
         from breadmind.llm.factory import get_valid_provider_names
@@ -116,6 +124,11 @@ class AppConfig:
     security: SecurityConfig = field(default_factory=SecurityConfig)
     network: NetworkConfig = field(default_factory=NetworkConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    memory_gc: MemoryGCConfig = field(default_factory=MemoryGCConfig)
+    timeouts: TimeoutsConfig = field(default_factory=TimeoutsConfig)
+    retry: RetryConfig = field(default_factory=RetryConfig)
+    limits: LimitsConfig = field(default_factory=LimitsConfig)
+    polling: PollingConfig = field(default_factory=PollingConfig)
     _persona: dict = field(default=None)
 
     def validate(self) -> None:
@@ -315,14 +328,33 @@ def load_config(config_dir: str = "config") -> AppConfig:
     security_raw = raw.get("security", {})
     logging_raw = raw.get("logging", {})
 
-    return AppConfig(
+    # New config sections (with defaults if absent)
+    memory_gc_raw = raw.get("memory", {}).get("gc", {})
+    timeouts_raw = raw.get("timeouts", {})
+    retry_raw = raw.get("retry", {})
+    limits_raw = raw.get("limits", {})
+    polling_raw = raw.get("polling", {})
+
+    config = AppConfig(
         llm=LLMConfig(**{k: v for k, v in llm_raw.items() if k in LLMConfig.__dataclass_fields__}),
         database=DatabaseConfig(**{k: (int(v) if k == "port" else v) for k, v in db_raw.items() if k in DatabaseConfig.__dataclass_fields__}),
         mcp=mcp_config,
         web=WebConfig(**{k: v for k, v in web_raw.items() if k in WebConfig.__dataclass_fields__}),
         security=SecurityConfig(**{k: v for k, v in security_raw.items() if k in SecurityConfig.__dataclass_fields__}),
         logging=LoggingConfig(**{k: v for k, v in logging_raw.items() if k in LoggingConfig.__dataclass_fields__}),
+        memory_gc=MemoryGCConfig(**{k: v for k, v in memory_gc_raw.items() if k in MemoryGCConfig.__dataclass_fields__}),
+        timeouts=TimeoutsConfig(**{k: v for k, v in timeouts_raw.items() if k in TimeoutsConfig.__dataclass_fields__}),
+        retry=RetryConfig(**{k: v for k, v in retry_raw.items() if k in RetryConfig.__dataclass_fields__}),
+        limits=LimitsConfig(**{k: v for k, v in limits_raw.items() if k in LimitsConfig.__dataclass_fields__}),
+        polling=PollingConfig(**{k: v for k, v in polling_raw.items() if k in PollingConfig.__dataclass_fields__}),
     )
+
+    # CORS origins from environment variable (comma-separated, overrides config file)
+    env_cors = os.environ.get("BREADMIND_CORS_ORIGINS")
+    if env_cors:
+        config.security.cors_origins = [o.strip() for o in env_cors.split(",")]
+
+    return config
 
 
 def _expand_env(obj):
