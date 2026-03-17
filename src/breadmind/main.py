@@ -142,6 +142,10 @@ async def run():
         config, provider, registry, guard, db, memory_components,
     )
 
+    # Initialize central event bus
+    from breadmind.core.events import get_event_bus
+    event_bus = get_event_bus()
+
     # Initialize monitoring engine
     monitoring_engine = MonitoringEngine()
     await monitoring_engine.start()
@@ -361,6 +365,16 @@ async def run():
                 lifecycle_manager=messenger_components["lifecycle"] if messenger_components else None,
                 orchestrator=messenger_components["orchestrator"] if messenger_components else None,
             )
+            # Wire EventBus → WebSocket broadcast (all events forwarded to UI)
+            async def _event_to_websocket(event):
+                await web_app.broadcast_event({
+                    "type": event.type.value,
+                    "data": event.data,
+                    "source": event.source,
+                    "timestamp": event.timestamp.isoformat(),
+                })
+            event_bus.subscribe_all(_event_to_websocket)
+
             print(f"  Starting web server on {web_host}:{web_port}")
             server_config = uvicorn.Config(
                 web_app.app, host=web_host, port=web_port, log_level=log_level.lower(),

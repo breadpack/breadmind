@@ -11,6 +11,7 @@ from breadmind.tools.registry import ToolRegistry, ToolResult
 from breadmind.core.safety import SafetyGuard
 from breadmind.core.audit import AuditLogger
 from breadmind.core.tool_executor import ToolExecutor, ToolExecutionContext
+from breadmind.core.events import get_event_bus, Event, EventType
 
 if TYPE_CHECKING:
     from breadmind.memory.working import WorkingMemory
@@ -224,17 +225,30 @@ class CoreAgent:
         session_id = f"{user}:{channel}"
         logger.info(json.dumps({"event": "session_start", "user": user, "channel": channel}))
 
+        # Publish session start via EventBus (fire-and-forget)
+        await get_event_bus().publish_fire_and_forget(Event(
+            type=EventType.SESSION_START,
+            data={"user": user, "channel": channel, "session_id": session_id},
+            source="agent",
+        ))
+
         # Step 1: Classify intent (rule-based, no LLM call)
         from breadmind.core.intent import classify as classify_intent, get_think_budget
         intent = classify_intent(message)
         think_budget = get_think_budget(intent)
-        logger.info(json.dumps({
-            "event": "intent_classified",
+        intent_data = {
             "category": intent.category.value,
             "confidence": round(intent.confidence, 2),
             "entities": intent.entities[:5],
             "think_budget": think_budget,
-        }))
+        }
+        logger.info(json.dumps({"event": "intent_classified", **intent_data}))
+
+        await get_event_bus().publish_fire_and_forget(Event(
+            type=EventType.INTENT_CLASSIFIED,
+            data=intent_data,
+            source="agent",
+        ))
 
         # Build initial messages
         system_msg = LLMMessage(role="system", content=self._system_prompt)
@@ -353,6 +367,11 @@ class CoreAgent:
                         LLMMessage(role="assistant", content=final_content),
                     )
                 logger.info(json.dumps({"event": "session_end", "user": user, "channel": channel}))
+                await get_event_bus().publish_fire_and_forget(Event(
+                    type=EventType.SESSION_END,
+                    data={"user": user, "channel": channel, "session_id": session_id},
+                    source="agent",
+                ))
                 # Fire-and-forget behavior analysis
                 if self._behavior_tracker is not None:
                     asyncio.create_task(
@@ -385,6 +404,11 @@ class CoreAgent:
             )
 
         logger.info(json.dumps({"event": "session_end", "user": user, "channel": channel, "reason": "max_turns"}))
+        await get_event_bus().publish_fire_and_forget(Event(
+            type=EventType.SESSION_END,
+            data={"user": user, "channel": channel, "session_id": session_id, "reason": "max_turns"},
+            source="agent",
+        ))
         final = "Maximum tool call turns reached. Please try a simpler request."
         if self._notifications:
             prefix = "\n".join(self._notifications) + "\n\n"

@@ -37,6 +37,8 @@ class WebApp:
                  token_manager=None, commander=None,
                  messenger_security=None, lifecycle_manager=None, orchestrator=None):
         self.app = FastAPI(title="BreadMind", version="0.1.0")
+        # Expose self via FastAPI state so Depends() helpers can reach it
+        self.app.state.app_state = self
         self._message_handler = message_handler
         self._tool_registry = tool_registry
         self._mcp_manager = mcp_manager
