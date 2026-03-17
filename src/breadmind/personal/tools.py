@@ -418,6 +418,69 @@ def _format_size(size_bytes: int) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Service connection tool
+# ---------------------------------------------------------------------------
+
+
+async def service_connect(
+    service: str,
+    registry: AdapterRegistry,
+    user_id: str,
+) -> str:
+    """외부 서비스를 연결합니다. 사용자에게 연결 링크를 제공합니다."""
+    service_map = {
+        "google": {"name": "Google", "type": "oauth", "scopes": "calendar,drive,contacts"},
+        "google_calendar": {"name": "Google Calendar", "type": "oauth", "scopes": "calendar"},
+        "google_drive": {"name": "Google Drive", "type": "oauth", "scopes": "drive"},
+        "google_contacts": {"name": "Google Contacts", "type": "oauth", "scopes": "contacts"},
+        "microsoft": {"name": "Microsoft", "type": "oauth", "scopes": "calendar,files"},
+        "outlook": {"name": "Outlook Calendar", "type": "oauth", "scopes": "calendar"},
+        "onedrive": {"name": "OneDrive", "type": "oauth", "scopes": "files"},
+        "notion": {"name": "Notion", "type": "api_key"},
+        "jira": {"name": "Jira", "type": "api_token"},
+        "github": {"name": "GitHub", "type": "token"},
+    }
+
+    # Normalize input
+    key = (
+        service.lower()
+        .replace(" ", "_")
+        .replace("캘린더", "calendar")
+        .replace("구글", "google")
+        .replace("마이크로소프트", "microsoft")
+    )
+
+    # Try exact match first, then partial match
+    info = service_map.get(key)
+    if not info:
+        for k, v in service_map.items():
+            if key in k or k in key:
+                info = v
+                key = k
+                break
+
+    if not info:
+        available = ", ".join(service_map.keys())
+        return f"'{service}'는 지원하지 않는 서비스입니다. 지원 서비스: {available}"
+
+    if info["type"] == "oauth":
+        provider = "google" if "google" in key else "microsoft"
+        url = f"/api/oauth/start/{provider}?scopes={info['scopes']}"
+        return (
+            f"🔗 {info['name']} 연결하기\n\n"
+            f"아래 링크를 클릭하여 인증을 완료하세요:\n"
+            f"[OPEN_URL]{url}[/OPEN_URL]\n\n"
+            f"인증이 완료되면 자동으로 연동됩니다."
+        )
+    else:
+        return (
+            f"🔗 {info['name']} 연결하기\n\n"
+            f"Settings > Integrations에서 API 키를 입력하세요.\n"
+            f"또는 채팅에서 API 키를 알려주시면 바로 연결합니다."
+        )
+
+
+# ---------------------------------------------------------------------------
 # Registration helper
 # ---------------------------------------------------------------------------
 
@@ -448,6 +511,7 @@ def register_personal_tools(
         (file_search, "파일을 검색합니다. query 필수, source 선택."),
         (file_list, "파일 목록을 조회합니다. source 선택."),
         (message_search, "대화 기록을 검색합니다. query 필수, channel 선택."),
+        (service_connect, "외부 서비스(Google, Notion, Jira 등)를 연결합니다. service 필수."),
     ]
 
     for func, description in tool_defs:
