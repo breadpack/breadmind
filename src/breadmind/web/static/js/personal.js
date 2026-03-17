@@ -12,9 +12,24 @@
     window.initPersonalTab = function() {
         const container = document.getElementById('personal-content');
         if (!container) return;
-        container.innerHTML = buildPersonalHTML();
-        attachPersonalEvents();
-        loadView('tasks');
+
+        // Only build HTML structure once
+        if (!container.dataset.initialized) {
+            container.innerHTML = buildPersonalHTML();
+            attachPersonalEvents();
+            container.dataset.initialized = 'true';
+        }
+
+        // Always refresh data when tab is activated
+        loadView(currentView);
+    };
+
+    // Expose refresh function for WebSocket-triggered updates
+    window.refreshPersonalTab = function() {
+        const personalTab = document.getElementById('tab-personal');
+        if (personalTab && personalTab.style.display !== 'none') {
+            loadView(currentView);
+        }
     };
 
     function buildPersonalHTML() {
@@ -333,4 +348,14 @@
         const d = new Date(iso);
         return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
     }
+
+    // Auto-refresh when browser tab regains focus
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+            const personalTab = document.getElementById('tab-personal');
+            if (personalTab && personalTab.style.display !== 'none') {
+                loadView(currentView);
+            }
+        }
+    });
 })();
