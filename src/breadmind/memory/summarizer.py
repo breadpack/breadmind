@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING
 
 from breadmind.llm.base import LLMMessage, LLMProvider
@@ -23,7 +24,7 @@ class ConversationSummarizer:
 
     def __init__(
         self,
-        provider: LLMProvider,
+        provider: LLMProvider | None = None,
         model: str = "",
         keep_recent: int = 10,
         target_ratio: float = 0.7,
@@ -32,6 +33,57 @@ class ConversationSummarizer:
         self._model = model
         self._keep_recent = keep_recent
         self._target_ratio = target_ratio
+
+    def extract_domain_references(self, messages: list) -> dict:
+        """Extract domain entity references from messages for preservation during summarization."""
+        references: dict[str, list[str]] = {
+            "tasks": [],
+            "events": [],
+            "contacts": [],
+            "deadlines": [],
+        }
+
+        for msg in messages:
+            content = msg.get("content", "") if isinstance(msg, dict) else getattr(msg, "content", "")
+            if not content:
+                continue
+
+            # Task IDs
+            task_ids = re.findall(r'\[ID:\s*([a-f0-9-]{8,})\]', content)
+            references["tasks"].extend(task_ids)
+
+            # Event mentions (after 📅 or 일정)
+            event_matches = re.findall(r'(?:📅|일정[:\s])\s*(.+?)(?:\n|\(|$)', content)
+            references["events"].extend([m.strip() for m in event_matches if m.strip()])
+
+            # Contact mentions
+            contact_matches = re.findall(r'(?:📇|연락처[:\s])\s*(.+?)(?:\n|\||$)', content)
+            references["contacts"].extend([m.strip() for m in contact_matches if m.strip()])
+
+            # Deadlines
+            deadline_matches = re.findall(r'(?:마감|due)[:\s]*(.+?)(?:\n|\)|$)', content, re.I)
+            references["deadlines"].extend([m.strip() for m in deadline_matches if m.strip()])
+
+        # Deduplicate while preserving order
+        for key in references:
+            references[key] = list(dict.fromkeys(references[key]))
+
+        return references
+
+    def format_domain_context(self, references: dict) -> str:
+        """Format extracted domain references as a context preservation block."""
+        lines = []
+        if references["tasks"]:
+            lines.append(f"Referenced tasks: {', '.join(references['tasks'])}")
+        if references["events"]:
+            lines.append(f"Referenced events: {', '.join(references['events'])}")
+        if references["contacts"]:
+            lines.append(f"Referenced contacts: {', '.join(references['contacts'])}")
+        if references["deadlines"]:
+            lines.append(f"Deadlines mentioned: {', '.join(references['deadlines'])}")
+        if not lines:
+            return ""
+        return "\n## Domain Context (preserved)\n" + "\n".join(lines)
 
     async def summarize_if_needed(
         self,
@@ -89,6 +141,12 @@ class ConversationSummarizer:
             return TokenCounter.trim_messages_to_fit(
                 messages, tools, effective_model,
             )
+
+        # Preserve domain entity references from summarized messages
+        references = self.extract_domain_references(old)
+        domain_context = self.format_domain_context(references)
+        if domain_context:
+            summary_content += domain_context
 
         summary_msg = LLMMessage(
             role="system",
