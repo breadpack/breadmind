@@ -4,10 +4,31 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+from pathlib import Path
 from fastapi import APIRouter, Request
 from fastapi.responses import PlainTextResponse, JSONResponse
 
 logger = logging.getLogger(__name__)
+
+
+def _get_known_hosts() -> str | None:
+    """Return the path to known_hosts for SSH host key verification.
+
+    By default, uses ``~/.ssh/known_hosts`` (created if absent).
+    Set ``BREADMIND_SSH_STRICT_HOST_KEY=false`` to explicitly disable verification.
+    """
+    strict = os.environ.get("BREADMIND_SSH_STRICT_HOST_KEY", "true").lower()
+    if strict == "false":
+        logger.warning(
+            "SSH host key verification disabled by BREADMIND_SSH_STRICT_HOST_KEY=false"
+        )
+        return None
+    known_hosts = Path.home() / ".ssh" / "known_hosts"
+    if not known_hosts.exists():
+        known_hosts.parent.mkdir(parents=True, exist_ok=True)
+        known_hosts.touch(mode=0o644)
+    return str(known_hosts)
 
 router = APIRouter(tags=["workers"])
 
@@ -150,15 +171,28 @@ def setup_worker_routes(r: APIRouter, app_state):
             os_type="linux",
         )
 
+        # Validate HEREDOC delimiter safety
+        if "BREADMIND_EOF" in script:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Script contains forbidden delimiter 'BREADMIND_EOF'"},
+            )
+
         # Execute via SSH
         try:
             import asyncssh
 
+            known_hosts = _get_known_hosts()
+            if known_hosts is None:
+                logger.warning(
+                    "SSH deploy to %s:%d with known_hosts=None — "
+                    "host key verification is disabled", host, port,
+                )
             connect_kwargs = {
                 "host": host,
                 "port": port,
                 "username": username,
-                "known_hosts": None,
+                "known_hosts": known_hosts,
             }
             if password:
                 connect_kwargs["password"] = password
