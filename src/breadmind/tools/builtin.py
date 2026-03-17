@@ -469,7 +469,117 @@ async def swarm_role(action: str, name: str = "", system_prompt: str = "", descr
     return f"Unknown action: {action}. Use list, add, update, or remove."
 
 
+@tool(description="Delegate multiple independent tasks to parallel subagents for faster execution. "
+      "Use when the user's request contains 2+ independent sub-tasks that can run simultaneously. "
+      "Each task gets its own subagent. Results are collected and returned together. "
+      "Example: '서버 상태 확인하고 내일 일정도 보여줘' → 2 parallel tasks. "
+      "Pass tasks as a JSON array of strings, e.g. [\"서버 상태 확인\", \"내일 일정 조회\"].")
+async def delegate_tasks(
+    tasks: str,
+    _agent: object = None,
+    _provider: object = None,
+    _registry: object = None,
+) -> str:
+    """Delegate tasks to parallel subagents."""
+    import json as _json
+
+    # Parse tasks (JSON array or comma-separated)
+    try:
+        task_list = _json.loads(tasks)
+    except (_json.JSONDecodeError, TypeError):
+        task_list = [t.strip() for t in tasks.split(",") if t.strip()]
+
+    if not isinstance(task_list, list):
+        task_list = [str(task_list)]
+
+    if len(task_list) < 2:
+        return "단일 작업은 직접 처리합니다. delegate_tasks는 2개 이상의 독립 작업에 사용하세요."
+
+    if not _provider or not _registry:
+        return "서브에이전트를 사용할 수 없습니다. (provider/registry not injected)"
+
+    async def run_subtask(task_desc: str, idx: int) -> dict:
+        try:
+            from breadmind.llm.base import LLMMessage as _LLMMessage
+            sub_messages = [
+                _LLMMessage(
+                    role="system",
+                    content=(
+                        "You are a focused subagent of BreadMind. "
+                        "Complete the given task concisely. Respond in Korean."
+                    ),
+                ),
+                _LLMMessage(role="user", content=task_desc),
+            ]
+
+            # Get tool definitions from registry
+            all_tools = _registry.get_all_definitions() if _registry else []
+            sub_tools = all_tools[:20]  # Limit tools for subagent
+
+            response = await _provider.chat(
+                messages=sub_messages,
+                tools=sub_tools or None,
+                think_budget=3072,
+            )
+
+            # Handle tool calls in a simple loop (max 3 turns)
+            for _ in range(3):
+                if not response.tool_calls:
+                    break
+                for tc in response.tool_calls:
+                    try:
+                        result = await _registry.execute(tc.name, tc.arguments)
+                        sub_messages.append(_LLMMessage(
+                            role="tool",
+                            content=f"[success={result.success}] {result.output[:2000]}",
+                            tool_call_id=tc.id,
+                            name=tc.name,
+                        ))
+                    except Exception as e:
+                        sub_messages.append(_LLMMessage(
+                            role="tool",
+                            content=f"[success=False] Error: {e}",
+                            tool_call_id=tc.id,
+                            name=tc.name,
+                        ))
+                # Add assistant message with tool_calls for context
+                sub_messages.append(_LLMMessage(
+                    role="assistant",
+                    content=response.content,
+                    tool_calls=response.tool_calls,
+                ))
+                response = await _provider.chat(
+                    messages=sub_messages,
+                    tools=sub_tools or None,
+                    think_budget=1024,
+                )
+
+            return {"task": task_desc, "result": response.content or "완료", "success": True}
+        except Exception as e:
+            logger.warning("Subagent task %d failed: %s", idx, e)
+            return {"task": task_desc, "result": f"실패: {e}", "success": False}
+
+    # Run all tasks in parallel
+    results = await asyncio.gather(*[run_subtask(task, i) for i, task in enumerate(task_list)])
+
+    # Format results
+    lines = [f"## 병렬 처리 결과 ({len(results)}개 작업)\n"]
+    for i, r in enumerate(results, 1):
+        status = "SUCCESS" if r["success"] else "FAILED"
+        lines.append(f"### [{status}] 작업 {i}: {r['task']}\n{r['result']}\n")
+
+    return "\n".join(lines)
+
+# Remove internal injection params from the tool schema so the LLM only sees 'tasks'
+_defn = delegate_tasks._tool_definition
+for _internal_param in ("_agent", "_provider", "_registry"):
+    _defn.parameters.get("properties", {}).pop(_internal_param, None)
+    if _internal_param in _defn.parameters.get("required", []):
+        _defn.parameters["required"].remove(_internal_param)
+
+
 def register_builtin_tools(registry) -> None:
     """Register all built-in tools into the given ToolRegistry."""
-    for t in [shell_exec, web_search, file_read, file_write, messenger_connect, swarm_role]:
+    for t in [shell_exec, web_search, file_read, file_write, messenger_connect,
+              swarm_role, delegate_tasks]:
         registry.register(t)
