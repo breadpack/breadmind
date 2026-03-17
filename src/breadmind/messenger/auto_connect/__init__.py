@@ -8,6 +8,7 @@ from breadmind.messenger.auto_connect.base import (
     SetupStep,
     ValidationResult,
     WizardState,
+    _get_base_url,
 )
 from breadmind.messenger.auto_connect.orchestrator import ConnectionOrchestrator
 from breadmind.messenger.auto_connect.discord import DiscordAutoConnector
@@ -34,4 +35,5 @@ __all__ = [
     "ValidationResult",
     "WhatsAppAutoConnector",
     "WizardState",
+    "_get_base_url",
 ]

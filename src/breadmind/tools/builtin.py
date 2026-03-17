@@ -6,6 +6,7 @@ import re
 import shlex
 import sys
 from pathlib import Path
+from breadmind.messenger.auto_connect.base import _get_base_url
 from breadmind.tools.registry import tool
 
 logger = logging.getLogger(__name__)
@@ -361,8 +362,8 @@ async def messenger_connect(platform: str) -> str:
     elif platform == "gmail":
         client_id = os.environ.get("GMAIL_CLIENT_ID", "")
         if client_id:
-            port = os.environ.get("BREADMIND_PORT", "8082")
-            redirect_uri = f"http://localhost:{port}/api/messenger/gmail/oauth-callback"
+            base_url = _get_base_url()
+            redirect_uri = f"{base_url}/api/messenger/gmail/oauth-callback"
             scopes = "https://www.googleapis.com/auth/gmail.modify"
             url = f"https://accounts.google.com/o/oauth2/v2/auth?client_id={client_id}&redirect_uri={redirect_uri}&response_type=code&scope={scopes}&access_type=offline&prompt=consent"
             return f"[OPEN_URL]{url}[/OPEN_URL] Gmail OAuth 페이지를 열었습니다. Google 계정 접근을 허용해주세요."
@@ -375,8 +376,8 @@ async def messenger_connect(platform: str) -> str:
     elif platform == "slack":
         client_id = os.environ.get("SLACK_CLIENT_ID", "")
         if client_id:
-            port = os.environ.get("BREADMIND_PORT", "8082")
-            redirect_uri = f"http://localhost:{port}/api/messenger/slack/oauth-callback"
+            base_url = _get_base_url()
+            redirect_uri = f"{base_url}/api/messenger/slack/oauth-callback"
             scopes = "chat:write,app_mentions:read,channels:read,im:read,im:write,im:history"
             url = f"https://slack.com/oauth/v2/authorize?client_id={client_id}&scope={scopes}&redirect_uri={redirect_uri}"
             return f"[OPEN_URL]{url}[/OPEN_URL] Slack OAuth 페이지를 열었습니다. 브라우저에서 워크스페이스 접근을 허용해주세요."

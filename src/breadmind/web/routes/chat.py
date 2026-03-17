@@ -34,11 +34,22 @@ def setup_chat_routes(r: APIRouter, app_state):
 
     @r.websocket("/ws/chat")
     async def websocket_chat(websocket: WebSocket):
-        # Auth check for WebSocket
+        # Auth check for WebSocket — extract and store token for re-validation
+        session_token = None
         if app_state._auth and app_state._auth.enabled:
-            if not app_state._auth.authenticate_websocket(websocket):
+            # Extract token from query param or cookie (same logic as authenticate_websocket)
+            token = websocket.query_params.get("token", "")
+            if token and app_state._auth.verify_session(token):
+                session_token = token
+            else:
+                token = websocket.cookies.get("breadmind_session", "")
+                if token and app_state._auth.verify_session(token):
+                    session_token = token
+
+            if not session_token:
                 await websocket.close(code=4001, reason="Authentication required")
                 return
+
         await websocket.accept()
         async with app_state._lock:
             app_state._connections.append(websocket)
@@ -46,6 +57,12 @@ def setup_chat_routes(r: APIRouter, app_state):
         try:
             while True:
                 data = await websocket.receive_text()
+
+                # Re-validate session on every message to catch expiration
+                if session_token and app_state._auth and app_state._auth.enabled:
+                    if not app_state._auth.verify_session(session_token):
+                        await websocket.close(code=4001, reason="Session expired")
+                        return
                 msg = json.loads(data)
 
                 # Handle session switching

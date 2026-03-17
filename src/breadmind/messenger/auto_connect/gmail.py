@@ -14,6 +14,7 @@ from breadmind.messenger.auto_connect.base import (
     InputField,
     SetupStep,
     ValidationResult,
+    _get_base_url,
 )
 
 logger = logging.getLogger(__name__)
@@ -40,8 +41,8 @@ class GmailAutoConnector(AutoConnector):
 
         client_id = os.environ.get("GMAIL_CLIENT_ID")
         if client_id:
-            port = os.environ.get("BREADMIND_PORT", "8080")
-            redirect_uri = f"http://localhost:{port}/api/messenger/gmail/oauth-callback"
+            base_url = _get_base_url()
+            redirect_uri = f"{base_url}/api/messenger/gmail/oauth-callback"
             oauth_url = (
                 f"https://accounts.google.com/o/oauth2/v2/auth"
                 f"?client_id={client_id}"

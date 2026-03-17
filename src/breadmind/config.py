@@ -91,7 +91,7 @@ class SecurityConfig:
     auth_enabled: bool = False
     password_hash: str = ""  # SHA-256 hash
     api_keys: list[str] = field(default_factory=list)
-    session_timeout: int = 86400  # 24 hours
+    session_timeout: int = 7200  # 2 hours
     cors_origins: list[str] = field(default_factory=lambda: ["http://localhost:8080", "http://127.0.0.1:8080"])
     require_https: bool = False
 

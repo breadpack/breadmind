@@ -1,12 +1,23 @@
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 
 logger = logging.getLogger(__name__)
+
+
+def _get_base_url() -> str:
+    """Get the base URL for OAuth callbacks."""
+    base = os.environ.get("BREADMIND_BASE_URL")
+    if base:
+        return base.rstrip("/")
+    host = os.environ.get("BREADMIND_HOST", "localhost")
+    port = os.environ.get("BREADMIND_PORT", "8080")
+    return f"http://{host}:{port}"
 
 
 class GatewayState(str, Enum):
