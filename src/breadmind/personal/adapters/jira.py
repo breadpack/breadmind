@@ -44,14 +44,52 @@ class JiraAdapter(ServiceAdapter):
         return "jira"
 
     async def authenticate(self, credentials: dict) -> bool:
+        import aiohttp
+
         self._base_url = credentials.get("base_url", "").rstrip("/")
         email = credentials.get("email", "")
         api_token = credentials.get("api_token", "")
         self._project_key = credentials.get("project_key", "")
+
         if not all([self._base_url, email, api_token]):
             return False
+
         token = base64.b64encode(f"{email}:{api_token}".encode()).decode()
         self._auth_header = f"Basic {token}"
+
+        # Step 1: Verify credentials by fetching server info
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{self._base_url}/rest/api/3/myself",
+                    headers=self._headers(),
+                ) as resp:
+                    if resp.status != 200:
+                        return False
+        except Exception:
+            return False
+
+        # Step 2: Verify project_key if provided
+        if self._project_key:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        f"{self._base_url}/rest/api/3/project/{self._project_key}",
+                        headers=self._headers(),
+                    ) as resp:
+                        if resp.status == 404:
+                            raise ValueError(
+                                f"Project '{self._project_key}' not found. Check the project key."
+                            )
+                        if resp.status != 200:
+                            raise ValueError(
+                                f"Cannot access project '{self._project_key}'. Check permissions."
+                            )
+            except ValueError:
+                raise
+            except Exception:
+                pass  # Network issue, don't block authentication
+
         return True
 
     def _headers(self) -> dict:

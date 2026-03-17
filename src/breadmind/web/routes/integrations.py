@@ -120,7 +120,10 @@ async def connect_service(request: Request, service_id: str, body: ServiceCreden
             raise HTTPException(404, f"Adapter for {service_id} not registered")
 
         creds = body.model_dump(exclude_none=True)
-        success = await adapter.authenticate(creds)
+        try:
+            success = await adapter.authenticate(creds)
+        except ValueError as e:
+            raise HTTPException(422, str(e))
 
         if success:
             # Save credentials to DB

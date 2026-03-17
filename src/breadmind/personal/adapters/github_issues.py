@@ -34,10 +34,39 @@ class GitHubIssuesAdapter(ServiceAdapter):
         return "github"
 
     async def authenticate(self, credentials: dict) -> bool:
+        import aiohttp
+
         self._token = credentials.get("token", "")
         self._owner = credentials.get("owner", "")
         self._repo = credentials.get("repo", "")
-        return bool(self._token and self._owner and self._repo)
+
+        if not all([self._token, self._owner, self._repo]):
+            return False
+
+        # Verify token + repo access
+        try:
+            url = f"https://api.github.com/repos/{self._owner}/{self._repo}"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=self._headers()) as resp:
+                    if resp.status == 404:
+                        raise ValueError(
+                            f"Repository '{self._owner}/{self._repo}' not found. "
+                            "Check owner and repo name."
+                        )
+                    if resp.status == 401:
+                        raise ValueError(
+                            "Invalid GitHub token. Check your Personal Access Token."
+                        )
+                    if resp.status == 403:
+                        raise ValueError(
+                            f"No access to '{self._owner}/{self._repo}'. "
+                            "Token may lack 'repo' scope."
+                        )
+                    return resp.status == 200
+        except ValueError:
+            raise
+        except Exception:
+            return False
 
     def _headers(self) -> dict:
         return {
