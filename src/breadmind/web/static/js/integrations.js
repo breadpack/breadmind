@@ -91,7 +91,7 @@
                     }
                 }
             } catch (e) {
-                alert('OAuth 연결 실패: ' + e.message);
+                showToast('OAuth 연결 실패: ' + e.message, 'error');
             }
         } else {
             // Show credential input modal
@@ -103,10 +103,11 @@
         if (!confirm(`${serviceId} 연결을 해제하시겠습니까?`)) return;
         try {
             await fetchJSON(`${API_BASE}/services/${serviceId}/disconnect`, { method: 'DELETE' });
+            showToast('연결이 해제되었습니다', 'success');
             const container = document.getElementById('integrations-content');
             loadIntegrations(container);
         } catch (e) {
-            alert('해제 실패: ' + e.message);
+            showToast('해제 실패: ' + e.message, 'error');
         }
     };
 
@@ -157,10 +158,11 @@
                 body: JSON.stringify(body),
             });
             closeModal();
+            showToast('연결되었습니다!', 'success');
             const container = document.getElementById('integrations-content');
             loadIntegrations(container);
         } catch (e) {
-            alert('연결 실패: ' + e.message);
+            showToast('연결 실패: ' + e.message, 'error');
         }
     };
 

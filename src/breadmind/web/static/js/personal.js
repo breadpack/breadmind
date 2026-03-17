@@ -157,7 +157,7 @@
             fields = `
                 <h3>할 일 추가</h3>
                 <input type="text" id="modal-title" placeholder="제목" class="modal-input" autofocus>
-                <input type="text" id="modal-due" placeholder="마감일 (예: 2026-03-18T18:00)" class="modal-input">
+                <input type="datetime-local" id="modal-due" class="modal-input">
                 <select id="modal-priority" class="modal-input">
                     <option value="medium">보통</option>
                     <option value="low">낮음</option>
@@ -201,6 +201,42 @@
     };
 
     window.submitModal = async function() {
+        // Validate required fields
+        if (currentView === 'tasks') {
+            const title = document.getElementById('modal-title');
+            if (!title.value.trim()) {
+                title.classList.add('invalid');
+                showToast('제목을 입력하세요', 'warning');
+                return;
+            }
+        } else if (currentView === 'events') {
+            const title = document.getElementById('modal-title');
+            const start = document.getElementById('modal-start');
+            if (!title.value.trim()) {
+                title.classList.add('invalid');
+                showToast('제목을 입력하세요', 'warning');
+                return;
+            }
+            if (!start.value) {
+                start.classList.add('invalid');
+                showToast('시작 시간을 선택하세요', 'warning');
+                return;
+            }
+        } else { // contacts
+            const name = document.getElementById('modal-name');
+            if (!name.value.trim()) {
+                name.classList.add('invalid');
+                showToast('이름을 입력하세요', 'warning');
+                return;
+            }
+        }
+
+        // Clear previous validation
+        document.querySelectorAll('.modal-input').forEach(i => i.classList.remove('invalid'));
+
+        const btn = document.querySelector('#personal-modal .btn-primary');
+        btnLoading(btn, '추가 중...');
+
         try {
             if (currentView === 'tasks') {
                 await fetchJSON(`${API_BASE}/tasks`, {
@@ -234,9 +270,12 @@
                 });
             }
             closeModal();
+            showToast('추가 완료!', 'success');
             loadView(currentView);
         } catch (e) {
-            alert('추가 실패: ' + e.message);
+            showToast('추가 실패: ' + e.message, 'error');
+        } finally {
+            btnReset(btn);
         }
     };
 
@@ -245,16 +284,19 @@
         try {
             if (action === 'task-done') {
                 await fetchJSON(`${API_BASE}/tasks/${id}`, { method: 'PATCH', body: JSON.stringify({ status: 'done' }) });
+                showToast('할 일 완료!', 'success');
             } else if (action === 'task-delete') {
                 if (!confirm('삭제하시겠습니까?')) return;
                 await fetchJSON(`${API_BASE}/tasks/${id}`, { method: 'DELETE' });
+                showToast('삭제되었습니다', 'success');
             } else if (action === 'event-delete') {
                 if (!confirm('삭제하시겠습니까?')) return;
                 await fetchJSON(`${API_BASE}/events/${id}`, { method: 'DELETE' });
+                showToast('삭제되었습니다', 'success');
             }
             loadView(currentView);
         } catch (e) {
-            alert('작업 실패: ' + e.message);
+            showToast('작업 실패: ' + e.message, 'error');
         }
     };
 
