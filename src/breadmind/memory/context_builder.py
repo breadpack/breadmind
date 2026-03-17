@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import TYPE_CHECKING
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Any
 
 from breadmind.llm.base import LLMMessage
 from breadmind.storage.models import EpisodicNote, KGEntity, KGRelation
@@ -42,6 +43,13 @@ _INFRA_NAME_PATTERN = re.compile(
 )
 
 
+class ContextProvider(ABC):
+    """Plugin interface for injecting domain-specific context."""
+    @abstractmethod
+    async def get_context(self, session_id: str, message: str, intent: Any) -> list:
+        """Return LLMMessage list based on current intent."""
+
+
 class ContextBuilder:
     """Build enriched context for LLM calls from all memory layers."""
 
@@ -62,6 +70,10 @@ class ContextBuilder:
         self._max_context_tokens = max_context_tokens
         self._skill_store = skill_store
         self._smart_retriever = smart_retriever
+        self._context_providers: list[ContextProvider] = []
+
+    def register_provider(self, provider: ContextProvider) -> None:
+        self._context_providers.append(provider)
 
     async def build_context(
         self, session_id: str, current_message: str, intent=None,
@@ -172,6 +184,17 @@ class ContextBuilder:
                             f"{skill.prompt_template[:3000]}"
                         )
                         messages.append(LLMMessage(role="system", content=skill_text))
+            except Exception:
+                pass
+
+        # 3.7 Context providers (domain-specific context injection)
+        for provider in self._context_providers:
+            try:
+                extra = await asyncio.wait_for(
+                    provider.get_context(session_id, current_message, intent),
+                    timeout=5,
+                )
+                messages.extend(extra)
             except Exception:
                 pass
 
