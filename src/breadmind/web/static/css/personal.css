@@ -196,3 +196,33 @@
     .task-board { grid-template-columns: 1fr !important; }
     .task-card { break-inside: avoid; border: 1px solid #ccc; }
 }
+
+/* Onboarding */
+#onboarding-overlay { position:fixed; top:0; left:0; right:0; bottom:0; z-index:10000; }
+.onboarding-backdrop { position:absolute; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); }
+.onboarding-modal { position:relative; max-width:480px; margin:15vh auto; background:#1e293b; border:1px solid #3b82f6; border-radius:16px; padding:32px; text-align:center; z-index:1; }
+.onboarding-title { color:#e2e8f0; font-size:20px; margin-bottom:12px; }
+.onboarding-content { color:#94a3b8; font-size:14px; line-height:1.6; margin-bottom:24px; }
+.onboarding-actions { display:flex; justify-content:space-between; align-items:center; }
+.onboarding-actions > div { display:flex; gap:8px; }
+.step-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#334155; margin:0 3px; }
+.step-dot.active { background:#3b82f6; width:24px; border-radius:4px; }
+.step-dot.done { background:#10b981; }
+.onboarding-step-indicator { margin-bottom:20px; }
+.onboarding-highlight { box-shadow:0 0 0 3px #3b82f6; animation:highlight-pulse 1.5s infinite; }
+@keyframes highlight-pulse { 0%,100%{box-shadow:0 0 0 3px #3b82f6} 50%{box-shadow:0 0 0 6px rgba(59,130,246,0.3)} }
+
+/* Improved Empty States */
+.empty-state { text-align:center; padding:48px 24px; }
+.empty-icon { font-size:48px; margin-bottom:12px; }
+.empty-state h3 { color:#e2e8f0; font-size:16px; margin-bottom:8px; }
+.empty-state p { color:#64748b; font-size:13px; margin-bottom:16px; }
+.empty-actions { display:flex; gap:8px; justify-content:center; margin-bottom:12px; }
+.empty-hint { color:#475569; font-size:12px; }
+.empty-hint code { background:#0f172a; padding:2px 6px; border-radius:3px; color:#94a3b8; }
+
+/* Integration Guide */
+.guide-text { color:#94a3b8; font-size:14px; margin-bottom:12px; }
+.guide-list { text-align:left; color:#e2e8f0; font-size:13px; list-style:none; padding:0; }
+.guide-list li { padding:8px 0; border-bottom:1px solid #334155; }
+.guide-list li:last-child { border-bottom:none; }
