@@ -131,20 +131,19 @@ async def test_sync_processes_incoming_message():
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
-    call_count = 0
+    original_get = mock_session.get
 
-    def session_factory(*a, **kw):
-        nonlocal call_count
-        call_count += 1
-        if call_count > 1:
-            # After first sync, stop the gateway to exit the loop
-            gw._connected = False
-        return mock_session
+    def get_side_effect(*a, **kw):
+        # After the first sync iteration completes, stop the loop
+        gw._connected = False
+        return original_get(*a, **kw)
+
+    mock_session.get = MagicMock(side_effect=get_side_effect)
 
     gw._connected = True
     gw.send = AsyncMock()
 
-    with patch("aiohttp.ClientSession", side_effect=session_factory):
+    with patch("aiohttp.ClientSession", return_value=mock_session):
         await gw._sync_loop()
 
     assert len(received) == 1
@@ -206,19 +205,18 @@ async def test_sync_skips_own_messages():
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
-    call_count = 0
+    original_get = mock_session.get
 
-    def session_factory(*a, **kw):
-        nonlocal call_count
-        call_count += 1
-        if call_count > 1:
-            gw._connected = False
-        return mock_session
+    def get_side_effect(*a, **kw):
+        gw._connected = False
+        return original_get(*a, **kw)
+
+    mock_session.get = MagicMock(side_effect=get_side_effect)
 
     gw._connected = True
     gw.send = AsyncMock()
 
-    with patch("aiohttp.ClientSession", side_effect=session_factory):
+    with patch("aiohttp.ClientSession", return_value=mock_session):
         await gw._sync_loop()
 
     assert len(received) == 0
