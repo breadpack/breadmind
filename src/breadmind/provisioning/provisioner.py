@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -9,6 +10,22 @@ from typing import Any
 from breadmind.provisioning.strategies.base import DeployStrategy
 
 logger = logging.getLogger(__name__)
+
+_STRATEGY_REGISTRY: dict[str, str] = {
+    "kubernetes": "breadmind.provisioning.strategies.kubernetes.KubernetesStrategy",
+    "proxmox": "breadmind.provisioning.strategies.proxmox.ProxmoxStrategy",
+    "ssh": "breadmind.provisioning.strategies.ssh.SSHStrategy",
+}
+
+
+def register_strategy(name: str, class_path: str) -> None:
+    """Register a new provisioning strategy (or override an existing one).
+
+    Args:
+        name: Strategy key used in ``DeploymentTarget.access_method``.
+        class_path: Fully-qualified ``module.ClassName`` string.
+    """
+    _STRATEGY_REGISTRY[name.lower()] = class_path
 
 
 @dataclass
@@ -23,15 +40,18 @@ class Provisioner:
 
     def select_strategy(self, target: DeploymentTarget) -> DeployStrategy:
         method = target.access_method.lower()
-        if method == "kubernetes":
-            from breadmind.provisioning.strategies.kubernetes import KubernetesStrategy
-            return KubernetesStrategy()
-        elif method == "proxmox":
-            from breadmind.provisioning.strategies.proxmox import ProxmoxStrategy
-            return ProxmoxStrategy()
-        else:
-            from breadmind.provisioning.strategies.ssh import SSHStrategy
-            return SSHStrategy()
+        class_path = _STRATEGY_REGISTRY.get(method)
+        if not class_path:
+            # Default to SSH for unknown access methods
+            class_path = _STRATEGY_REGISTRY["ssh"]
+            logger.warning(
+                "Unknown access method %r, falling back to SSH strategy", method,
+            )
+
+        module_path, class_name = class_path.rsplit(".", 1)
+        module = importlib.import_module(module_path)
+        cls = getattr(module, class_name)
+        return cls()
 
     async def provision(
         self,

@@ -6,8 +6,10 @@ import json
 import logging
 import os
 from pathlib import Path
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import PlainTextResponse, JSONResponse
+
+from breadmind.web.dependencies import get_app_state, get_commander, get_token_manager
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +45,10 @@ def setup_worker_routes(r: APIRouter, app_state):
         ttl_hours: float = 1,
         max_uses: int = 1,
         labels: str = "",
+        token_mgr=Depends(get_token_manager),
+        app=Depends(get_app_state),
     ):
         """Create a new join token for worker registration."""
-        token_mgr = getattr(app_state, '_token_manager', None)
         if not token_mgr:
             return JSONResponse(status_code=503, content={"error": "Token manager not available"})
 
@@ -64,8 +67,8 @@ def setup_worker_routes(r: APIRouter, app_state):
         )
 
         # Build one-liner install command (single URL, OS auto-detected)
-        commander_url = _get_commander_ws_url(app_state)
-        base_url = _get_base_url(app_state)
+        commander_url = _get_commander_ws_url(app)
+        base_url = _get_base_url(app)
         script_url = f'{base_url}/api/workers/install-script?token={token.secret}'
 
         return {
@@ -79,17 +82,15 @@ def setup_worker_routes(r: APIRouter, app_state):
         }
 
     @r.get("/api/workers/tokens")
-    async def list_tokens():
+    async def list_tokens(token_mgr=Depends(get_token_manager)):
         """List active join tokens."""
-        token_mgr = getattr(app_state, '_token_manager', None)
         if not token_mgr:
             return {"tokens": []}
         return {"tokens": token_mgr.list_tokens()}
 
     @r.delete("/api/workers/tokens/{token_id}")
-    async def revoke_token(token_id: str):
+    async def revoke_token(token_id: str, token_mgr=Depends(get_token_manager)):
         """Revoke a join token."""
-        token_mgr = getattr(app_state, '_token_manager', None)
         if not token_mgr:
             return JSONResponse(status_code=503, content={"error": "Token manager not available"})
         if token_mgr.revoke(token_id):
@@ -99,7 +100,13 @@ def setup_worker_routes(r: APIRouter, app_state):
     # ── Install Script ──
 
     @r.get("/api/workers/install-script")
-    async def install_script(request: Request, token: str, os: str = ""):
+    async def install_script(
+        request: Request,
+        token: str,
+        os: str = "",
+        token_mgr=Depends(get_token_manager),
+        app=Depends(get_app_state),
+    ):
         """Generate and serve a dynamic install script.
 
         OS is auto-detected from User-Agent:
@@ -107,7 +114,6 @@ def setup_worker_routes(r: APIRouter, app_state):
         - curl/wget/anything else → linux/bash script
         Explicit ?os=windows overrides auto-detection.
         """
-        token_mgr = getattr(app_state, '_token_manager', None)
         if not token_mgr:
             return PlainTextResponse("# Error: Token manager not available", status_code=503)
 
@@ -126,7 +132,7 @@ def setup_worker_routes(r: APIRouter, app_state):
                 os_type = "linux"
 
         from breadmind.network.install_generator import generate_install_script
-        commander_url = _get_commander_ws_url(app_state)
+        commander_url = _get_commander_ws_url(app)
 
         script = generate_install_script(
             commander_url=commander_url,
@@ -146,9 +152,10 @@ def setup_worker_routes(r: APIRouter, app_state):
         password: str = "",
         key_file: str = "",
         agent_id: str = "",
+        token_mgr=Depends(get_token_manager),
+        app=Depends(get_app_state),
     ):
         """Deploy a worker to a remote host via SSH."""
-        token_mgr = getattr(app_state, '_token_manager', None)
         if not token_mgr:
             return JSONResponse(status_code=503, content={"error": "Token manager not available"})
 
@@ -160,8 +167,8 @@ def setup_worker_routes(r: APIRouter, app_state):
             labels={"deployed_via": "ssh", "host": host},
         )
 
-        commander_url = _get_commander_ws_url(app_state)
-        base_url = _get_base_url(app_state)
+        commander_url = _get_commander_ws_url(app)
+        base_url = _get_base_url(app)
 
         from breadmind.network.install_generator import generate_install_script
         script = generate_install_script(
@@ -230,9 +237,8 @@ def setup_worker_routes(r: APIRouter, app_state):
     # ── Worker Monitoring ──
 
     @r.get("/api/workers")
-    async def list_workers():
+    async def list_workers(commander=Depends(get_commander)):
         """List all registered workers with status and metrics."""
-        commander = getattr(app_state, '_commander', None)
         if not commander:
             return {"workers": []}
 
@@ -254,9 +260,8 @@ def setup_worker_routes(r: APIRouter, app_state):
         return {"workers": workers}
 
     @r.get("/api/workers/{agent_id}")
-    async def get_worker(agent_id: str):
+    async def get_worker(agent_id: str, commander=Depends(get_commander)):
         """Get detailed worker info including env scan and task history."""
-        commander = getattr(app_state, '_commander', None)
         if not commander:
             return JSONResponse(status_code=404, content={"error": "Commander not available"})
 
@@ -284,9 +289,8 @@ def setup_worker_routes(r: APIRouter, app_state):
         }
 
     @r.post("/api/workers/{agent_id}/command")
-    async def send_worker_command(agent_id: str, command: str = "restart"):
+    async def send_worker_command(agent_id: str, command: str = "restart", commander=Depends(get_commander)):
         """Send a command to a worker (restart, decommission)."""
-        commander = getattr(app_state, '_commander', None)
         if not commander:
             return JSONResponse(status_code=503, content={"error": "Commander not available"})
 
@@ -297,9 +301,8 @@ def setup_worker_routes(r: APIRouter, app_state):
             return JSONResponse(status_code=500, content={"error": str(e)})
 
     @r.delete("/api/workers/{agent_id}")
-    async def remove_worker(agent_id: str):
+    async def remove_worker(agent_id: str, commander=Depends(get_commander)):
         """Decommission and remove a worker."""
-        commander = getattr(app_state, '_commander', None)
         if not commander:
             return JSONResponse(status_code=503, content={"error": "Commander not available"})
 

@@ -5,8 +5,13 @@ import asyncio
 import logging
 import os
 import sys
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse
+
+from breadmind.web.dependencies import (
+    get_app_state, get_auth, get_db, get_config, get_agent,
+    get_message_handler, get_monitoring_engine, get_webhook_manager,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -19,10 +24,10 @@ def setup_system_routes(r: APIRouter, app_state):
     # --- Setup wizard endpoints ---
 
     @r.get("/api/setup/status")
-    async def setup_status():
+    async def setup_status(db=Depends(get_db)):
         """Check if first-run setup is needed."""
         from breadmind.core.setup_wizard import is_first_run_async
-        first_run = await is_first_run_async(app_state._db)
+        first_run = await is_first_run_async(db)
         return {"first_run": first_run}
 
     @r.get("/api/setup/providers")
@@ -42,7 +47,7 @@ def setup_system_routes(r: APIRouter, app_state):
         return result
 
     @r.post("/api/setup/complete")
-    async def setup_complete(request: Request):
+    async def setup_complete(request: Request, app=Depends(get_app_state)):
         """Save provider config and mark setup as done."""
         data = await request.json()
         provider_id = data.get("provider", "")
@@ -62,10 +67,10 @@ def setup_system_routes(r: APIRouter, app_state):
         env_key = provider_info.get("env_key")
         if env_key and api_key:
             os.environ[env_key] = api_key
-            if app_state._db:
+            if app._db:
                 try:
                     from breadmind.config import save_api_key_to_db
-                    await save_api_key_to_db(app_state._db, env_key, api_key)
+                    await save_api_key_to_db(app._db, env_key, api_key)
                 except Exception:
                     from breadmind.config import save_env_var
                     save_env_var(env_key, api_key)
@@ -76,43 +81,43 @@ def setup_system_routes(r: APIRouter, app_state):
         # Save provider config
         if not model:
             model = provider_info["models"][0]
-        if app_state._config:
-            app_state._config.llm.default_provider = provider_id
-            app_state._config.llm.default_model = model
-        if app_state._db:
-            await app_state._db.set_setting("llm", {
+        if app._config:
+            app._config.llm.default_provider = provider_id
+            app._config.llm.default_model = model
+        if app._db:
+            await app._db.set_setting("llm", {
                 "default_provider": provider_id,
                 "default_model": model,
-                "tool_call_max_turns": app_state._config.llm.tool_call_max_turns if app_state._config else 10,
-                "tool_call_timeout_seconds": app_state._config.llm.tool_call_timeout_seconds if app_state._config else 30,
+                "tool_call_max_turns": app._config.llm.tool_call_max_turns if app._config else 10,
+                "tool_call_timeout_seconds": app._config.llm.tool_call_timeout_seconds if app._config else 30,
             })
 
         # Hot-swap the agent's LLM provider so chat works immediately
-        if app_state._agent and app_state._config:
+        if app._agent and app._config:
             try:
                 from breadmind.llm.factory import create_provider
-                new_provider = create_provider(app_state._config)
-                await app_state._agent.update_provider(new_provider)
+                new_provider = create_provider(app._config)
+                await app._agent.update_provider(new_provider)
             except Exception as e:
                 logger.warning(f"Failed to hot-swap provider: {e}")
 
-        await mark_setup_complete(app_state._db)
+        await mark_setup_complete(app._db)
         return {"status": "ok", "provider": provider_id, "model": model}
 
     @r.get("/api/setup/discover")
-    async def setup_discover():
+    async def setup_discover(app=Depends(get_app_state)):
         """Discover local infrastructure environment and auto-set specialties."""
         from breadmind.core.setup_wizard import discover_environment
         env = await discover_environment()
         # Auto-set specialties from discovered infra
         specialties = env.detected_specialties()
-        if specialties and app_state._config:
-            persona = app_state._config._persona or {}
+        if specialties and app._config:
+            persona = app._config._persona or {}
             persona["specialties"] = specialties
-            app_state._config._persona = persona
-            if app_state._db:
+            app._config._persona = persona
+            if app._db:
                 try:
-                    await app_state._db.set_setting("persona", persona)
+                    await app._db.set_setting("persona", persona)
                 except Exception:
                     pass
         return {
@@ -122,18 +127,18 @@ def setup_system_routes(r: APIRouter, app_state):
         }
 
     @r.post("/api/setup/recommend")
-    async def setup_recommend():
+    async def setup_recommend(app=Depends(get_app_state)):
         """Use LLM to generate setup recommendations based on environment."""
         from breadmind.core.setup_wizard import discover_environment, generate_recommendations
 
         env = await discover_environment()
 
         # Create a fresh provider with the newly saved key
-        handler = app_state._message_handler
+        handler = app._message_handler
         try:
             from breadmind.llm.factory import create_provider
-            if app_state._config:
-                provider = create_provider(app_state._config)
+            if app._config:
+                provider = create_provider(app._config)
                 from breadmind.llm.base import LLMMessage
                 async def fresh_handler(msg, user="setup", channel="setup"):
                     resp = await provider.chat([
@@ -151,14 +156,14 @@ def setup_system_routes(r: APIRouter, app_state):
     # --- Auth endpoints ---
 
     @r.post("/api/auth/login")
-    async def login(request: Request):
+    async def login(request: Request, auth=Depends(get_auth)):
         """Authenticate with password."""
-        if not app_state._auth or not app_state._auth.enabled:
+        if not auth or not auth.enabled:
             return {"status": "ok", "message": "Auth disabled"}
         data = await request.json()
         password = data.get("password", "")
-        if app_state._auth.verify_password(password):
-            token = app_state._auth.create_session(
+        if auth.verify_password(password):
+            token = auth.create_session(
                 ip=request.client.host if request.client else "",
                 user_agent=request.headers.get("user-agent", ""),
             )
@@ -166,35 +171,35 @@ def setup_system_routes(r: APIRouter, app_state):
             response.set_cookie(
                 "breadmind_session", token,
                 httponly=True, samesite="strict",
-                max_age=app_state._auth._session_timeout,
+                max_age=auth._session_timeout,
             )
             return response
         return JSONResponse(status_code=401, content={"error": "Invalid password"})
 
     @r.post("/api/auth/logout")
-    async def logout(request: Request):
+    async def logout(request: Request, auth=Depends(get_auth)):
         token = request.cookies.get("breadmind_session", "")
-        if app_state._auth and token:
-            app_state._auth.revoke_session(token)
+        if auth and token:
+            auth.revoke_session(token)
         response = JSONResponse({"status": "ok"})
         response.delete_cookie("breadmind_session")
         return response
 
     @r.get("/api/auth/status")
-    async def auth_status(request: Request):
-        if not app_state._auth or not app_state._auth.enabled:
+    async def auth_status(request: Request, auth=Depends(get_auth)):
+        if not auth or not auth.enabled:
             return {"auth_enabled": False, "authenticated": True}
-        authenticated = app_state._auth.authenticate_request(request)
+        authenticated = auth.authenticate_request(request)
         return {
             "auth_enabled": True,
             "authenticated": authenticated,
-            "sessions": app_state._auth.get_active_sessions(),
+            "sessions": auth.get_active_sessions(),
         }
 
     @r.post("/api/auth/setup")
-    async def setup_auth(request: Request):
+    async def setup_auth(request: Request, auth=Depends(get_auth), db=Depends(get_db)):
         """Initial password setup (only works when no password is set)."""
-        if app_state._auth and app_state._auth._password_hash:
+        if auth and auth._password_hash:
             return JSONResponse(status_code=403, content={"error": "Password already configured"})
         data = await request.json()
         password = data.get("password", "")
@@ -202,16 +207,16 @@ def setup_system_routes(r: APIRouter, app_state):
             return JSONResponse(status_code=400, content={"error": "Password must be at least 8 characters"})
         from breadmind.web.auth import AuthManager
         pw_hash = AuthManager.hash_password(password)
-        if app_state._auth:
-            app_state._auth._password_hash = pw_hash
-            app_state._auth._enabled = True
+        if auth:
+            auth._password_hash = pw_hash
+            auth._enabled = True
         # Persist to DB
-        if app_state._db:
+        if db:
             try:
-                await app_state._db.set_setting("auth", {"password_hash": pw_hash, "enabled": True})
+                await db.set_setting("auth", {"password_hash": pw_hash, "enabled": True})
             except Exception:
                 pass
-        token = app_state._auth.create_session() if app_state._auth else ""
+        token = auth.create_session() if auth else ""
         response = JSONResponse({"status": "ok", "message": "Password set successfully"})
         if token:
             response.set_cookie("breadmind_session", token, httponly=True, samesite="strict")
@@ -220,12 +225,15 @@ def setup_system_routes(r: APIRouter, app_state):
     # --- Health endpoint ---
 
     @r.get("/health")
-    async def health():
-        agent_ok = app_state._message_handler is not None
+    async def health(
+        message_handler=Depends(get_message_handler),
+        monitoring_engine=Depends(get_monitoring_engine),
+    ):
+        agent_ok = message_handler is not None
         monitoring_ok = (
-            app_state._monitoring_engine is not None
-            and app_state._monitoring_engine.get_status()["running"]
-        ) if app_state._monitoring_engine is not None else False
+            monitoring_engine is not None
+            and monitoring_engine.get_status()["running"]
+        ) if monitoring_engine is not None else False
 
         components = {
             "agent": agent_ok,
@@ -406,14 +414,18 @@ def setup_system_routes(r: APIRouter, app_state):
     # --- Webhook endpoints ---
 
     @r.get("/api/webhook/endpoints")
-    async def list_webhook_endpoints():
-        if not app_state._webhook_manager:
+    async def list_webhook_endpoints(webhook_manager=Depends(get_webhook_manager)):
+        if not webhook_manager:
             return {"endpoints": []}
-        return {"endpoints": app_state._webhook_manager.get_endpoints()}
+        return {"endpoints": webhook_manager.get_endpoints()}
 
     @r.post("/api/webhook/endpoints")
-    async def add_webhook_endpoint(request: Request):
-        if not app_state._webhook_manager:
+    async def add_webhook_endpoint(
+        request: Request,
+        webhook_manager=Depends(get_webhook_manager),
+        db=Depends(get_db),
+    ):
+        if not webhook_manager:
             return JSONResponse(status_code=503, content={"error": "Webhook manager not configured"})
         data = await request.json()
         import uuid
@@ -427,44 +439,48 @@ def setup_system_routes(r: APIRouter, app_state):
             enabled=data.get("enabled", True),
             secret=data.get("secret", ""),
         )
-        app_state._webhook_manager.add_endpoint(ep)
+        webhook_manager.add_endpoint(ep)
         # Persist
-        if app_state._db:
+        if db:
             try:
-                await app_state._db.set_setting("webhook_endpoints", app_state._webhook_manager.get_endpoints())
+                await db.set_setting("webhook_endpoints", webhook_manager.get_endpoints())
             except Exception:
                 pass
         return {"status": "ok", "endpoint": {"id": ep.id, "path": ep.path, "url": f"/api/webhook/receive/{ep.path}"}}
 
     @r.delete("/api/webhook/endpoints/{endpoint_id}")
-    async def delete_webhook_endpoint(endpoint_id: str):
-        if not app_state._webhook_manager:
+    async def delete_webhook_endpoint(
+        endpoint_id: str,
+        webhook_manager=Depends(get_webhook_manager),
+        db=Depends(get_db),
+    ):
+        if not webhook_manager:
             return JSONResponse(status_code=503, content={"error": "Webhook manager not configured"})
-        removed = app_state._webhook_manager.remove_endpoint(endpoint_id)
-        if app_state._db:
+        removed = webhook_manager.remove_endpoint(endpoint_id)
+        if db:
             try:
-                await app_state._db.set_setting("webhook_endpoints", app_state._webhook_manager.get_endpoints())
+                await db.set_setting("webhook_endpoints", webhook_manager.get_endpoints())
             except Exception:
                 pass
         return {"status": "ok" if removed else "not_found"}
 
     @r.post("/api/webhook/receive/{path:path}")
-    async def receive_webhook(path: str, request: Request):
+    async def receive_webhook(path: str, request: Request, webhook_manager=Depends(get_webhook_manager)):
         """Universal webhook receiver -- route to appropriate handler."""
-        if not app_state._webhook_manager:
+        if not webhook_manager:
             return JSONResponse(status_code=503, content={"error": "Webhook not configured"})
         try:
             payload = await request.json()
         except Exception:
             payload = {"raw": (await request.body()).decode("utf-8", errors="replace")[:5000]}
         headers = dict(request.headers)
-        result = await app_state._webhook_manager.handle_webhook(path, payload, headers)
+        result = await webhook_manager.handle_webhook(path, payload, headers)
         if result.get("status") == "not_found":
             return JSONResponse(status_code=404, content=result)
         return result
 
     @r.get("/api/webhook/log")
-    async def webhook_event_log():
-        if not app_state._webhook_manager:
+    async def webhook_event_log(webhook_manager=Depends(get_webhook_manager)):
+        if not webhook_manager:
             return {"events": []}
-        return {"events": app_state._webhook_manager.get_event_log()}
+        return {"events": webhook_manager.get_event_log()}
