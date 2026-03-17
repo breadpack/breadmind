@@ -1500,7 +1500,8 @@ class WebApp:
                         {"step": 5, "text": "Install app to your workspace"},
                         {"step": 6, "text": "Copy Bot Token (xoxb-...) and App Token here"},
                     ]}
-                redirect_uri = f"http://localhost:{self._config.web.port if self._config else 8080}/api/messenger/slack/oauth-callback"
+                base_url = os.environ.get("BREADMIND_BASE_URL") or (f"http://{self._config.web.host}:{self._config.web.port}" if self._config else "http://localhost:8080")
+                redirect_uri = f"{base_url}/api/messenger/slack/oauth-callback"
                 scopes = "chat:write,app_mentions:read,channels:read,im:read,im:write,im:history"
                 url = f"https://slack.com/oauth/v2/authorize?client_id={client_id}&scope={scopes}&redirect_uri={redirect_uri}"
                 return {"url": url, "steps": []}
@@ -1543,12 +1544,12 @@ class WebApp:
                     return {"url": None, "steps": [
                         {"step": 1, "text": "Go to Google Cloud Console", "link": "https://console.cloud.google.com/apis/credentials"},
                         {"step": 2, "text": "Create OAuth 2.0 Client ID (Web application)"},
-                        {"step": 3, "text": "Add redirect URI: http://localhost:<port>/api/messenger/gmail/oauth-callback"},
+                        {"step": 3, "text": f"Add redirect URI: {os.environ.get('BREADMIND_BASE_URL') or 'http://localhost:<port>'}/api/messenger/gmail/oauth-callback"},
                         {"step": 4, "text": "Enable Gmail API in your project"},
                         {"step": 5, "text": "Enter Client ID and Client Secret here, then click Connect"},
                     ]}
-                port = self._config.web.port if self._config else 8080
-                redirect_uri = f"http://localhost:{port}/api/messenger/gmail/oauth-callback"
+                base_url = os.environ.get("BREADMIND_BASE_URL") or (f"http://{self._config.web.host}:{self._config.web.port}" if self._config else "http://localhost:8080")
+                redirect_uri = f"{base_url}/api/messenger/gmail/oauth-callback"
                 scopes = "https://www.googleapis.com/auth/gmail.modify"
                 url = f"https://accounts.google.com/o/oauth2/v2/auth?client_id={client_id}&redirect_uri={redirect_uri}&response_type=code&scope={scopes}&access_type=offline&prompt=consent"
                 return {"url": url, "steps": []}
@@ -2256,8 +2257,8 @@ class WebApp:
             if not client_id or not client_secret:
                 return HTMLResponse("<html><body><h1>Gmail OAuth not configured</h1></body></html>")
             try:
-                port = self._config.web.port if self._config else 8080
-                redirect_uri = f"http://localhost:{port}/api/messenger/gmail/oauth-callback"
+                base_url = os.environ.get("BREADMIND_BASE_URL") or (f"http://{self._config.web.host}:{self._config.web.port}" if self._config else "http://localhost:8080")
+                redirect_uri = f"{base_url}/api/messenger/gmail/oauth-callback"
                 async with aiohttp.ClientSession() as session:
                     async with session.post("https://oauth2.googleapis.com/token", data={
                         "code": code,
