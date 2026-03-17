@@ -400,3 +400,37 @@ async def init_agent(config, provider, registry, guard, db, memory_components):
         logger.warning("Environment scan failed: %s", e)
 
     return agent, behavior_tracker, audit_logger, metrics_collector
+
+
+async def init_messenger(db, message_router, event_callback=None):
+    """Initialize messenger auto-connect, lifecycle, and security components."""
+    from breadmind.messenger.security import MessengerSecurityManager
+    from breadmind.messenger.lifecycle import GatewayLifecycleManager
+    from breadmind.messenger.auto_connect.orchestrator import ConnectionOrchestrator
+
+    security = MessengerSecurityManager(db)
+    await security.load_token_timestamps()
+
+    lifecycle = GatewayLifecycleManager(
+        message_router=message_router,
+        db=db,
+        event_callback=event_callback,
+    )
+
+    orchestrator = ConnectionOrchestrator(
+        security_manager=security,
+        lifecycle_manager=lifecycle,
+        db=db,
+    )
+
+    # 설정된 게이트웨이 자동 시작
+    results = await lifecycle.auto_start_all()
+    started = [p for p, ok in results.items() if ok]
+    if started:
+        logger.info("Auto-started messengers: %s", started)
+
+    return {
+        "security": security,
+        "lifecycle": lifecycle,
+        "orchestrator": orchestrator,
+    }
