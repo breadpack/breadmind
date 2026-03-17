@@ -22,7 +22,7 @@ web:
 security:
   auth_enabled: false
   password_hash: ""
-  session_timeout: 86400
+  session_timeout: 7200
   cors_origins:
     - "http://localhost:8080"
     - "http://127.0.0.1:8080"

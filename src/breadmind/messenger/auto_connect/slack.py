@@ -15,6 +15,7 @@ from breadmind.messenger.auto_connect.base import (
     InputField,
     SetupStep,
     ValidationResult,
+    _get_base_url,
 )
 
 logger = logging.getLogger(__name__)
@@ -78,8 +79,8 @@ class SlackAutoConnector(AutoConnector):
         client_id = os.environ.get("SLACK_CLIENT_ID")
         if client_id:
             # OAuth flow 가능
-            port = os.environ.get("BREADMIND_PORT", "8080")
-            redirect_uri = f"http://localhost:{port}/api/messenger/slack/oauth-callback"
+            base_url = _get_base_url()
+            redirect_uri = f"{base_url}/api/messenger/slack/oauth-callback"
             oauth_url = (
                 f"https://slack.com/oauth/v2/authorize"
                 f"?client_id={client_id}"

@@ -14,6 +14,7 @@ from breadmind.messenger.auto_connect.base import (
     InputField,
     SetupStep,
     ValidationResult,
+    _get_base_url,
 )
 
 logger = logging.getLogger(__name__)
@@ -130,13 +131,11 @@ class WhatsAppAutoConnector(AutoConnector):
         sid = credentials.get("account_sid") or os.environ.get("WHATSAPP_TWILIO_ACCOUNT_SID")
         token = credentials.get("auth_token") or os.environ.get("WHATSAPP_TWILIO_AUTH_TOKEN")
         from_number = credentials.get("from_number") or os.environ.get("WHATSAPP_FROM_NUMBER")
-        port = os.environ.get("BREADMIND_PORT", "8080")
-        host = os.environ.get("BREADMIND_HOST", "localhost")
-
         if not all([sid, token, from_number]):
             return
 
-        webhook_url = f"http://{host}:{port}/api/webhook/receive/whatsapp"
+        base_url = _get_base_url()
+        webhook_url = f"{base_url}/api/webhook/receive/whatsapp"
         # Twilio Messaging Service 웹훅 설정은 번호의 SID가 필요
         # 여기서는 로그만 남기고, 사용자에게 수동 설정 안내
         logger.info(

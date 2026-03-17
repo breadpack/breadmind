@@ -124,6 +124,19 @@ async def run():
 
     provider = create_provider(config)
     registry, guard, mcp_manager, search_engine, meta_tools = await init_tools(config, safety_cfg)
+
+    # DB safety 설정이 있으면 guard에 적용 (DB 우선, safety.yaml은 기본값)
+    if db_extra_settings.get("safety_blacklist"):
+        guard.update_blacklist(db_extra_settings["safety_blacklist"])
+    if db_extra_settings.get("safety_approval"):
+        guard.update_require_approval(db_extra_settings["safety_approval"])
+    if db_extra_settings.get("safety_permissions"):
+        perms = db_extra_settings["safety_permissions"]
+        guard.update_user_permissions(
+            perms.get("user_permissions", {}),
+            perms.get("admin_users", []),
+        )
+
     memory_components = await init_memory(db, provider, config, registry, mcp_manager, search_engine)
     agent, behavior_tracker, audit_logger, metrics_collector = await init_agent(
         config, provider, registry, guard, db, memory_components,
