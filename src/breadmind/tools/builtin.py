@@ -2,6 +2,7 @@ import asyncio
 import fnmatch
 import logging
 import os
+import re
 import shlex
 import sys
 from pathlib import Path
@@ -31,6 +32,28 @@ BASE_DIRECTORY: str = os.getcwd()
 
 # Allowed SSH hosts (empty means all are blocked except localhost)
 ALLOWED_SSH_HOSTS: list[str] = []
+
+# Shell metacharacters that indicate potential command injection
+SHELL_META_CHARS = re.compile(r'[;&|`$]')
+
+
+def _get_known_hosts() -> str | None:
+    """Return the path to known_hosts for SSH host key verification.
+
+    By default, uses ``~/.ssh/known_hosts`` (created if absent).
+    Set ``BREADMIND_SSH_STRICT_HOST_KEY=false`` to explicitly disable verification.
+    """
+    strict = os.environ.get("BREADMIND_SSH_STRICT_HOST_KEY", "true").lower()
+    if strict == "false":
+        logger.warning(
+            "SSH host key verification disabled by BREADMIND_SSH_STRICT_HOST_KEY=false"
+        )
+        return None
+    known_hosts = Path.home() / ".ssh" / "known_hosts"
+    if not known_hosts.exists():
+        known_hosts.parent.mkdir(parents=True, exist_ok=True)
+        known_hosts.touch(mode=0o644)
+    return str(known_hosts)
 
 
 class ToolSecurityConfig:
@@ -91,6 +114,11 @@ def _is_dangerous_command(command: str) -> bool:
     return False
 
 
+def _has_shell_metacharacters(command: str) -> bool:
+    """Return True if the command contains shell metacharacters (pipes, chains, etc.)."""
+    return bool(SHELL_META_CHARS.search(command))
+
+
 def _is_command_allowed(command: str) -> tuple[bool, str]:
     """Check if command is allowed. Returns (allowed, reason)."""
     config = ToolSecurityConfig
@@ -124,11 +152,18 @@ def _validate_path(path: str) -> Path:
             f"Path traversal blocked: {path} resolves outside base directory {base}"
         )
 
-    # Check sensitive file patterns
-    filename = p.name
+    # Block symbolic link access (resolve() already followed the link above,
+    # but we explicitly reject symlinks to prevent confusion)
+    if Path(path).is_symlink():
+        raise ValueError(f"Symbolic link access blocked: {path}")
+
+    # Check sensitive file patterns against filename AND every path component
     for pattern in ToolSecurityConfig._sensitive_patterns:
-        if fnmatch.fnmatch(filename.lower(), pattern.lower()):
-            raise ValueError(f"Access to sensitive file blocked: {filename}")
+        if fnmatch.fnmatch(p.name.lower(), pattern.lower()):
+            raise ValueError(f"Access to sensitive file blocked: {p.name}")
+        for part in p.parts:
+            if fnmatch.fnmatch(part.lower(), pattern.lower()):
+                raise ValueError(f"Access to sensitive path blocked: {path}")
 
     return p
 
@@ -160,11 +195,20 @@ async def shell_exec(command: str, host: str = "localhost", timeout: int = 30,
 
     if host == "localhost":
         is_windows = sys.platform == "win32"
+        needs_shell = _has_shell_metacharacters(command)
 
         try:
-            if is_windows:
-                # On Windows, use shell=True via create_subprocess_shell
-                # to support cmd built-ins, PowerShell, and piped commands
+            if needs_shell:
+                # Shell required for pipes, chains, etc. — already validated
+                # by _is_command_allowed above
+                logger.debug("Using subprocess_shell for command with metacharacters")
+                proc = await asyncio.create_subprocess_shell(
+                    command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            elif is_windows:
+                # Windows without metacharacters: still use shell for cmd built-ins
                 proc = await asyncio.create_subprocess_shell(
                     command,
                     stdout=asyncio.subprocess.PIPE,
@@ -207,14 +251,16 @@ async def shell_exec(command: str, host: str = "localhost", timeout: int = 30,
         except ImportError:
             return "Error: asyncssh not installed. Install with: pip install asyncssh"
         try:
-            logger.warning(
-                "SSH connection to %s:%d with known_hosts=None — "
-                "host key verification is disabled", host, port,
-            )
+            known_hosts = _get_known_hosts()
+            if known_hosts is None:
+                logger.warning(
+                    "SSH connection to %s:%d with known_hosts=None — "
+                    "host key verification is disabled", host, port,
+                )
             connect_kwargs: dict = {
                 "host": host,
                 "port": port,
-                "known_hosts": None,
+                "known_hosts": known_hosts,
             }
             if username is not None:
                 connect_kwargs["username"] = username
