@@ -24,6 +24,8 @@ class UserProfiler:
     def __init__(self, db=None):
         self._preferences: dict[str, list[UserPreference]] = {}  # user -> prefs
         self._patterns: dict[str, list[UserPattern]] = {}  # user -> patterns
+        self._roles: dict[str, str] = {}
+        self._intent_history: dict[str, dict[str, int]] = {}
         self._db = db
         self._max_preferences = 20
 
@@ -82,6 +84,40 @@ class UserProfiler:
                 p.confidence = max(0.0, p.confidence - amount)
                 break
 
+    def get_role(self, user: str) -> str:
+        return self._roles.get(user, "auto")
+
+    def set_role(self, user: str, role: str) -> None:
+        self._roles[user] = role
+
+    def record_intent(self, user: str, category: str) -> None:
+        if user not in self._intent_history:
+            self._intent_history[user] = {}
+        hist = self._intent_history[user]
+        hist[category] = hist.get(category, 0) + 1
+
+    def determine_role(self, user: str) -> str:
+        hist = self._intent_history.get(user, {})
+        total = sum(hist.values())
+        if total < 10:
+            return "auto"
+        dev_categories = {"execute", "diagnose", "configure", "query"}
+        general_categories = {"schedule", "task", "chat", "contact", "search_files"}
+        dev_count = sum(hist.get(c, 0) for c in dev_categories)
+        general_count = sum(hist.get(c, 0) for c in general_categories)
+        if dev_count / total > 0.4:
+            return "developer"
+        if general_count / total > 0.6:
+            return "general"
+        return "developer"
+
+    def get_exposed_domains(self, user: str) -> list[str]:
+        role = self.get_role(user)
+        base = ["tasks", "calendar", "contacts", "files", "chat"]
+        if role in ("developer", "auto"):
+            return base + ["infra", "monitoring", "network"]
+        return base
+
     async def flush_to_db(self) -> None:
         """Save all profiler data to DB."""
         if not self._db or not hasattr(self._db, 'set_setting'):
@@ -97,6 +133,11 @@ class UserProfiler:
                     user: [{"action": p.action, "frequency": p.frequency, "context": p.context}
                            for p in pats]
                     for user, pats in self._patterns.items()
+                },
+                "roles": dict(self._roles),
+                "intent_history": {
+                    user: dict(hist)
+                    for user, hist in self._intent_history.items()
                 },
             }
             await self._db.set_setting("user_profiler", data)
@@ -123,5 +164,8 @@ class UserProfiler:
                                 context=p.get("context", ""))
                     for p in pats
                 ]
+            self._roles = data.get("roles", {})
+            for user, hist in data.get("intent_history", {}).items():
+                self._intent_history[user] = dict(hist)
         except Exception as e:
             _log.warning(f"Failed to load profiler: {e}")
