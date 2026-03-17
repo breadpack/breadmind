@@ -82,6 +82,53 @@ class SecurityConfig:
 
 
 @dataclass
+class TimeoutsConfig:
+    """System timeout settings (UI-managed)."""
+    tool_call: int = 30  # seconds
+    chat: int = 120  # seconds
+    max_turns: int = 10
+    mcp_startup: int = 30  # seconds
+    health_check: int = 10  # seconds
+
+
+@dataclass
+class RetryConfig:
+    """Retry settings (UI-managed)."""
+    max_attempts: int = 3
+    base_delay: float = 1.0  # seconds
+    max_delay: float = 60.0  # seconds
+    backoff_multiplier: float = 2.0
+
+
+@dataclass
+class LimitsConfig:
+    """Resource limit settings (UI-managed)."""
+    max_messages_per_session: int = 200
+    max_sessions: int = 50
+    max_file_size_mb: int = 10
+    max_tool_output_chars: int = 50000
+    max_concurrent_tools: int = 5
+
+
+@dataclass
+class PollingConfig:
+    """Polling interval settings (UI-managed)."""
+    health_check_interval: int = 60  # seconds
+    metrics_interval: int = 30  # seconds
+    messenger_poll_interval: int = 5  # seconds
+    cleanup_interval: int = 300  # seconds
+
+
+@dataclass
+class MemoryGCConfig:
+    """Memory garbage collection settings (UI-managed)."""
+    interval_seconds: int = 3600
+    max_session_age_hours: int = 24
+    max_idle_minutes: int = 60
+    compact_threshold_mb: int = 100
+
+
+@dataclass
 class NetworkConfig:
     """Distributed agent network configuration."""
     mode: str = "standalone"  # standalone | commander | worker
@@ -109,6 +156,11 @@ class AppConfig:
     security: SecurityConfig = field(default_factory=SecurityConfig)
     network: NetworkConfig = field(default_factory=NetworkConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    timeouts: TimeoutsConfig = field(default_factory=TimeoutsConfig)
+    retry: RetryConfig = field(default_factory=RetryConfig)
+    limits: LimitsConfig = field(default_factory=LimitsConfig)
+    polling: PollingConfig = field(default_factory=PollingConfig)
+    memory_gc: MemoryGCConfig = field(default_factory=MemoryGCConfig)
     _persona: dict = field(default=None)
 
     def validate(self) -> None:
@@ -472,6 +524,42 @@ async def apply_db_settings(config: AppConfig, db) -> None:
                     os.environ.setdefault(token_key, data["value"])
             except Exception:
                 pass
+
+        # System timeouts (UI-managed)
+        system_timeouts = await db.get_setting("system_timeouts")
+        if system_timeouts and isinstance(system_timeouts, dict):
+            for key, value in system_timeouts.items():
+                if hasattr(config.timeouts, key):
+                    setattr(config.timeouts, key, value)
+
+        # Retry settings (UI-managed)
+        retry_config = await db.get_setting("retry_config")
+        if retry_config and isinstance(retry_config, dict):
+            for key, value in retry_config.items():
+                if hasattr(config.retry, key):
+                    setattr(config.retry, key, value)
+
+        # Limits settings (UI-managed)
+        limits_config = await db.get_setting("limits_config")
+        if limits_config and isinstance(limits_config, dict):
+            for key, value in limits_config.items():
+                if hasattr(config.limits, key):
+                    setattr(config.limits, key, value)
+
+        # Polling settings (UI-managed)
+        polling_config = await db.get_setting("polling_config")
+        if polling_config and isinstance(polling_config, dict):
+            for key, value in polling_config.items():
+                if hasattr(config.polling, key):
+                    setattr(config.polling, key, value)
+
+        # Memory GC settings (UI-managed)
+        memory_gc_config = await db.get_setting("memory_gc_config")
+        if memory_gc_config and isinstance(memory_gc_config, dict):
+            for key, value in memory_gc_config.items():
+                if hasattr(config.memory_gc, key):
+                    setattr(config.memory_gc, key, value)
+
     except Exception:
         pass  # DB not available, use file-based config
 
