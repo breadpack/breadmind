@@ -373,6 +373,41 @@ async def file_list(
     )
 
 
+# ---------------------------------------------------------------------------
+# Message tools
+# ---------------------------------------------------------------------------
+
+
+async def message_search(
+    query: str,
+    registry: AdapterRegistry,
+    user_id: str,
+    channel: str | None = None,
+) -> str:
+    """대화 기록을 검색합니다."""
+    adapters = registry.list_adapters("message")
+    if not adapters:
+        return "메시지 어댑터가 설정되지 않았습니다."
+
+    all_messages = []
+    filters = {"user_id": user_id, "query": query}
+    if channel:
+        filters["channel"] = channel
+
+    for adapter in adapters:
+        messages = await adapter.list_items(filters=filters, limit=10)
+        all_messages.extend(messages)
+
+    if not all_messages:
+        return f"'{query}'에 대한 대화 기록을 찾을 수 없습니다."
+
+    lines = ["대화 기록 검색 결과:"]
+    for m in all_messages[:10]:
+        preview = m.content[:100] + "..." if len(m.content) > 100 else m.content
+        lines.append(f"  - [{m.sender}] {preview}")
+    return "\n".join(lines)
+
+
 def _format_size(size_bytes: int) -> str:
     """Format bytes to human-readable size."""
     for unit in ["B", "KB", "MB", "GB"]:
@@ -412,6 +447,7 @@ def register_personal_tools(
         (contact_create, "연락처를 추가합니다. name 필수, email/phone/organization 선택."),
         (file_search, "파일을 검색합니다. query 필수, source 선택."),
         (file_list, "파일 목록을 조회합니다. source 선택."),
+        (message_search, "대화 기록을 검색합니다. query 필수, channel 선택."),
     ]
 
     for func, description in tool_defs:
