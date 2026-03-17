@@ -463,6 +463,14 @@
                         </div>
                         <div id="sessionList"><div class="tool-item" style="color:#64748b">Loading...</div></div>
                     </div>
+                    <div class="section" id="sidebar-assistant">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                            <h2 style="margin:0;">📋 오늘</h2>
+                            <button onclick="switchTab('personal')" style="background:transparent;border:1px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.5);padding:2px 6px;border-radius:4px;cursor:pointer;font-size:10px;">전체 보기</button>
+                        </div>
+                        <div id="sidebar-tasks"></div>
+                        <div id="sidebar-events" style="margin-top:8px;"></div>
+                    </div>
                     <div class="section"><h2>Tools</h2><div id="toolList"><div class="tool-item">Loading...</div></div></div>
                     <div class="section"><h2>MCP Servers</h2><div id="serverList"><div class="tool-item">Loading...</div></div></div>
                 </div>
@@ -699,6 +707,7 @@
             if (name === 'store') { loadFeatured(); loadInstalledServers(); }
             if (name === 'skills') { loadSkillsFeatured(); }
             if (name === 'personal') { initPersonalTab(); }
+            if (name === 'chat') { if (typeof loadSidebarAssistant === 'function') loadSidebarAssistant(); }
         }
 
         function sendMessage() {
@@ -3258,6 +3267,7 @@
 
         connect();
         loadSessions();
+        if (typeof loadSidebarAssistant === 'function') loadSidebarAssistant();
 
         // Restore tab from URL hash
         const hashTab = location.hash.replace('#', '');
