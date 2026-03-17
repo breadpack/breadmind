@@ -17,6 +17,7 @@ from breadmind.web.routes import (
     setup_swarm_routes,
     setup_system_routes,
 )
+from breadmind.web.routes.messenger import setup_messenger_routes
 from breadmind.web.routes.workers import setup_worker_routes
 
 logger = logging.getLogger(__name__)
@@ -184,6 +185,7 @@ class WebApp:
         setup_mcp_routes(app, self)
         setup_monitoring_routes(app, self)
         setup_swarm_routes(app, self)
+        setup_messenger_routes(app, self)
         setup_worker_routes(app, self)
         setup_chat_routes(app, self)
 

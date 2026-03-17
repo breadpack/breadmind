@@ -57,12 +57,12 @@ class MessengerSecurityManager:
     async def store_token(
         self, platform: str, key: str, value: str, actor: str = "system"
     ) -> None:
-        """토큰을 DB에 암호화 저장하고 접근 로그 기록."""
+        """토큰을 DB에 저장하고 접근 로그 기록."""
         import os
 
         os.environ[key] = value
         await self._db.set_setting(
-            f"messenger_token:{key}", {"value": value}
+            f"messenger_token:{key}", {"value": value, "stored_at": time.time()}
         )
         self._token_timestamps[f"{platform}:{key}"] = time.time()
         self._log_access(platform, "write", actor)
