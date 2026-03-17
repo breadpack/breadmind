@@ -29,7 +29,8 @@ class WebApp:
                  scheduler=None, subagent_manager=None, webhook_manager=None, auth=None,
                  container_executor=None, swarm_manager=None,
                  skill_store=None, performance_tracker=None, search_engine=None,
-                 token_manager=None, commander=None):
+                 token_manager=None, commander=None,
+                 messenger_security=None, lifecycle_manager=None, orchestrator=None):
         self.app = FastAPI(title="BreadMind", version="0.1.0")
         self._message_handler = message_handler
         self._tool_registry = tool_registry
@@ -56,6 +57,9 @@ class WebApp:
         self._search_engine = search_engine
         self._token_manager = token_manager
         self._commander = commander
+        self._messenger_security = messenger_security
+        self._lifecycle_manager = lifecycle_manager
+        self._orchestrator = orchestrator
 
         # CORS middleware
         if config and hasattr(config, 'security'):

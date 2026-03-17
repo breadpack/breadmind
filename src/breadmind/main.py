@@ -108,7 +108,7 @@ async def run():
         return
 
     # Initialize all components via bootstrap
-    from breadmind.core.bootstrap import init_database, init_tools, init_memory, init_agent
+    from breadmind.core.bootstrap import init_database, init_tools, init_memory, init_agent, init_messenger
 
     db = await init_database(config, config_dir)
 
@@ -249,6 +249,20 @@ async def run():
             token_manager = TokenManager(db=db)
             await token_manager.load_from_db()
 
+            # Initialize messenger auto-connect system
+            from breadmind.messenger.router import MessageRouter
+            message_router = MessageRouter()
+            messenger_components = None
+            try:
+                messenger_components = await init_messenger(db, message_router)
+            except Exception as e:
+                logger.warning("Messenger init failed: %s", e)
+
+            # Wire orchestrator into builtin tool
+            if messenger_components:
+                from breadmind.tools.builtin import set_orchestrator
+                set_orchestrator(messenger_components["orchestrator"])
+
             # Commander mode initialization
             commander = None
             if mode == "commander":
@@ -325,6 +339,10 @@ async def run():
                 search_engine=search_engine,
                 token_manager=token_manager,
                 commander=commander,
+                message_router=message_router,
+                messenger_security=messenger_components["security"] if messenger_components else None,
+                lifecycle_manager=messenger_components["lifecycle"] if messenger_components else None,
+                orchestrator=messenger_components["orchestrator"] if messenger_components else None,
             )
             print(f"  Starting web server on {web_host}:{web_port}")
             server_config = uvicorn.Config(
@@ -348,6 +366,13 @@ async def run():
                 print(f"breadmind> {response}\n")
     finally:
         update_task.cancel()
+        # Shutdown messenger lifecycle if initialized (only in web mode)
+        try:
+            if messenger_components:  # noqa: F821
+                await messenger_components["lifecycle"].shutdown()
+        except (NameError, Exception) as e:
+            if not isinstance(e, NameError):
+                logger.warning("Messenger lifecycle shutdown error: %s", e)
         await memory_gc.stop()
         await monitoring_engine.stop()
         await mcp_manager.stop_all()
