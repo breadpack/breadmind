@@ -226,3 +226,12 @@
 .guide-list { text-align:left; color:#e2e8f0; font-size:13px; list-style:none; padding:0; }
 .guide-list li { padding:8px 0; border-bottom:1px solid #334155; }
 .guide-list li:last-child { border-bottom:none; }
+
+/* Setup Guide in Modal */
+.setup-guide { background:#0f172a; border:1px solid #334155; border-radius:8px; padding:12px; margin-bottom:16px; }
+.setup-guide h4 { color:#e2e8f0; font-size:13px; margin-bottom:8px; }
+.guide-steps { color:#94a3b8; font-size:12px; line-height:1.8; }
+.guide-steps a { color:#3b82f6; text-decoration:underline; }
+.guide-steps code { background:#1e293b; padding:1px 4px; border-radius:2px; color:#e2e8f0; }
+.setup-fields { margin-bottom:8px; }
+.field-hint { color:#64748b; font-size:11px; margin-top:-4px; margin-bottom:8px; }

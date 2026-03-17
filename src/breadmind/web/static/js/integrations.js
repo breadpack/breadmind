@@ -7,6 +7,24 @@
 
     const API_BASE = '/api/integrations';
 
+    // Listen for OAuth callback from popup window
+    window.addEventListener('message', (event) => {
+        if (event.data && event.data.type === 'oauth_complete') {
+            showToast(
+                event.data.success ? `${event.data.provider} 연결 완료!` : `${event.data.provider} 인증 실패`,
+                event.data.success ? 'success' : 'error'
+            );
+            // Refresh integration list
+            const container = document.getElementById('integrations-content');
+            if (container) loadIntegrations(container);
+
+            // Show usage guide on success
+            if (event.data.success) {
+                setTimeout(() => showServiceUsageGuide(event.data.provider), 1000);
+            }
+        }
+    });
+
     window.initIntegrationsTab = function() {
         const container = document.getElementById('integrations-content');
         if (!container) return;
@@ -112,22 +130,104 @@
     };
 
     function showCredentialModal(serviceId, authType) {
-        let fields = '';
-        if (serviceId === 'notion') {
-            fields = `<input type="password" id="cred-api-key" placeholder="Notion API Key" class="modal-input">
-                      <input type="text" id="cred-database-id" placeholder="Database ID" class="modal-input">`;
-        } else if (serviceId === 'jira') {
-            fields = `<input type="url" id="cred-base-url" placeholder="Jira URL (https://xxx.atlassian.net)" class="modal-input">
-                      <input type="email" id="cred-email" placeholder="이메일" class="modal-input">
-                      <input type="password" id="cred-api-token" placeholder="API Token" class="modal-input">
-                      <input type="text" id="cred-project-key" placeholder="프로젝트 키 (예: PROJ)" class="modal-input">`;
-        } else if (serviceId === 'github') {
-            fields = `<input type="password" id="cred-token" placeholder="GitHub Personal Access Token" class="modal-input">
-                      <input type="text" id="cred-owner" placeholder="Owner (예: username)" class="modal-input">
-                      <input type="text" id="cred-repo" placeholder="Repository (예: my-repo)" class="modal-input">`;
-        } else {
-            fields = `<input type="password" id="cred-token" placeholder="API Token" class="modal-input">`;
-        }
+        const guides = {
+            notion: {
+                title: 'Notion 연결',
+                guide: '1. <a href="https://www.notion.so/my-integrations" target="_blank">Notion Integrations</a> 페이지 방문\n2. "+ New integration" 클릭\n3. 이름 입력 후 "Submit"\n4. "Internal Integration Secret" 복사\n5. 연결할 데이터베이스에서 ··· → Connections → 방금 만든 Integration 추가',
+                fields: `
+                    <input type="password" id="cred-api-key" placeholder="Internal Integration Secret" class="modal-input" required>
+                    <input type="text" id="cred-database-id" placeholder="Database ID (URL에서 복사)" class="modal-input">
+                    <p class="field-hint">Database ID: Notion URL에서 notion.so/ 뒤의 32자리 문자열</p>
+                `,
+            },
+            jira: {
+                title: 'Jira 연결',
+                guide: '1. <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank">Atlassian API Tokens</a> 페이지 방문\n2. "Create API token" 클릭\n3. 토큰 복사',
+                fields: `
+                    <input type="url" id="cred-base-url" placeholder="https://yourteam.atlassian.net" class="modal-input" required>
+                    <input type="email" id="cred-email" placeholder="Atlassian 계정 이메일" class="modal-input" required>
+                    <input type="password" id="cred-api-token" placeholder="API Token" class="modal-input" required>
+                    <input type="text" id="cred-project-key" placeholder="프로젝트 키 (Jira 보드 URL에서 확인)" class="modal-input">
+                    <p class="field-hint">프로젝트 키: Jira 보드에서 이슈 번호 앞 영문자 (예: PROJ-123 → PROJ)</p>
+                `,
+            },
+            github: {
+                title: 'GitHub Issues 연결',
+                guide: '1. <a href="https://github.com/settings/tokens/new" target="_blank">GitHub Token 생성</a> 페이지 방문\n2. "Generate new token (classic)" 선택\n3. Scopes: <code>repo</code> 체크\n4. "Generate token" 클릭 후 복사',
+                fields: `
+                    <input type="password" id="cred-token" placeholder="ghp_xxxx..." class="modal-input" required>
+                    <input type="text" id="cred-owner" placeholder="Owner (예: username 또는 org-name)" class="modal-input" required>
+                    <input type="text" id="cred-repo" placeholder="Repository (예: my-project)" class="modal-input" required>
+                    <p class="field-hint">GitHub URL에서 확인: github.com/<strong>owner</strong>/<strong>repo</strong></p>
+                `,
+            },
+        };
+
+        const config = guides[serviceId] || { title: `${serviceId} 연결`, guide: '', fields: `<input type="password" id="cred-token" placeholder="API Token" class="modal-input" required>` };
+
+        const modal = document.getElementById('personal-modal') || document.createElement('div');
+        modal.id = 'personal-modal';
+        modal.className = 'modal';
+        modal.innerHTML = `
+            <div class="modal-backdrop" onclick="closeModal()"></div>
+            <div class="modal-content" style="max-width:520px">
+                <h3>${config.title}</h3>
+                ${config.guide ? `<div class="setup-guide"><h4>\ud83d\udcd6 설정 가이드</h4><div class="guide-steps">${config.guide.replace(/\n/g, '<br>')}</div></div>` : ''}
+                <div class="setup-fields">${config.fields}</div>
+                <div class="modal-actions">
+                    <button class="btn-secondary" onclick="closeModal()">취소</button>
+                    <button class="btn-primary" id="connect-btn" onclick="submitCredentials('${serviceId}')">연결 확인</button>
+                </div>
+            </div>`;
+        if (!modal.parentNode) document.body.appendChild(modal);
+    }
+
+    function showServiceUsageGuide(provider) {
+        const guides = {
+            google: {
+                name: 'Google 서비스',
+                actions: [
+                    '\ud83d\udcac 채팅: "이번 주 일정 보여줘"',
+                    '\ud83d\udcac 채팅: "드라이브에서 보고서 찾아줘"',
+                    '\ud83d\udcac 채팅: "김철수 연락처 알려줘"',
+                    '\ud83d\udccb 비서 탭에서 동기화된 항목 확인',
+                ],
+            },
+            microsoft: {
+                name: 'Microsoft 서비스',
+                actions: [
+                    '\ud83d\udcac 채팅: "Outlook 일정 확인해줘"',
+                    '\ud83d\udcac 채팅: "OneDrive 파일 검색해줘"',
+                    '\ud83d\udccb 비서 탭에서 일정 확인',
+                ],
+            },
+            notion: {
+                name: 'Notion',
+                actions: [
+                    '\ud83d\udcac 채팅: "Notion에서 할 일 가져와줘"',
+                    '\ud83d\udcac 채팅: "Notion에 새 페이지 만들어줘"',
+                    '\ud83d\udccb 비서 탭 \u2192 할 일에서 Notion 항목 확인',
+                ],
+            },
+            jira: {
+                name: 'Jira',
+                actions: [
+                    '\ud83d\udcac 채팅: "Jira 이슈 목록 보여줘"',
+                    '\ud83d\udcac 채팅: "새 Jira 이슈 만들어줘"',
+                    '\ud83d\udccb 비서 탭 \u2192 할 일에서 Jira 이슈 확인',
+                ],
+            },
+            github: {
+                name: 'GitHub Issues',
+                actions: [
+                    '\ud83d\udcac 채팅: "GitHub 이슈 목록 보여줘"',
+                    '\ud83d\udcac 채팅: "새 이슈 만들어줘"',
+                    '\ud83d\udccb 비서 탭 \u2192 할 일에서 GitHub 이슈 확인',
+                ],
+            },
+        };
+
+        const guide = guides[provider] || { name: provider, actions: ['채팅에서 자연어로 요청하세요'] };
 
         const modal = document.getElementById('personal-modal') || document.createElement('div');
         modal.id = 'personal-modal';
@@ -135,11 +235,12 @@
         modal.innerHTML = `
             <div class="modal-backdrop" onclick="closeModal()"></div>
             <div class="modal-content">
-                <h3>${serviceId} 연결</h3>
-                ${fields}
+                <h3>\u2705 ${guide.name} 연결 완료!</h3>
+                <p class="guide-text">이제 다음을 할 수 있습니다:</p>
+                <ul class="guide-list">${guide.actions.map(a => `<li>${a}</li>`).join('')}</ul>
                 <div class="modal-actions">
-                    <button class="btn-secondary" onclick="closeModal()">취소</button>
-                    <button class="btn-primary" onclick="submitCredentials('${serviceId}')">연결</button>
+                    <button class="btn-secondary" onclick="closeModal()">닫기</button>
+                    <button class="btn-primary" onclick="closeModal(); switchTab('personal');">비서 탭으로 이동</button>
                 </div>
             </div>`;
         if (!modal.parentNode) document.body.appendChild(modal);

@@ -93,14 +93,30 @@ async def oauth_callback(
             client_secret=client_secret,
         )
         return HTMLResponse(
-            content=f"<html><body><h2>{provider} authentication successful!</h2>"
-            f"<p>Scopes: {', '.join(creds.scopes)}</p>"
-            f"<p>You may close this window.</p></body></html>"
+            content=f"""<html><body>
+            <h2>\u2705 {provider} \uc778\uc99d \uc131\uacf5!</h2>
+            <p>Scopes: {', '.join(creds.scopes)}</p>
+            <p>\uc774 \ucc3d\uc740 \uc790\ub3d9\uc73c\ub85c \ub2eb\ud799\ub2c8\ub2e4...</p>
+            <script>
+                if (window.opener) {{
+                    window.opener.postMessage({{type: 'oauth_complete', provider: '{provider}', success: true}}, '*');
+                }}
+                setTimeout(() => window.close(), 2000);
+            </script>
+            </body></html>"""
         )
     except Exception as e:
         logger.exception("OAuth callback failed for %s", provider)
         return HTMLResponse(
-            content=f"<html><body><h2>Authentication failed</h2><p>{e}</p></body></html>",
+            content=f"""<html><body>
+            <h2>\u274c \uc778\uc99d \uc2e4\ud328</h2>
+            <p>{e}</p>
+            <script>
+                if (window.opener) {{
+                    window.opener.postMessage({{type: 'oauth_complete', provider: '{provider}', success: false}}, '*');
+                }}
+            </script>
+            </body></html>""",
             status_code=400,
         )
 
