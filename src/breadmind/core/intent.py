@@ -30,6 +30,7 @@ class Intent:
     keywords: list[str] = field(default_factory=list)
     entities: list[str] = field(default_factory=list)  # IPs, hostnames, service names
     tool_hints: set[str] = field(default_factory=set)   # suggested tools
+    urgency: str = "normal"  # "low" | "normal" | "high" | "critical"
 
 
 # Pattern definitions: (compiled_regex, category, confidence_boost)
@@ -96,6 +97,21 @@ _TOOL_HINTS: dict[IntentCategory, set[str]] = {
 }
 
 
+_URGENCY_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"지금\s*당장|즉시|긴급|ASAP|urgent|immediately|right\s*now", re.I), "critical"),
+    (re.compile(r"급해|급한|빨리|서둘러|hurry|quick|fast", re.I), "high"),
+    (re.compile(r"시간\s*될\s*때|천천히|나중에|여유|when\s*you\s*can|no\s*rush|later", re.I), "low"),
+]
+
+
+def _detect_urgency(message: str) -> str:
+    """Detect urgency level from message text."""
+    for pattern, urgency in _URGENCY_PATTERNS:
+        if pattern.search(message):
+            return urgency
+    return "normal"
+
+
 _CATEGORY_PRIORITY: dict[IntentCategory, int] = {
     IntentCategory.SCHEDULE: 0,
     IntentCategory.TASK: 1,
@@ -159,12 +175,15 @@ def classify(message: str) -> Intent:
     if any("pod" in e.lower() or "deploy" in e.lower() for e in entities):
         tool_hints.update({"shell_exec"})  # kubectl commands
 
+    urgency = _detect_urgency(message)
+
     return Intent(
         category=best_category,
         confidence=confidence,
         keywords=keywords,
         entities=entities,
         tool_hints=tool_hints,
+        urgency=urgency,
     )
 
 
