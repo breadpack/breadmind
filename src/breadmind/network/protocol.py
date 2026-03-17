@@ -115,10 +115,29 @@ class SequenceTracker:
         self._outgoing += 1
         return self._outgoing
 
-    def validate_incoming(self, seq: int) -> None:
+    MAX_MESSAGE_AGE_SECONDS: int = 300  # 5 minutes
+
+    def validate_incoming(self, seq: int, timestamp: str | None = None) -> None:
         expected = self._incoming + 1
         if seq != expected:
             raise MessageSequenceError(
                 f"Expected seq {expected}, got {seq}"
             )
+
+        # Timestamp validation (replay attack prevention)
+        if timestamp:
+            try:
+                msg_time = datetime.fromisoformat(timestamp)
+                now = datetime.now(timezone.utc)
+                age = abs((now - msg_time).total_seconds())
+                if age > self.MAX_MESSAGE_AGE_SECONDS:
+                    raise MessageSequenceError(
+                        f"Message timestamp too old ({age:.0f}s > {self.MAX_MESSAGE_AGE_SECONDS}s), "
+                        "possible replay attack"
+                    )
+            except ValueError:
+                raise MessageSequenceError(
+                    f"Invalid timestamp format: {timestamp}"
+                )
+
         self._incoming = seq

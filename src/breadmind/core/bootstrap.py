@@ -1,4 +1,31 @@
-"""Application bootstrap — initializes all components from config."""
+"""Application bootstrap — initializes all components from config.
+
+Bootstrap initialization dependency graph
+==========================================
+
+Phase 1 (no dependencies):
+  - database (config, config_dir)
+
+Phase 2 (depends on database):
+  - tools          (config, safety_cfg)
+  - apply_db_settings is called inside init_database
+
+Phase 3 (depends on database + tools):
+  - memory         (db, provider, config, registry, mcp_manager, search_engine)
+
+Phase 4 (depends on database + tools + memory):
+  - agent          (config, provider, registry, guard, db, memory_components)
+
+Phase 5 (depends on agent):
+  - messenger      (db, message_router, event_callback)
+
+Dependency edges (A -> B means A must run before B):
+  database  ->  tools
+  database  ->  memory
+  tools     ->  memory
+  memory    ->  agent
+  agent     ->  messenger
+"""
 from __future__ import annotations
 
 import logging
@@ -51,7 +78,12 @@ def _detect_package_managers() -> list[str]:
 
 
 async def init_database(config, config_dir: str):
-    """Initialize database or fall back to file-based settings."""
+    """Initialize database or fall back to file-based settings.
+
+    Phase: 1
+    Dependencies: none
+    Provides: db (Database | FileSettingsStore)
+    """
     db = None
     try:
         from breadmind.storage.database import Database
@@ -75,7 +107,12 @@ async def init_database(config, config_dir: str):
 async def init_tools(config, safety_cfg):
     """Initialize tool registry, MCP client, and meta tools.
 
-    Returns (registry, guard, mcp_manager, search_engine, meta_tools).
+    Phase: 2
+    Dependencies: config (from load_config)
+    Provides: registry (ToolRegistry), guard (SafetyGuard),
+              mcp_manager (MCPClientManager), search_engine (RegistrySearchEngine),
+              meta_tools (dict)
+    Returns: (registry, guard, mcp_manager, search_engine, meta_tools)
     """
     from breadmind.tools.registry import ToolRegistry
     from breadmind.core.safety import SafetyGuard
@@ -148,7 +185,13 @@ async def init_tools(config, safety_cfg):
 async def init_memory(db, provider, config, registry, mcp_manager, search_engine):
     """Initialize memory layers, SmartRetriever, profiler, and self-expansion components.
 
-    Returns a dict of all memory-related components.
+    Phase: 3
+    Dependencies: db (Phase 1), registry + mcp_manager + search_engine (Phase 2),
+                  provider (from LLM init)
+    Provides: working_memory, episodic_memory, semantic_memory, embedding_service,
+              smart_retriever, performance_tracker, skill_store, tool_gap_detector,
+              context_builder, profiler, mcp_store
+    Returns: dict of all memory-related components
     """
     from breadmind.memory.working import WorkingMemory
     from breadmind.memory.episodic import EpisodicMemory
@@ -305,7 +348,12 @@ async def discover_and_install_skills(skill_store, search_engine):
 async def init_agent(config, provider, registry, guard, db, memory_components):
     """Initialize CoreAgent with BehaviorTracker.
 
-    Returns (agent, behavior_tracker, audit_logger, metrics_collector).
+    Phase: 4
+    Dependencies: db (Phase 1), registry + guard (Phase 2),
+                  memory_components (Phase 3), provider + config
+    Provides: agent (CoreAgent), behavior_tracker (BehaviorTracker),
+              audit_logger (AuditLogger | None), metrics_collector (MetricsCollector | None)
+    Returns: (agent, behavior_tracker, audit_logger, metrics_collector)
     """
     from breadmind.core.agent import CoreAgent
     from breadmind.config import build_system_prompt, DEFAULT_PERSONA
@@ -406,7 +454,14 @@ async def init_agent(config, provider, registry, guard, db, memory_components):
 
 
 async def init_messenger(db, message_router, event_callback=None):
-    """Initialize messenger auto-connect, lifecycle, and security components."""
+    """Initialize messenger auto-connect, lifecycle, and security components.
+
+    Phase: 5
+    Dependencies: db (Phase 1), message_router (from agent/Phase 4)
+    Provides: security (MessengerSecurityManager), lifecycle (GatewayLifecycleManager),
+              orchestrator (ConnectionOrchestrator)
+    Returns: dict with security, lifecycle, orchestrator
+    """
     from breadmind.messenger.security import MessengerSecurityManager
     from breadmind.messenger.lifecycle import GatewayLifecycleManager
     from breadmind.messenger.auto_connect.orchestrator import ConnectionOrchestrator
@@ -437,3 +492,126 @@ async def init_messenger(db, message_router, event_callback=None):
         "lifecycle": lifecycle,
         "orchestrator": orchestrator,
     }
+
+
+async def bootstrap_all(
+    config,
+    config_dir: str,
+    safety_cfg: dict,
+    provider,
+    message_router=None,
+    event_callback=None,
+) -> AppComponents:
+    """Run all initialization phases in dependency order.
+
+    This is a convenience entry point that calls each init_* function
+    following the DAG order declared at the top of this module.
+    Phases that fail are logged and degraded gracefully where possible.
+
+    Phase execution order:
+      1. database   (no deps)
+      2. tools      (needs config)
+      3. memory     (needs db, tools, provider)
+      4. agent      (needs db, tools, memory, provider)
+      5. messenger  (needs db, agent/message_router)  [optional]
+
+    Args:
+        config: Loaded application config object.
+        config_dir: Path to the configuration directory.
+        safety_cfg: Safety guard configuration dict.
+        provider: LLM provider instance.
+        message_router: Optional message router for messenger phase.
+        event_callback: Optional event callback for messenger phase.
+
+    Returns:
+        AppComponents with all initialized (or None for failed) components.
+    """
+    components = AppComponents(config=config, safety_cfg=safety_cfg)
+    components.event_bus = get_event_bus()
+
+    # ── Phase 1: Database ────────────────────────────────────────────
+    try:
+        components.db = await init_database(config, config_dir)
+        logger.info("Phase 1 complete: database initialized")
+    except Exception as e:
+        logger.error("Phase 1 failed (database): %s", e)
+        from breadmind.storage.settings_store import FileSettingsStore
+        components.db = FileSettingsStore(os.path.join(config_dir, "settings.json"))
+
+    # ── Phase 2: Tools ───────────────────────────────────────────────
+    try:
+        (
+            components.registry,
+            components.guard,
+            components.mcp_manager,
+            components.search_engine,
+            components.meta_tools,
+        ) = await init_tools(config, safety_cfg)
+        logger.info("Phase 2 complete: tools initialized")
+    except Exception as e:
+        logger.error("Phase 2 failed (tools): %s", e)
+
+    # ── Phase 3: Memory ──────────────────────────────────────────────
+    try:
+        mem = await init_memory(
+            components.db,
+            provider,
+            config,
+            components.registry,
+            components.mcp_manager,
+            components.search_engine,
+        )
+        components.working_memory = mem["working_memory"]
+        components.episodic_memory = mem["episodic_memory"]
+        components.semantic_memory = mem["semantic_memory"]
+        components.smart_retriever = mem["smart_retriever"]
+        components.performance_tracker = mem["performance_tracker"]
+        components.skill_store = mem["skill_store"]
+        components.tool_gap_detector = mem["tool_gap_detector"]
+        components.context_builder = mem.get("context_builder")
+        components.profiler = mem.get("profiler")
+        components.mcp_store = mem.get("mcp_store")
+        logger.info("Phase 3 complete: memory initialized")
+    except Exception as e:
+        logger.error("Phase 3 failed (memory): %s", e)
+
+    # ── Phase 4: Agent ───────────────────────────────────────────────
+    try:
+        (
+            components.agent,
+            components.behavior_tracker,
+            components.audit_logger,
+            components.metrics_collector,
+        ) = await init_agent(
+            config,
+            provider,
+            components.registry,
+            components.guard,
+            components.db,
+            {
+                "working_memory": components.working_memory,
+                "episodic_memory": components.episodic_memory,
+                "semantic_memory": components.semantic_memory,
+                "smart_retriever": components.smart_retriever,
+                "tool_gap_detector": components.tool_gap_detector,
+                "context_builder": components.context_builder,
+                "profiler": components.profiler,
+            },
+        )
+        logger.info("Phase 4 complete: agent initialized")
+    except Exception as e:
+        logger.error("Phase 4 failed (agent): %s", e)
+
+    # ── Phase 5: Messenger (optional) ────────────────────────────────
+    if message_router is not None:
+        try:
+            messenger = await init_messenger(
+                components.db, message_router, event_callback,
+            )
+            # Messenger components are not stored on AppComponents by default;
+            # callers can extend AppComponents or use the returned dict.
+            logger.info("Phase 5 complete: messenger initialized")
+        except Exception as e:
+            logger.error("Phase 5 failed (messenger): %s", e)
+
+    return components
