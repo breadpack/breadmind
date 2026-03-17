@@ -27,17 +27,26 @@ class PersonalContextProvider(ContextProvider):
         user_id = self._default_user_id
         suggestions: list[str] = []
 
-        # Upcoming events (next 48 hours)
-        try:
-            event_adapter = self._registry.get_adapter("event", "builtin")
-            events = await event_adapter.list_items(
-                filters={"user_id": user_id, "start_after": now, "start_before": now + timedelta(hours=48)},
-                limit=10)
-            if events:
-                event_lines = [f"  - {e.title} ({e.start_at.strftime('%m/%d %H:%M')})" for e in events]
-                context_parts.append("Upcoming events (48h):\n" + "\n".join(event_lines))
-        except KeyError:
-            pass
+        # Upcoming events (next 48 hours) — use cache for speed
+        from breadmind.personal.cache import get_cache
+        cache = get_cache()
+
+        events: list = []
+        cached_events = await cache.get("event:upcoming:default")
+        if cached_events is not None:
+            events = cached_events
+        else:
+            try:
+                event_adapter = self._registry.get_adapter("event", "builtin")
+                events = await event_adapter.list_items(
+                    filters={"user_id": user_id, "start_after": now, "start_before": now + timedelta(hours=48)},
+                    limit=10)
+                await cache.set("event:upcoming:default", events, ttl=120)
+            except KeyError:
+                pass
+        if events:
+            event_lines = [f"  - {e.title} ({e.start_at.strftime('%m/%d %H:%M')})" for e in events]
+            context_parts.append("Upcoming events (48h):\n" + "\n".join(event_lines))
 
         # Check if external calendar is connected
         try:
@@ -49,20 +58,26 @@ class PersonalContextProvider(ContextProvider):
         except KeyError:
             pass
 
-        # Pending tasks due soon (next 48 hours)
-        try:
-            task_adapter = self._registry.get_adapter("task", "builtin")
-            tasks = await task_adapter.list_items(
-                filters={"user_id": user_id, "status": "pending", "due_before": now + timedelta(hours=48)},
-                limit=10)
-            if tasks:
-                task_lines = [
-                    f"  - {t.title} (due: {t.due_at.strftime('%m/%d %H:%M') if t.due_at else 'none'})"
-                    for t in tasks
-                ]
-                context_parts.append("Pending tasks (due within 48h):\n" + "\n".join(task_lines))
-        except KeyError:
-            pass
+        # Pending tasks due soon (next 48 hours) — use cache for speed
+        tasks: list = []
+        cached_tasks = await cache.get("task:pending:default")
+        if cached_tasks is not None:
+            tasks = cached_tasks
+        else:
+            try:
+                task_adapter = self._registry.get_adapter("task", "builtin")
+                tasks = await task_adapter.list_items(
+                    filters={"user_id": user_id, "status": "pending", "due_before": now + timedelta(hours=48)},
+                    limit=10)
+                await cache.set("task:pending:default", tasks, ttl=120)
+            except KeyError:
+                pass
+        if tasks:
+            task_lines = [
+                f"  - {t.title} (due: {t.due_at.strftime('%m/%d %H:%M') if t.due_at else 'none'})"
+                for t in tasks
+            ]
+            context_parts.append("Pending tasks (due within 48h):\n" + "\n".join(task_lines))
 
         # Check external task services
         external_task_connected = False
