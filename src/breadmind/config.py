@@ -96,52 +96,6 @@ class SecurityConfig:
     require_https: bool = False
 
 
-@dataclass
-class TimeoutsConfig:
-    """System timeout settings (UI-managed)."""
-    tool_call: int = 30  # seconds
-    chat: int = 120  # seconds
-    max_turns: int = 10
-    mcp_startup: int = 30  # seconds
-    health_check: int = 10  # seconds
-
-
-@dataclass
-class RetryConfig:
-    """Retry settings (UI-managed)."""
-    max_attempts: int = 3
-    base_delay: float = 1.0  # seconds
-    max_delay: float = 60.0  # seconds
-    backoff_multiplier: float = 2.0
-
-
-@dataclass
-class LimitsConfig:
-    """Resource limit settings (UI-managed)."""
-    max_messages_per_session: int = 200
-    max_sessions: int = 50
-    max_file_size_mb: int = 10
-    max_tool_output_chars: int = 50000
-    max_concurrent_tools: int = 5
-
-
-@dataclass
-class PollingConfig:
-    """Polling interval settings (UI-managed)."""
-    health_check_interval: int = 60  # seconds
-    metrics_interval: int = 30  # seconds
-    messenger_poll_interval: int = 5  # seconds
-    cleanup_interval: int = 300  # seconds
-
-
-@dataclass
-class MemoryGCConfig:
-    """Memory garbage collection settings (UI-managed)."""
-    interval_seconds: int = 3600
-    max_session_age_hours: int = 24
-    max_idle_minutes: int = 60
-    compact_threshold_mb: int = 100
-
 
 @dataclass
 class NetworkConfig:
