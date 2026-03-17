@@ -151,12 +151,30 @@ class NotionAdapter(ServiceAdapter):
     # ------------------------------------------------------------------
 
     async def authenticate(self, credentials: dict) -> bool:
-        self._api_key = credentials["api_key"]
+        self._api_key = credentials.get("api_key", "")
+        if not self._api_key:
+            return False
+
         if "database_id" in credentials:
             self._database_id = credentials["database_id"]
+
         try:
+            # Step 1: Verify API key
             await self._request("GET", "/users/me")
+
+            # Step 2: Verify database_id if provided
+            if self._database_id:
+                try:
+                    await self._request("GET", f"/databases/{self._database_id}")
+                except Exception:
+                    raise ValueError(
+                        f"Database ID '{self._database_id}' is invalid or not accessible. "
+                        "Make sure the integration is connected to this database."
+                    )
+
             return True
+        except ValueError:
+            raise  # Re-raise validation errors with clear message
         except Exception:
             self._api_key = None
             return False
