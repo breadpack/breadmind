@@ -35,6 +35,19 @@ _PLATFORM_CONFIGS = {
         {"name": "phone_number", "label": "Phone Number", "placeholder": "+1234567890", "secret": False},
         {"name": "signal_cli_path", "label": "signal-cli Path", "placeholder": "signal-cli", "secret": False},
     ]},
+    "teams": {"name": "Teams", "icon": "\U0001f4bc", "fields": [
+        {"name": "app_id", "label": "App ID", "placeholder": "Azure Bot App ID", "secret": True},
+        {"name": "app_password", "label": "App Password", "placeholder": "Azure Bot App Password", "secret": True},
+    ]},
+    "line": {"name": "LINE", "icon": "\U0001f4ac", "fields": [
+        {"name": "channel_token", "label": "Channel Access Token", "placeholder": "Channel access token", "secret": True},
+        {"name": "channel_secret", "label": "Channel Secret", "placeholder": "Channel secret", "secret": True},
+    ]},
+    "matrix": {"name": "Matrix", "icon": "\U0001f310", "fields": [
+        {"name": "homeserver", "label": "Homeserver URL", "placeholder": "https://matrix.org", "secret": False},
+        {"name": "access_token", "label": "Access Token", "placeholder": "syt_...", "secret": True},
+        {"name": "user_id", "label": "User ID", "placeholder": "@bot:matrix.org", "secret": False},
+    ]},
 }
 
 _TOKEN_KEYS = {
@@ -44,6 +57,9 @@ _TOKEN_KEYS = {
     "whatsapp": ["WHATSAPP_TWILIO_ACCOUNT_SID", "WHATSAPP_TWILIO_AUTH_TOKEN"],
     "gmail": ["GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET"],
     "signal": ["SIGNAL_PHONE_NUMBER"],
+    "teams": ["TEAMS_APP_ID", "TEAMS_APP_PASSWORD"],
+    "line": ["LINE_CHANNEL_TOKEN", "LINE_CHANNEL_SECRET"],
+    "matrix": ["MATRIX_HOMESERVER", "MATRIX_ACCESS_TOKEN"],
 }
 
 _TOKEN_MAP = {
@@ -53,9 +69,12 @@ _TOKEN_MAP = {
     "whatsapp": {"account_sid": "WHATSAPP_TWILIO_ACCOUNT_SID", "auth_token": "WHATSAPP_TWILIO_AUTH_TOKEN", "from_number": "WHATSAPP_FROM_NUMBER"},
     "gmail": {"client_id": "GMAIL_CLIENT_ID", "client_secret": "GMAIL_CLIENT_SECRET", "refresh_token": "GMAIL_REFRESH_TOKEN"},
     "signal": {"phone_number": "SIGNAL_PHONE_NUMBER", "signal_cli_path": "SIGNAL_CLI_PATH"},
+    "teams": {"app_id": "TEAMS_APP_ID", "app_password": "TEAMS_APP_PASSWORD"},
+    "line": {"channel_token": "LINE_CHANNEL_TOKEN", "channel_secret": "LINE_CHANNEL_SECRET"},
+    "matrix": {"homeserver": "MATRIX_HOMESERVER", "access_token": "MATRIX_ACCESS_TOKEN", "user_id": "MATRIX_USER_ID"},
 }
 
-_VALID_PLATFORMS = {"slack", "discord", "telegram", "whatsapp", "gmail", "signal"}
+_VALID_PLATFORMS = {"slack", "discord", "telegram", "whatsapp", "gmail", "signal", "teams", "line", "matrix"}
 
 
 def _wizard_state_to_dict(state) -> dict:
@@ -229,6 +248,35 @@ def setup_messenger_routes(app, app_state):
                 {"step": 4, "text": "Enter your phone number in the field above"},
             ]}
 
+        elif platform == "teams":
+            return {"url": "https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade", "steps": [
+                {"step": 1, "text": "Go to Azure Portal -> App registrations", "link": "https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"},
+                {"step": 2, "text": "Register a new application for your bot"},
+                {"step": 3, "text": "Create Azure Bot Service resource and link it to the app"},
+                {"step": 4, "text": "Copy Application (client) ID and create a client secret"},
+                {"step": 5, "text": "Set messaging endpoint to: <your-host>/api/messenger/teams/webhook"},
+                {"step": 6, "text": "Enter App ID and App Password above"},
+            ]}
+
+        elif platform == "line":
+            return {"url": "https://developers.line.biz/console/", "steps": [
+                {"step": 1, "text": "Go to LINE Developers Console", "link": "https://developers.line.biz/console/"},
+                {"step": 2, "text": "Create a Messaging API channel"},
+                {"step": 3, "text": "Issue a Channel Access Token (long-lived)"},
+                {"step": 4, "text": "Set webhook URL to: <your-host>/api/messenger/line/webhook"},
+                {"step": 5, "text": "Enable 'Use webhook' and disable 'Auto-reply messages'"},
+                {"step": 6, "text": "Enter Channel Access Token and Channel Secret above"},
+            ]}
+
+        elif platform == "matrix":
+            return {"url": "https://element.io/", "steps": [
+                {"step": 1, "text": "Set up a Matrix homeserver or use an existing one (e.g., matrix.org)"},
+                {"step": 2, "text": "Create a bot account on the homeserver"},
+                {"step": 3, "text": "Log in with Element or curl to obtain an access token"},
+                {"step": 4, "text": "Enter the homeserver URL, access token, and user ID above"},
+                {"step": 5, "text": "Matrix uses long-poll sync — no webhook configuration needed"},
+            ]}
+
         return JSONResponse(status_code=400, content={"error": "Invalid platform"})
 
     @app.get("/api/messenger/slack/oauth-callback")
@@ -335,6 +383,40 @@ def setup_messenger_routes(app, app_state):
                         return HTMLResponse(f"<html><body><h1>Gmail OAuth Failed</h1><p>{err}</p></body></html>")
         except Exception as e:
             return HTMLResponse(f"<html><body><h1>Error</h1><p>{e}</p></body></html>")
+
+    # ── Teams & LINE Webhook Routes ──
+
+    @app.post("/api/messenger/teams/webhook")
+    async def teams_webhook(request: Request):
+        """Receive Teams Bot Framework activities."""
+        body = await request.json()
+        if not app_state._message_router:
+            return JSONResponse(status_code=503, content={"error": "Messenger not configured"})
+        gw = app_state._message_router._gateways.get("teams")
+        if gw and hasattr(gw, "handle_incoming"):
+            response = await gw.handle_incoming(body)
+            if response:
+                return {"text": response}
+        return {"status": "ok"}
+
+    @app.post("/api/messenger/line/webhook")
+    async def line_webhook(request: Request):
+        """Receive LINE webhook events."""
+        body = await request.json()
+        if not app_state._message_router:
+            return JSONResponse(status_code=503, content={"error": "Messenger not configured"})
+        gw = app_state._message_router._gateways.get("line")
+        if gw and hasattr(gw, "handle_webhook"):
+            await gw.handle_webhook(body)
+        return {"status": "ok"}
+
+    @app.get("/api/messenger/{platform}/webhook-url")
+    async def get_webhook_url(request: Request, platform: str):
+        """Get the webhook URL for a platform (Teams, LINE)."""
+        if platform not in ("teams", "line"):
+            return JSONResponse(status_code=400, content={"error": f"{platform} does not use webhooks"})
+        base = str(request.base_url).rstrip("/")
+        return {"webhook_url": f"{base}/api/messenger/{platform}/webhook"}
 
     # ── Auto-Connect Wizard Routes ──
 
