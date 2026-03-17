@@ -35,6 +35,7 @@ class ToolExecutionContext:
     pending_approvals: dict[str, dict] = field(default_factory=dict)
     notify_progress: object | None = None  # async callback(status, detail)
     on_new_tool_detected: object | None = None  # async callback(cmd, output)
+    _injected_provider: object | None = None  # LLMProvider for delegate_tasks
 
 
 class ToolExecutor:
@@ -206,10 +207,28 @@ class ToolExecutor:
         """Execute a single tool call with timeout and error handling."""
         t_start = time.monotonic()
         try:
-            result = await asyncio.wait_for(
-                self._tools.execute(tc.name, tc.arguments),
-                timeout=self._tool_timeout,
-            )
+            # Special handling for delegate_tasks: inject provider and registry
+            # directly to bypass schema-based type coercion
+            if tc.name == "delegate_tasks":
+                from breadmind.tools.builtin import delegate_tasks as _delegate_fn
+                _delegate_timeout = self._tool_timeout * 3  # Allow more time for parallel subtasks
+                raw_result = await asyncio.wait_for(
+                    _delegate_fn(
+                        tasks=tc.arguments.get("tasks", "[]"),
+                        _agent=None,
+                        _provider=ctx._injected_provider,
+                        _registry=self._tools,
+                    ),
+                    timeout=_delegate_timeout,
+                )
+                from breadmind.tools.registry import ToolResult as _TR, _truncate_output
+                output_str = _truncate_output(str(raw_result))
+                result = _TR(success=True, output=output_str)
+            else:
+                result = await asyncio.wait_for(
+                    self._tools.execute(tc.name, tc.arguments),
+                    timeout=self._tool_timeout,
+                )
             # Check for tool gap
             if result.not_found and ctx.tool_gap_detector:
                 try:

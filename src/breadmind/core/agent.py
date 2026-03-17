@@ -404,6 +404,7 @@ class CoreAgent:
                 pending_approvals=self._pending_approvals,
                 notify_progress=self._notify_progress,
                 on_new_tool_detected=self._detect_new_tool,
+                _injected_provider=self._provider,
             )
             await self._tool_executor.process_tool_calls(
                 response.tool_calls, messages, exec_ctx,
@@ -467,7 +468,7 @@ class CoreAgent:
             "skill_manage", "memory_save", "memory_search",
             "swarm_role", "messenger_connect",
             "task_create", "task_list", "event_create", "event_list",
-            "reminder_set",
+            "reminder_set", "delegate_tasks",
         }
 
         if len(tools) <= max_tools:
