@@ -13,8 +13,11 @@ from breadmind.messenger.auto_connect.base import (
 from breadmind.messenger.auto_connect.orchestrator import ConnectionOrchestrator
 from breadmind.messenger.auto_connect.discord import DiscordAutoConnector
 from breadmind.messenger.auto_connect.gmail import GmailAutoConnector
+from breadmind.messenger.auto_connect.line import LINEAutoConnector
+from breadmind.messenger.auto_connect.matrix import MatrixAutoConnector
 from breadmind.messenger.auto_connect.signal import SignalAutoConnector
 from breadmind.messenger.auto_connect.slack import SlackAutoConnector
+from breadmind.messenger.auto_connect.teams import TeamsAutoConnector
 from breadmind.messenger.auto_connect.telegram import TelegramAutoConnector
 from breadmind.messenger.auto_connect.whatsapp import WhatsAppAutoConnector
 
@@ -27,10 +30,13 @@ __all__ = [
     "GatewayState",
     "GmailAutoConnector",
     "HealthStatus",
+    "LINEAutoConnector",
+    "MatrixAutoConnector",
     "InputField",
     "SetupStep",
     "SignalAutoConnector",
     "SlackAutoConnector",
+    "TeamsAutoConnector",
     "TelegramAutoConnector",
     "ValidationResult",
     "WhatsAppAutoConnector",
