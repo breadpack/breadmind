@@ -64,24 +64,51 @@ def _get_registry(request: Request):
     return registry
 
 
-def _get_default_adapter(registry, domain: str):
-    """Get the best adapter for creating new items.
+# User's preferred default service per domain, stored in DB
+_default_sources: dict[str, str] = {}  # domain -> source (e.g. "event" -> "google_calendar")
+_defaults_loaded: bool = False
 
-    Priority: connected external service > builtin.
-    If multiple external services are connected, prefer the first authenticated one.
-    Falls back to builtin if nothing else is available.
+
+async def _ensure_defaults_loaded(request: Request) -> None:
+    """Lazy-load default sources from DB on first access."""
+    global _defaults_loaded
+    if _defaults_loaded:
+        return
+    db = getattr(request.app.state, "db", None)
+    if db:
+        import json
+        data = await db.get_setting("personal_defaults")
+        if data:
+            _default_sources.update(json.loads(data))
+    _defaults_loaded = True
+
+
+def _get_default_adapter(registry, domain: str, request: Request | None = None):
+    """Get the preferred adapter for creating new items.
+
+    1. User's configured default (if set and authenticated)
+    2. First authenticated external service
+    3. Builtin (DB)
     """
+    # Check user preference
+    preferred = _default_sources.get(domain)
+    if preferred:
+        try:
+            adapter = registry.get_adapter(domain, preferred)
+            if preferred == "builtin" or _is_authenticated(adapter):
+                return adapter
+        except KeyError:
+            pass
+
+    # Fallback: first authenticated external, then builtin
     adapters = registry.list_adapters(domain)
     builtin = None
     for adapter in adapters:
         if adapter.source == "builtin":
             builtin = adapter
             continue
-        # Check if external adapter is authenticated (has credentials)
-        # External adapters typically have _api_key, _token, _oauth, etc.
         if _is_authenticated(adapter):
             return adapter
-    # Fallback to builtin
     if builtin:
         return builtin
     if adapters:
@@ -159,6 +186,7 @@ async def list_tasks(
 @router.post("/tasks", status_code=201)
 async def create_task(request: Request, body: TaskCreate):
     registry = _get_registry(request)
+    await _ensure_defaults_loaded(request)
     from breadmind.personal.models import Task
 
     adapter = _get_default_adapter(registry, "task")
@@ -229,6 +257,7 @@ async def list_events(
 @router.post("/events", status_code=201)
 async def create_event(request: Request, body: EventCreate):
     registry = _get_registry(request)
+    await _ensure_defaults_loaded(request)
     from breadmind.personal.models import Event, normalize_recurrence
     from datetime import timedelta
 
@@ -290,6 +319,7 @@ async def list_contacts(request: Request, query: str | None = None):
 @router.post("/contacts", status_code=201)
 async def create_contact(request: Request, body: ContactCreate):
     registry = _get_registry(request)
+    await _ensure_defaults_loaded(request)
     from breadmind.personal.models import Contact
 
     adapter = _get_default_adapter(registry, "contact")
@@ -301,6 +331,52 @@ async def create_contact(request: Request, body: ContactCreate):
     )
     contact_id = await adapter.create_item(contact)
     return {"id": contact_id, "name": body.name}
+
+
+# --- Default Service Settings ---
+
+@router.get("/defaults")
+async def get_defaults(request: Request):
+    """Get default service for each domain."""
+    registry = _get_registry(request)
+    result = {}
+    for domain in ("task", "event", "contact"):
+        # Current default
+        preferred = _default_sources.get(domain, "auto")
+        # Available options
+        adapters = registry.list_adapters(domain)
+        options = [{"source": a.source, "authenticated": a.source == "builtin" or _is_authenticated(a)}
+                   for a in adapters]
+        result[domain] = {"default": preferred, "options": options}
+    return result
+
+
+class DefaultSetting(BaseModel):
+    domain: str  # "task", "event", "contact"
+    source: str  # "builtin", "google_calendar", "notion", etc. or "auto"
+
+
+@router.post("/defaults")
+async def set_default(request: Request, body: DefaultSetting):
+    """Set default service for a domain."""
+    registry = _get_registry(request)
+    if body.source == "auto":
+        _default_sources.pop(body.domain, None)
+    else:
+        # Verify adapter exists
+        try:
+            registry.get_adapter(body.domain, body.source)
+        except KeyError:
+            raise HTTPException(404, f"Adapter '{body.source}' not found for {body.domain}")
+        _default_sources[body.domain] = body.source
+
+    # Persist to DB
+    db = getattr(request.app.state, "db", None)
+    if db:
+        import json
+        await db.set_setting("personal_defaults", json.dumps(_default_sources))
+
+    return {"domain": body.domain, "default": body.source}
 
 
 # --- Cross Domain ---
