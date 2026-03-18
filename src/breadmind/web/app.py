@@ -25,6 +25,7 @@ from breadmind.web.routes.messenger import setup_messenger_routes
 from breadmind.web.routes.settings import setup_settings_routes
 from breadmind.web.routes.integrations import router as integrations_router
 from breadmind.web.routes.oauth import router as oauth_router
+from breadmind.web.routes.infrastructure import router as infra_router
 from breadmind.web.routes.personal import router as personal_router
 from breadmind.web.routes.workers import setup_worker_routes
 
@@ -286,6 +287,7 @@ class WebApp:
         app.include_router(oauth_router)
         app.include_router(integrations_router)
         app.include_router(personal_router)
+        app.include_router(infra_router)
 
         # --- Static files (JS, CSS) ---
         static_dir = Path(__file__).parent / "static"
