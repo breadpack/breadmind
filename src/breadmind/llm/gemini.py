@@ -162,7 +162,71 @@ class GeminiProvider(LLMProvider):
                 })
 
         system_prompt = "\n\n".join(system_parts) if system_parts else None
+        contents = self._sanitize_turn_order(contents)
         return system_prompt, contents
+
+    @staticmethod
+    def _sanitize_turn_order(contents: list[dict]) -> list[dict]:
+        """Fix message ordering to satisfy Gemini API constraints.
+
+        Rules enforced:
+        1. Conversation must start with a "user" turn.
+        2. "user" and "model" turns must alternate (no consecutive same-role).
+        3. "function" (tool response) turns must come immediately after a
+           "model" turn that contains a functionCall.
+        4. Orphaned function responses (no preceding functionCall) are dropped.
+        5. Consecutive same-role turns are merged.
+        """
+        if not contents:
+            return contents
+
+        # Pass 1: merge consecutive same-role turns
+        merged: list[dict] = []
+        for entry in contents:
+            role = entry.get("role", "")
+            if merged and merged[-1].get("role") == role:
+                # Merge parts into previous entry of same role
+                merged[-1]["parts"].extend(entry.get("parts", []))
+            else:
+                merged.append(entry)
+
+        # Pass 2: ensure function responses follow a model functionCall
+        sanitized: list[dict] = []
+        for entry in merged:
+            role = entry.get("role", "")
+            if role == "function":
+                # Only keep if previous turn is a model with functionCall
+                if sanitized and sanitized[-1].get("role") == "model":
+                    has_fc = any(
+                        "functionCall" in p
+                        for p in sanitized[-1].get("parts", [])
+                    )
+                    if has_fc:
+                        sanitized.append(entry)
+                        continue
+                # Orphaned function response — drop it
+                logger.warning("Dropping orphaned function response turn")
+                continue
+            sanitized.append(entry)
+
+        # Pass 3: ensure it starts with user turn
+        if sanitized and sanitized[0].get("role") != "user":
+            sanitized.insert(0, {
+                "role": "user",
+                "parts": [{"text": "(conversation continued)"}],
+            })
+
+        # Pass 4: fix any remaining consecutive same-role turns
+        # (can happen after dropping orphaned function responses)
+        fixed: list[dict] = []
+        for entry in sanitized:
+            role = entry.get("role", "")
+            if fixed and fixed[-1].get("role") == role:
+                fixed[-1]["parts"].extend(entry.get("parts", []))
+            else:
+                fixed.append(entry)
+
+        return fixed
 
     def _convert_tool(self, tool: ToolDefinition) -> dict:
         params = dict(tool.parameters)
