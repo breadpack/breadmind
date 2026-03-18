@@ -149,7 +149,13 @@ def setup_messenger_routes(app, app_state):
             value = data.get(field_name, "")
             if value:
                 os.environ[env_key] = value
-                if app_state._db:
+                vault = getattr(request.app.state, "credential_vault", None)
+                if vault:
+                    try:
+                        await vault.store(f"messenger:{platform}:{env_key}", value)
+                    except Exception as e:
+                        logger.warning(f"Failed to save messenger token to vault: {e}")
+                elif app_state._db:
                     try:
                         await app_state._db.set_setting(f"messenger_token:{env_key}", {"value": value})
                     except Exception as e:

@@ -34,21 +34,32 @@ class MessengerSecurityManager:
 
     ROTATION_THRESHOLD_DAYS = 90
 
-    def __init__(self, db):
+    def __init__(self, db, vault=None):
         self._db = db
+        self._vault = vault
         self._access_logs: list[AccessLog] = []
         self._token_timestamps: dict[str, float] = {}
 
     async def store_token(
         self, platform: str, key: str, value: str, actor: str = "system"
     ) -> None:
-        """토큰을 DB에 저장하고 접근 로그 기록."""
+        """토큰을 암호화하여 Vault에 저장하고 접근 로그 기록."""
         import os
 
         os.environ[key] = value
-        await self._db.set_setting(
-            f"messenger_token:{key}", {"value": value, "stored_at": time.time()}
-        )
+
+        if self._vault:
+            await self._vault.store(
+                f"messenger:{platform}:{key}", value,
+                metadata={"platform": platform, "key": key},
+            )
+        else:
+            # Fallback: legacy unencrypted storage
+            await self._db.set_setting(
+                f"messenger_token:{key}",
+                {"value": value, "stored_at": time.time()},
+            )
+
         self._token_timestamps[f"{platform}:{key}"] = time.time()
         self._log_access(platform, "write", actor)
         logger.info("Token stored for %s:%s", platform, self.mask_token(value))
@@ -56,14 +67,23 @@ class MessengerSecurityManager:
     async def get_token(
         self, platform: str, key: str, actor: str = "system"
     ) -> str | None:
-        """DB에서 토큰 조회."""
+        """Vault(암호화) 또는 DB에서 토큰 조회."""
         import os
 
         value = os.environ.get(key)
+        if not value and self._vault:
+            value = await self._vault.retrieve(f"messenger:{platform}:{key}")
         if not value:
+            # Fallback: legacy unencrypted format
             result = await self._db.get_setting(f"messenger_token:{key}")
             if result and isinstance(result, dict):
                 value = result.get("value")
+                # Auto-migrate to vault on read
+                if value and self._vault:
+                    await self._vault.store(
+                        f"messenger:{platform}:{key}", value,
+                        metadata={"platform": platform, "key": key},
+                    )
         if value:
             self._log_access(platform, "read", actor)
         return value
@@ -71,10 +91,12 @@ class MessengerSecurityManager:
     async def delete_token(
         self, platform: str, key: str, actor: str = "system"
     ) -> None:
-        """토큰 삭제."""
+        """토큰 삭제 (Vault + legacy)."""
         import os
 
         os.environ.pop(key, None)
+        if self._vault:
+            await self._vault.delete(f"messenger:{platform}:{key}")
         await self._db.delete_setting(f"messenger_token:{key}")
         self._token_timestamps.pop(f"{platform}:{key}", None)
         self._log_access(platform, "delete", actor)

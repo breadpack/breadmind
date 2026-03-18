@@ -267,8 +267,11 @@ class CoreAgent:
             previous_messages = list(session.messages)
             logger.info(json.dumps({"event": "context_build", "session": session_id, "previous_msgs": len(previous_messages)}))
             messages = [system_msg] + previous_messages + [user_msg]
-            # Save the user message to memory
-            self._working_memory.add_message(session_id, user_msg)
+            # Save a sanitized version of the user message to memory
+            from breadmind.storage.credential_vault import CredentialVault
+            clean_content = CredentialVault.sanitize_text(message)
+            stored_user_msg = LLMMessage(role="user", content=clean_content)
+            self._working_memory.add_message(session_id, stored_user_msg)
         else:
             messages = [system_msg, user_msg]
 
@@ -409,6 +412,34 @@ class CoreAgent:
             await self._tool_executor.process_tool_calls(
                 response.tool_calls, messages, exec_ctx,
             )
+
+            # Check if any tool returned a [REQUEST_INPUT] form — bypass LLM
+            # and return directly to user so the form JSON is not corrupted
+            for msg in reversed(messages):
+                if msg.role == "tool" and msg.content and "[REQUEST_INPUT]" in msg.content:
+                    import re as _re
+                    raw = msg.content
+                    # Strip [success=True/False] prefix added by ToolExecutor
+                    raw = _re.sub(r"^\[success=(?:True|False)\]\s*", "", raw)
+                    match = _re.search(
+                        r"\[REQUEST_INPUT\]([\s\S]*?)\[/REQUEST_INPUT\]",
+                        raw,
+                    )
+                    if match:
+                        # Extract context text before the form tag
+                        idx = raw.index("[REQUEST_INPUT]")
+                        pre_text = raw[:idx].strip()
+                        # Remove internal markers from user-facing text
+                        pre_text = pre_text.replace("[NEED_CREDENTIALS]", "").strip()
+                        form_block = f"[REQUEST_INPUT]{match.group(1)}[/REQUEST_INPUT]"
+                        direct_response = f"{pre_text}\n\n{form_block}" if pre_text else form_block
+                        if self._working_memory is not None:
+                            self._working_memory.add_message(
+                                session_id,
+                                LLMMessage(role="assistant", content=direct_response),
+                            )
+                        return direct_response
+                    break
 
         logger.info(json.dumps({"event": "session_end", "user": user, "channel": channel, "reason": "max_turns"}))
         await get_event_bus().publish_fire_and_forget(Event(

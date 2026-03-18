@@ -799,11 +799,22 @@
                 const escaped = escapeHtml(displayText);
                 html = escaped.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" style="color:#60a5fa;">$1</a>');
             } else {
+                // Protect [REQUEST_INPUT] blocks from Markdown parsing
+                const inputBlocks = [];
+                let safeText = displayText.replace(/\[REQUEST_INPUT\]([\s\S]*?)\[\/REQUEST_INPUT\]/g, function(match) {
+                    const idx = inputBlocks.length;
+                    inputBlocks.push(match);
+                    return '\x00REQINPUT' + idx + '\x00';
+                });
                 try {
-                    html = marked.parse(displayText);
+                    html = marked.parse(safeText);
                 } catch(e) {
-                    html = escapeHtml(displayText);
+                    html = escapeHtml(safeText);
                 }
+                // Restore [REQUEST_INPUT] blocks after Markdown rendering
+                inputBlocks.forEach(function(block, idx) {
+                    html = html.replace('\x00REQINPUT' + idx + '\x00', block);
+                });
             }
             // Convert [OPEN_URL] tags to clickable action buttons
             if (type === 'bot') {
@@ -823,33 +834,30 @@
                             const inputType = f.type || 'text';
                             const required = f.required ? 'required' : '';
                             const value = f.value || '';
-                            fieldsHtml += `
-                                <div class="dynform-field">
-                                    <label class="dynform-label">${f.label || f.name}</label>
-                                    <input type="${inputType}"
-                                           name="${f.name}"
-                                           value="${value}"
-                                           placeholder="${f.placeholder || ''}"
-                                           class="dynform-input"
-                                           ${required}
-                                           data-form-id="${formId}">
-                                </div>`;
+                            fieldsHtml += '<div class="dynform-field">' +
+                                '<label class="dynform-label">' + (f.label || f.name) + '</label>' +
+                                '<input type="' + inputType + '" name="' + f.name + '" value="' + value + '"' +
+                                ' placeholder="' + (f.placeholder || '') + '" class="dynform-input"' +
+                                ' ' + required + ' data-form-id="' + formId + '">' +
+                                '</div>';
                         });
 
-                        return `
-                            <div class="dynform" id="${formId}">
-                                <div class="dynform-header">${config.title || '입력 요청'}</div>
-                                ${config.description ? `<div class="dynform-desc">${config.description}</div>` : ''}
-                                <div class="dynform-fields">${fieldsHtml}</div>
-                                <div class="dynform-actions">
-                                    <button class="btn-secondary" onclick="this.closest('.dynform').style.display='none'">취소</button>
-                                    <button class="btn-primary" onclick="submitDynForm('${formId}', ${JSON.stringify(JSON.stringify(config.submit_message || ''))})">확인</button>
-                                </div>
-                            </div>`;
+                        return '<div class="dynform" id="' + formId + '">' +
+                            '<div class="dynform-header">' + (config.title || '입력 요청') + '</div>' +
+                            (config.description ? '<div class="dynform-desc">' + config.description + '</div>' : '') +
+                            '<div class="dynform-fields">' + fieldsHtml + '</div>' +
+                            '<div class="dynform-actions">' +
+                            '<button class="btn-secondary" onclick="this.closest(\'.dynform\').style.display=\'none\'">취소</button>' +
+                            '<button class="btn-primary" onclick="submitDynForm(\'' + formId + '\', ' + JSON.stringify(JSON.stringify(config.submit_message || '')) + ')">확인</button>' +
+                            '</div></div>';
                     } catch (e) {
                         return '<div class="error">입력 폼 파싱 실패</div>';
                     }
                 });
+                // Clean up empty <p> tags around forms to prevent extra whitespace
+                html = html.replace(/<p>\s*(<div class="dynform")/g, '$1');
+                html = html.replace(/(<\/div>)\s*<\/p>/g, '$1');
+                html = html.replace(/<p>\s*<\/p>/g, '');
             }
             // Detect approval request and render inline buttons (fallback for non-WebSocket paths)
             if (type === 'bot') {
@@ -901,7 +909,6 @@
 
             const template = JSON.parse(templateStr);
             const inputs = form.querySelectorAll('.dynform-input');
-            let message = template;
 
             // Check required fields
             let valid = true;
@@ -919,20 +926,56 @@
                 return;
             }
 
-            // Replace {field_name} placeholders with values
-            inputs.forEach(inp => {
-                const placeholder = '{' + inp.name + '}';
-                message = message.split(placeholder).join(inp.value);
-            });
+            // Check if any password fields exist
+            const hasSecrets = Array.from(inputs).some(inp => inp.type === 'password');
 
-            // Hide the form
-            form.style.display = 'none';
-
-            // Send as a chat message
-            const inputEl = document.getElementById('messageInput');
-            if (inputEl && typeof sendMessage === 'function') {
-                inputEl.value = message;
-                sendMessage();
+            if (hasSecrets) {
+                // Route through secure vault API — passwords never enter chat
+                const fields = Array.from(inputs).map(inp => ({
+                    name: inp.name, value: inp.value, type: inp.type
+                }));
+                fetch('/api/vault/submit-form', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        form_id: formId, fields: fields,
+                        submit_message: template || ''
+                    })
+                })
+                .then(r => r.json())
+                .then(data => {
+                    form.style.display = 'none';
+                    const inputEl = document.getElementById('messageInput');
+                    if (inputEl && typeof sendMessage === 'function') {
+                        inputEl.value = data.sanitized_message;
+                        sendMessage();
+                    }
+                })
+                .catch(err => {
+                    console.error('Vault submit error:', err);
+                    if (typeof showToast === 'function')
+                        showToast('보안 저장 실패', 'error');
+                });
+            } else {
+                // No secrets — build message directly (no API call)
+                let message = template;
+                if (message) {
+                    inputs.forEach(inp => {
+                        message = message.split('{' + inp.name + '}').join(inp.value);
+                    });
+                } else {
+                    const parts = [];
+                    inputs.forEach(inp => {
+                        if (inp.value.trim()) parts.push(inp.name + ': ' + inp.value.trim());
+                    });
+                    message = parts.join(', ');
+                }
+                form.style.display = 'none';
+                const inputEl = document.getElementById('messageInput');
+                if (inputEl && typeof sendMessage === 'function') {
+                    inputEl.value = message;
+                    sendMessage();
+                }
             }
         }
 

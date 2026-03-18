@@ -160,3 +160,8 @@ def get_token_manager(request: Request):
 def get_commander(request: Request):
     """Get commander instance."""
     return getattr(request.app.state.app_state, '_commander', None)
+
+
+def get_credential_vault(request: Request):
+    """Get credential vault instance."""
+    return getattr(request.app.state, 'credential_vault', None)

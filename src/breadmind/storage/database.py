@@ -499,6 +499,15 @@ class Database:
                 result[row["key"]] = json.loads(val) if isinstance(val, str) else val
             return result
 
+    async def list_settings_by_prefix(self, prefix: str) -> list[str]:
+        """Return all setting keys that start with *prefix*."""
+        async with self.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT key FROM settings WHERE key LIKE $1",
+                prefix + "%",
+            )
+            return [row["key"] for row in rows]
+
     async def delete_setting(self, key: str) -> bool:
         async with self.acquire() as conn:
             result = await conn.execute(

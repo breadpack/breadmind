@@ -63,8 +63,9 @@ class OAuthCredentials:
 class OAuthManager:
     """Central OAuth 2.0 credential manager."""
 
-    def __init__(self, db: Any = None) -> None:
+    def __init__(self, db: Any = None, vault: Any = None) -> None:
         self._db = db
+        self._vault = vault
         self._credentials: dict[tuple[str, str], OAuthCredentials] = {}  # (provider, user_id) -> creds
 
     async def get_credentials(self, provider: str, user_id: str = "default") -> OAuthCredentials | None:
@@ -208,15 +209,30 @@ class OAuthManager:
         if not self._db:
             return
         key = f"oauth:{provider}:{user_id}"
-        await self._db.set_setting(key, json.dumps(creds.to_dict()))
+        creds_json = json.dumps(creds.to_dict())
+        if self._vault:
+            await self._vault.store(key, creds_json)
+        else:
+            await self._db.set_setting(key, creds_json)
 
     async def _load_credentials(self, provider: str, user_id: str) -> OAuthCredentials | None:
         if not self._db:
             return None
         key = f"oauth:{provider}:{user_id}"
+        # Try vault first
+        if self._vault:
+            encrypted_json = await self._vault.retrieve(key)
+            if encrypted_json:
+                return OAuthCredentials.from_dict(json.loads(encrypted_json))
+        # Fallback: legacy unencrypted
         data = await self._db.get_setting(key)
         if data:
-            return OAuthCredentials.from_dict(json.loads(data))
+            parsed = json.loads(data) if isinstance(data, str) else data
+            creds = OAuthCredentials.from_dict(parsed)
+            # Auto-migrate to vault
+            if self._vault:
+                await self._vault.store(key, json.dumps(creds.to_dict()))
+            return creds
         return None
 
     async def revoke(self, provider: str, user_id: str = "default") -> bool:

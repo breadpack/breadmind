@@ -174,6 +174,16 @@ async def shell_exec(command: str, host: str = "localhost", timeout: int = 30,
                      port: int = 22, username: str = None,
                      key_file: str = None, container: bool = False,
                      image: str = None) -> str:
+    # Redirect SSH commands to router_manage for secure credential handling
+    import re as _re
+    if _re.search(r'\bssh\b', command) and host == "localhost":
+        return (
+            "[REDIRECT] SSH 연결은 shell_exec 대신 router_manage 도구를 사용해야 합니다. "
+            "지금 즉시 router_manage(action='connect', host='대상IP', "
+            "router_type='openwrt', username='root') 를 호출하세요. "
+            "password가 없으면 빈 문자열로 호출하면 자격증명 입력 폼이 자동 생성됩니다."
+        )
+
     # Check if command is allowed (whitelist + blacklist)
     allowed, reason = _is_command_allowed(command)
     if not allowed:
@@ -588,12 +598,15 @@ async def network_scan() -> str:
 
 @tool(description="Manage a network router via SSH/CLI. Actions: "
       "'info' — show router capabilities and setup guide, "
-      "'connect' — connect to router (requires user confirmation), "
+      "'connect' — connect to router. Call with host and router_type. "
+      "If password is empty, a credential input form is automatically generated "
+      "for the user to fill — just call connect even without credentials. "
       "'exec' — execute a command on connected router, "
       "'status' — show connection status, "
       "'disconnect' — disconnect from router. "
       "Supports OpenWrt, ASUS, Synology, MikroTik. "
-      "IMPORTANT: Always ask user for confirmation before connecting.")
+      "WORKFLOW: To connect, call connect(host, router_type, username) "
+      "with empty password — a secure input form will be returned.")
 async def router_manage(
     action: str,
     router_type: str = "",
@@ -631,7 +644,48 @@ async def router_manage(
     elif action == "connect":
         if not host or not router_type:
             return "host와 router_type이 필요합니다."
-        result = await mgr.connect(host, router_type, username, password)
+        cap = mgr.get_capabilities(router_type)
+
+        # Resolve credential_ref from vault if password is a reference
+        actual_password = password
+        actual_username = username
+        if password.startswith("credential_ref:"):
+            try:
+                from breadmind.storage.credential_vault import CredentialVault
+                vault = mgr._vault
+                if vault:
+                    import json as _json
+                    cred_id = CredentialVault.extract_id(password)
+                    raw = await vault.retrieve(cred_id)
+                    if raw:
+                        data = _json.loads(raw)
+                        actual_password = data.get("password", "")
+                        actual_username = data.get("username", username)
+            except Exception:
+                pass
+
+        if cap.ssh and not actual_password:
+            import json as _json
+            form = {
+                "id": f"ssh-{host.replace('.', '-')}",
+                "title": f"SSH 접속 정보 — {router_type.upper()} ({host})",
+                "description": f"{cap.setup_guide}",
+                "fields": [
+                    {"name": "host", "label": "호스트", "type": "text",
+                     "value": host, "required": True},
+                    {"name": "username", "label": "사용자", "type": "text",
+                     "value": username, "required": True},
+                    {"name": "password", "label": "비밀번호", "type": "password",
+                     "placeholder": "SSH 비밀번호", "required": True},
+                ],
+                "submit_message": f"SSH 접속: {{username}}@{{host}}",
+            }
+            form_json = _json.dumps(form, ensure_ascii=False)
+            return (
+                f"[NEED_CREDENTIALS]\n"
+                f"[REQUEST_INPUT]{form_json}[/REQUEST_INPUT]"
+            )
+        result = await mgr.connect(host, router_type, actual_username, actual_password)
         return result["message"]
 
     elif action == "exec":

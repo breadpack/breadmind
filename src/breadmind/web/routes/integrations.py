@@ -125,11 +125,15 @@ async def connect_service(request: Request, service_id: str, body: ServiceCreden
             raise HTTPException(422, str(e))
 
         if success:
-            # Save credentials to DB
-            db = getattr(request.app.state, "db", None)
-            if db:
-                import json
-                await db.set_setting(f"integration:{service_id}", json.dumps(creds))
+            # Save credentials — prefer vault over plaintext DB
+            import json
+            vault = getattr(request.app.state, "credential_vault", None)
+            if vault:
+                await vault.store(f"integration:{service_id}", json.dumps(creds))
+            else:
+                db = getattr(request.app.state, "db", None)
+                if db:
+                    await db.set_setting(f"integration:{service_id}", json.dumps(creds))
 
             return {"connected": True, "service": service_id}
         else:
@@ -240,11 +244,14 @@ async def _check_connection(request: Request, service_id: str, info: dict) -> bo
             return lifecycle.is_running(service_id)
         return False
 
-    # Check if we have stored credentials
+    # Check if we have stored credentials — prefer vault, fallback to DB
+    vault = getattr(request.app.state, "credential_vault", None)
+    if vault:
+        if await vault.exists(f"integration:{service_id}"):
+            return True
     db = getattr(request.app.state, "db", None)
     if db:
         stored = await db.get_setting(f"integration:{service_id}")
         return stored is not None
-
 
     return False

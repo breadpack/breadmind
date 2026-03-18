@@ -199,7 +199,13 @@ class ToolExecutor:
             )
             messages.append(tool_msg)
             if ctx.working_memory is not None:
-                ctx.working_memory.add_message(ctx.session_id, tool_msg)
+                from breadmind.storage.credential_vault import CredentialVault
+                clean_output = CredentialVault.sanitize_text(output)
+                stored_msg = LLMMessage(
+                    role="tool", content=clean_output,
+                    tool_call_id=tc.id, name=tc.name,
+                )
+                ctx.working_memory.add_message(ctx.session_id, stored_msg)
 
     async def _execute_one(
         self, tc: ToolCall, ctx: ToolExecutionContext,

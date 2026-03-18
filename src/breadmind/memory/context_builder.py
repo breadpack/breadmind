@@ -202,7 +202,27 @@ class ContextBuilder:
         history = self._working.get_messages(session_id)
         messages.extend(history)
 
+        # 5. Sanitize credentials from all messages before sending to LLM
+        messages = self._sanitize_credentials(messages)
+
         return messages
+
+    @staticmethod
+    def _sanitize_credentials(messages: list[LLMMessage]) -> list[LLMMessage]:
+        """Remove plaintext credentials from messages.
+
+        Leaves ``credential_ref:xxx`` tokens intact (safe for LLM).
+        """
+        from breadmind.storage.credential_vault import CredentialVault
+
+        sanitized = []
+        for msg in messages:
+            if msg.content:
+                clean = CredentialVault.sanitize_text(msg.content)
+                if clean != msg.content:
+                    msg = LLMMessage(role=msg.role, content=clean)
+            sanitized.append(msg)
+        return sanitized
 
     def _extract_keywords(self, text: str) -> list[str]:
         """Simple keyword extraction - split, filter stopwords, take top terms."""
@@ -232,15 +252,16 @@ class ContextBuilder:
         if not messages or len(messages) < message_threshold:
             return None
 
-        # Build summary from user messages
-        user_msgs = [m.content for m in messages if m.role == "user" and m.content]
+        # Build summary from user messages (sanitize to prevent credential leakage)
+        from breadmind.storage.credential_vault import CredentialVault
+        user_msgs = [CredentialVault.sanitize_text(m.content) for m in messages if m.role == "user" and m.content]
         if not user_msgs:
             return None
 
         summary = "Session summary: " + " | ".join(user_msgs[:5])
 
-        # Extract keywords from all messages
-        all_text = " ".join(m.content for m in messages if m.content)
+        # Extract keywords from all messages (sanitize to prevent credential leakage)
+        all_text = CredentialVault.sanitize_text(" ".join(m.content for m in messages if m.content))
         keywords = self._extract_keywords(all_text)[:10]
 
         note = await self._episodic.add_note(

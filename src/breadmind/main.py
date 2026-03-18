@@ -137,7 +137,21 @@ async def run():
             perms.get("admin_users", []),
         )
 
-    memory_components = await init_memory(db, provider, config, registry, mcp_manager, search_engine)
+    # Initialize credential vault
+    credential_vault = None
+    try:
+        from breadmind.storage.credential_vault import CredentialVault
+        credential_vault = CredentialVault(db)
+        await credential_vault.migrate_plaintext_credentials()
+        from breadmind.core.router_manager import get_router_manager
+        get_router_manager().set_vault(credential_vault)
+    except Exception as e:
+        logger.warning("Credential vault init failed: %s", e)
+
+    memory_components = await init_memory(
+        db, provider, config, registry, mcp_manager, search_engine,
+        vault=credential_vault,
+    )
     agent, behavior_tracker, audit_logger, metrics_collector = await init_agent(
         config, provider, registry, guard, db, memory_components,
     )
@@ -370,6 +384,8 @@ async def run():
                 web_app.app.state.adapter_registry = memory_components["adapter_registry"]
             if memory_components.get("oauth_manager"):
                 web_app.app.state.oauth_manager = memory_components["oauth_manager"]
+            if credential_vault:
+                web_app.app.state.credential_vault = credential_vault
 
             # Wire EventBus → WebSocket broadcast (all events forwarded to UI)
             async def _event_to_websocket(event):

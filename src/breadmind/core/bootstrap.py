@@ -68,6 +68,7 @@ class AppComponents:
     tool_gap_detector: Any = None
     adapter_registry: Any = None
     oauth_manager: Any = None
+    credential_vault: Any = None
     personal_scheduler: Any = None
     event_bus: EventBus | None = None
 
@@ -119,10 +120,7 @@ async def init_tools(config, safety_cfg):
     """
     from breadmind.tools.registry import ToolRegistry
     from breadmind.core.safety import SafetyGuard
-    from breadmind.tools.builtin import (
-        shell_exec, web_search, file_read, file_write,
-        messenger_connect, swarm_role,
-    )
+    from breadmind.tools.builtin import register_builtin_tools
     from breadmind.tools.mcp_client import MCPClientManager
     from breadmind.tools.registry_search import RegistrySearchEngine, RegistryConfig
     from breadmind.tools.meta import create_meta_tools
@@ -133,9 +131,9 @@ async def init_tools(config, safety_cfg):
         require_approval=safety_cfg.get("require_approval", []),
     )
 
-    # Built-in tools
-    for t in [shell_exec, web_search, file_read, file_write, messenger_connect, swarm_role]:
-        registry.register(t)
+    # Built-in tools (includes shell_exec, web_search, file_read, file_write,
+    # messenger_connect, swarm_role, delegate_tasks, network_scan, router_manage)
+    register_builtin_tools(registry)
 
     # Browser tools (optional)
     try:
@@ -185,7 +183,7 @@ async def init_tools(config, safety_cfg):
     return registry, guard, mcp_manager, search_engine, meta_tools
 
 
-async def init_memory(db, provider, config, registry, mcp_manager, search_engine):
+async def init_memory(db, provider, config, registry, mcp_manager, search_engine, vault=None):
     """Initialize memory layers, SmartRetriever, profiler, and self-expansion components.
 
     Phase: 3
@@ -316,7 +314,7 @@ async def init_memory(db, provider, config, registry, mcp_manager, search_engine
 
         # --- Phase 2: OAuth Manager ---
         from breadmind.personal.oauth import OAuthManager
-        oauth_manager = OAuthManager(db)
+        oauth_manager = OAuthManager(db, vault=vault)
 
         # --- Phase 2-3: Google adapters (require OAuth) ---
         # These are registered but only functional after OAuth authentication
@@ -516,7 +514,7 @@ async def init_agent(config, provider, registry, guard, db, memory_components):
     return agent, behavior_tracker, audit_logger, metrics_collector
 
 
-async def init_messenger(db, message_router, event_callback=None):
+async def init_messenger(db, message_router, event_callback=None, vault=None):
     """Initialize messenger auto-connect, lifecycle, and security components.
 
     Phase: 5
@@ -529,7 +527,7 @@ async def init_messenger(db, message_router, event_callback=None):
     from breadmind.messenger.lifecycle import GatewayLifecycleManager
     from breadmind.messenger.auto_connect.orchestrator import ConnectionOrchestrator
 
-    security = MessengerSecurityManager(db)
+    security = MessengerSecurityManager(db, vault=vault)
     await security.load_token_timestamps()
 
     lifecycle = GatewayLifecycleManager(
@@ -601,6 +599,18 @@ async def bootstrap_all(
         from breadmind.storage.settings_store import FileSettingsStore
         components.db = FileSettingsStore(os.path.join(config_dir, "settings.json"))
 
+    # ── Phase 1.5: Credential Vault ──────────────────────────────────
+    try:
+        from breadmind.storage.credential_vault import CredentialVault
+        components.credential_vault = CredentialVault(components.db)
+        await components.credential_vault.migrate_plaintext_credentials()
+        # Inject vault into router manager singleton
+        from breadmind.core.router_manager import get_router_manager
+        get_router_manager().set_vault(components.credential_vault)
+        logger.info("Phase 1.5 complete: credential vault initialized")
+    except Exception as e:
+        logger.warning("Credential vault init failed (non-critical): %s", e)
+
     # ── Phase 2: Tools ───────────────────────────────────────────────
     try:
         (
@@ -623,6 +633,7 @@ async def bootstrap_all(
             components.registry,
             components.mcp_manager,
             components.search_engine,
+            vault=components.credential_vault,
         )
         components.working_memory = mem["working_memory"]
         components.episodic_memory = mem["episodic_memory"]
@@ -672,6 +683,7 @@ async def bootstrap_all(
         try:
             await init_messenger(
                 components.db, message_router, event_callback,
+                vault=components.credential_vault,
             )
             # Messenger components are not stored on AppComponents by default;
             # callers can extend AppComponents or use the returned dict.

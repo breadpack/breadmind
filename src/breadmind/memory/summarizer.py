@@ -117,14 +117,17 @@ class ConversationSummarizer:
         old = remaining[: -self._keep_recent]
         recent = remaining[-self._keep_recent :]
 
-        # Build summary text from old messages
+        # Build summary text from old messages (sanitize to prevent credential leakage)
+        from breadmind.storage.credential_vault import CredentialVault
         parts = []
         for m in old:
             if m.content and m.role in ("user", "assistant"):
                 label = "User" if m.role == "user" else "Assistant"
-                parts.append(f"{label}: {m.content[:500]}")
+                content = CredentialVault.sanitize_text(m.content[:500])
+                parts.append(f"{label}: {content}")
             elif m.role == "tool" and m.content:
-                parts.append(f"Tool result: {m.content[:300]}")
+                content = CredentialVault.sanitize_text(m.content[:300])
+                parts.append(f"Tool result: {content}")
         if not parts:
             return messages
 

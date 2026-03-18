@@ -132,8 +132,9 @@ ROUTER_CAPABILITIES: dict[str, RouterCapability] = {
 class RouterManager:
     """Manages router connections with user confirmation."""
 
-    def __init__(self) -> None:
+    def __init__(self, vault: Any = None) -> None:
         self._connected_routers: dict[str, dict[str, Any]] = {}  # ip -> config
+        self._vault = vault
 
     def get_capabilities(self, router_type: str) -> RouterCapability:
         """Get capabilities for a router type."""
@@ -200,11 +201,23 @@ class RouterManager:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
 
             if proc.returncode == 0:
+                # Store credentials in vault (encrypted), NOT in memory
+                cred_id = f"router:{host}:ssh"
+                if self._vault and password:
+                    import json as _json
+                    await self._vault.store(cred_id, _json.dumps({
+                        "username": username,
+                        "password": password,
+                        "port": port,
+                    }))
+
                 self._connected_routers[host] = {
                     "type": router_type,
                     "username": username,
                     "port": port,
                     "host": host,
+                    # No password in memory — use vault ref
+                    "credential_ref": cred_id,
                 }
 
                 # Add to SSH allowed hosts so shell_exec can reach it
@@ -273,6 +286,10 @@ class RouterManager:
     def disconnect(self, host: str) -> bool:
         """Disconnect from a router. Returns True if it was connected."""
         return self._connected_routers.pop(host, None) is not None
+
+    def set_vault(self, vault) -> None:
+        """Inject the credential vault after construction."""
+        self._vault = vault
 
 
 # Singleton
