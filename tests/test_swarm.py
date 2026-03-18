@@ -2,7 +2,7 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock
 from breadmind.core.swarm import (
-    SwarmManager, SwarmCoordinator, SwarmTask, SwarmContext, SwarmMember, DEFAULT_ROLES,
+    SwarmManager, SwarmTask, SwarmContext, SwarmMember, DEFAULT_ROLES,
 )
 
 
@@ -24,61 +24,6 @@ class TestSwarmContext:
         assert ctx.task_graph == {}
         assert ctx.findings == []
         assert ctx.final_result == ""
-
-
-class TestSwarmCoordinator:
-    def test_parse_tasks_valid(self):
-        coord = SwarmCoordinator()
-        response = (
-            "TASK|k8s_expert|Check pod health|none\n"
-            "TASK|proxmox_expert|Check VM status|none\n"
-            "TASK|performance_analyst|Compare results|1,2\n"
-        )
-        tasks = coord._parse_tasks(response)
-        assert len(tasks) == 3
-        assert tasks[0].role == "k8s_expert"
-        assert tasks[2].depends_on == ["t1", "t2"]
-
-    def test_parse_tasks_invalid_role(self):
-        coord = SwarmCoordinator()
-        response = "TASK|unknown_role|Do something|none\n"
-        tasks = coord._parse_tasks(response)
-        assert tasks[0].role == "general"  # Falls back to general
-
-    def test_parse_tasks_empty(self):
-        coord = SwarmCoordinator()
-        tasks = coord._parse_tasks("no valid tasks here")
-        assert len(tasks) == 1  # Fallback task
-        assert tasks[0].role == "general"
-
-    @pytest.mark.asyncio
-    async def test_decompose_no_handler(self):
-        coord = SwarmCoordinator()
-        tasks = await coord.decompose("Test goal")
-        assert len(tasks) == 1
-        assert tasks[0].role == "general"
-
-    @pytest.mark.asyncio
-    async def test_decompose_with_handler(self):
-        handler = AsyncMock(return_value="TASK|k8s_expert|Check pods|none\nTASK|general|Summarize|1")
-        coord = SwarmCoordinator(message_handler=handler)
-        tasks = await coord.decompose("Check cluster health")
-        assert len(tasks) == 2
-        handler.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_aggregate_no_handler(self):
-        coord = SwarmCoordinator()
-        result = await coord.aggregate("goal", {"t1": "result1", "t2": "result2"})
-        assert "result1" in result
-        assert "result2" in result
-
-    @pytest.mark.asyncio
-    async def test_aggregate_with_handler(self):
-        handler = AsyncMock(return_value="Aggregated analysis")
-        coord = SwarmCoordinator(message_handler=handler)
-        result = await coord.aggregate("goal", {"t1": "r1"})
-        assert result == "Aggregated analysis"
 
 
 class TestSwarmManager:
@@ -144,25 +89,6 @@ class TestSwarmMemberSource:
     def test_auto_source(self):
         member = SwarmMember(role="test", system_prompt="prompt", source="auto")
         assert member.source == "auto"
-
-
-class TestSwarmCoordinatorAvailableRoles:
-    @pytest.mark.asyncio
-    async def test_decompose_uses_available_roles(self):
-        async def mock_handler(msg, user="", channel=""):
-            return "TASK|custom_role|Do the custom thing|none"
-        coordinator = SwarmCoordinator(message_handler=mock_handler)
-        available = {"custom_role", "general"}
-        tasks = await coordinator.decompose("test goal", available_roles=available)
-        assert any(t.role == "custom_role" for t in tasks)
-
-    @pytest.mark.asyncio
-    async def test_parse_tasks_respects_available_roles(self):
-        coordinator = SwarmCoordinator()
-        response = "TASK|auto_created|Do something|none\nTASK|unknown_xyz|Another|none"
-        tasks = coordinator._parse_tasks(response, available_roles={"auto_created", "general"})
-        assert tasks[0].role == "auto_created"
-        assert tasks[1].role == "general"
 
 
 class TestSwarmManagerAddRoleSource:
