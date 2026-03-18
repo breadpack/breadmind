@@ -1,9 +1,8 @@
 import asyncio
 import json
 import logging
-import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +69,7 @@ class RegistrySearchEngine:
             elif reg.type == "skillsmp":
                 api_key = getattr(reg, "_api_key", None)
                 tasks.append(self._safe_search(
-                    lambda q, l: self._search_skillsmp(q, l, reg.url, api_key),
+                    lambda q, limit: self._search_skillsmp(q, limit, reg.url, api_key),
                     query, limit,
                 ))
         all_results = await asyncio.gather(*tasks)
@@ -142,7 +141,6 @@ class RegistrySearchEngine:
         for skill in skills:
             name = skill.get("name", "").lower()
             source = skill.get("source", "").lower()
-            full = f"{source}/{name}"
 
             # Score: exact match > word match > substring
             score = 0.0

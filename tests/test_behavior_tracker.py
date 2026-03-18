@@ -164,9 +164,9 @@ async def test_analyze_db_persistence():
 
 # --- Task 4-6 tests: CoreAgent integration ---
 
-from breadmind.core.agent import CoreAgent
-from breadmind.core.safety import SafetyGuard
-from breadmind.tools.registry import ToolRegistry
+from breadmind.core.agent import CoreAgent  # noqa: E402
+from breadmind.core.safety import SafetyGuard  # noqa: E402
+from breadmind.tools.registry import ToolRegistry  # noqa: E402
 
 
 def test_agent_behavior_prompt_getter_setter():

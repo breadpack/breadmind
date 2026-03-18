@@ -6,9 +6,9 @@ import signal
 import sys
 
 logger = logging.getLogger(__name__)
-from breadmind.config import load_config, load_safety_config, get_default_config_dir, set_env_file_path, load_env_file
-from breadmind.llm.factory import create_provider
-from breadmind.monitoring.engine import MonitoringEngine
+from breadmind.config import load_config, load_safety_config, get_default_config_dir, set_env_file_path, load_env_file  # noqa: E402
+from breadmind.llm.factory import create_provider  # noqa: E402
+from breadmind.monitoring.engine import MonitoringEngine  # noqa: E402
 
 
 def _find_free_port(preferred: int, max_attempts: int = 10) -> int:
@@ -80,11 +80,11 @@ async def run():
         config = load_config("config")
         safety_cfg = load_safety_config("config")
         config_dir = "config"
-        print(f"  Config: ./config (local)")
+        print("  Config: ./config (local)")
     else:
         config = load_config(config_dir)  # will return defaults
         safety_cfg = load_safety_config(config_dir)
-        print(f"  Config: defaults (no config dir found)")
+        print("  Config: defaults (no config dir found)")
 
     config.validate()
 

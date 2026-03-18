@@ -69,7 +69,7 @@ class EmbeddingService:
 
         if self._provider in ("ollama", "auto"):
             try:
-                import aiohttp
+                import aiohttp  # noqa: F401
                 # Quick connectivity check before committing to ollama
                 import socket
                 host = self._ollama_base_url.replace("http://", "").replace("https://", "")

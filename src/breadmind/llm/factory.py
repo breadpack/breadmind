@@ -91,10 +91,10 @@ def create_provider(config: Any) -> LLMProvider:
 
 
 # --- Provider 자동 등록 (Single Source of Truth) ---
-from breadmind.llm.claude import ClaudeProvider
-from breadmind.llm.gemini import GeminiProvider
-from breadmind.llm.grok import GrokProvider
-from breadmind.llm.ollama import OllamaProvider
+from breadmind.llm.claude import ClaudeProvider  # noqa: E402
+from breadmind.llm.gemini import GeminiProvider  # noqa: E402
+from breadmind.llm.grok import GrokProvider  # noqa: E402
+from breadmind.llm.ollama import OllamaProvider  # noqa: E402
 
 register_provider("gemini", GeminiProvider, "GEMINI_API_KEY",
                    display_name="Google Gemini", free_tier=True,
