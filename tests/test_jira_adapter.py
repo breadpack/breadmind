@@ -1,9 +1,20 @@
 # tests/test_jira_adapter.py
 """JiraAdapter unit tests using mock aiohttp."""
+import base64
 from datetime import datetime, timezone
 from unittest.mock import patch
 
 import pytest
+
+
+def _setup_adapter_auth(adapter):
+    """Set adapter's internal auth state without making API calls."""
+    adapter._base_url = _CREDENTIALS["base_url"]
+    email = _CREDENTIALS["email"]
+    api_token = _CREDENTIALS["api_token"]
+    adapter._project_key = _CREDENTIALS["project_key"]
+    token = base64.b64encode(f"{email}:{api_token}".encode()).decode()
+    adapter._auth_header = f"Basic {token}"
 
 
 _CREDENTIALS = {
@@ -92,11 +103,13 @@ def mock_session():
 
 
 @pytest.mark.asyncio
-async def test_authenticate_success():
+async def test_authenticate_success(mock_session):
     from breadmind.personal.adapters.jira import JiraAdapter
 
+    patcher, session = mock_session({"displayName": "testuser"}, status=200)
     adapter = JiraAdapter()
-    result = await adapter.authenticate(_CREDENTIALS)
+    with patcher:
+        result = await adapter.authenticate(_CREDENTIALS)
     assert result is True
     assert adapter._base_url == "https://mycompany.atlassian.net"
     assert adapter._auth_header.startswith("Basic ")
@@ -117,8 +130,7 @@ async def test_list_items(mock_session):
 
     patcher, session = mock_session({"issues": [_SAMPLE_ISSUE]})
     adapter = JiraAdapter()
-    await adapter.authenticate(_CREDENTIALS)
-
+    _setup_adapter_auth(adapter)
     with patcher:
         tasks = await adapter.list_items()
 
@@ -140,7 +152,7 @@ async def test_create_item(mock_session):
 
     patcher, session = mock_session({"key": "PROJ-42", "id": "10042"})
     adapter = JiraAdapter()
-    await adapter.authenticate(_CREDENTIALS)
+    _setup_adapter_auth(adapter)
 
     task = Task(
         id="",
@@ -166,8 +178,7 @@ async def test_update_item(mock_session):
 
     patcher, session = mock_session({}, status=204)
     adapter = JiraAdapter()
-    await adapter.authenticate(_CREDENTIALS)
-
+    _setup_adapter_auth(adapter)
     with patcher:
         ok = await adapter.update_item("PROJ-1", {"title": "Updated title"})
 

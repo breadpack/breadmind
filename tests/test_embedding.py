@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import patch, MagicMock
 from breadmind.memory.embedding import EmbeddingService
 
 
@@ -113,7 +114,10 @@ class TestEmbeddingServiceProviders:
 
     def test_resolve_backend_ollama(self):
         service = EmbeddingService(provider="ollama")
-        service._resolve_backend()
+        mock_sock = MagicMock()
+        mock_sock.connect = MagicMock()
+        with patch("socket.socket", return_value=mock_sock):
+            service._resolve_backend()
         assert service._backend == "ollama"
 
     @pytest.mark.asyncio
