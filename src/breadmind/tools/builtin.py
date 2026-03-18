@@ -587,8 +587,87 @@ async def network_scan() -> str:
     return await network_scan_tool()
 
 
+@tool(description="Manage a network router via SSH/CLI. Actions: "
+      "'info' — show router capabilities and setup guide, "
+      "'connect' — connect to router (requires user confirmation), "
+      "'exec' — execute a command on connected router, "
+      "'status' — show connection status, "
+      "'disconnect' — disconnect from router. "
+      "Supports OpenWrt, ASUS, Synology, MikroTik. "
+      "IMPORTANT: Always ask user for confirmation before connecting.")
+async def router_manage(
+    action: str,
+    router_type: str = "",
+    host: str = "",
+    username: str = "root",
+    password: str = "",
+    command: str = "",
+) -> str:
+    """Manage routers via SSH/CLI."""
+    from breadmind.core.router_manager import get_router_manager, ROUTER_CAPABILITIES
+
+    mgr = get_router_manager()
+
+    if action == "info":
+        if router_type:
+            cap = mgr.get_capabilities(router_type)
+            lines = [f"## {router_type.upper()} 라우터\n"]
+            lines.append(cap.description)
+            lines.append(f"\n**SSH 지원:** {'예' if cap.ssh else '아니오'}")
+            lines.append(f"**웹 관리:** {'예' if cap.web_api else '아니오'}")
+            if cap.setup_guide:
+                lines.append(f"\n**설정 가이드:** {cap.setup_guide}")
+            if cap.cli_commands:
+                lines.append("\n**사용 가능한 명령어 예시:**")
+                for cmd in cap.cli_commands[:8]:
+                    lines.append(f"  `{cmd}`")
+            return "\n".join(lines)
+        else:
+            lines = ["## 지원 라우터 목록\n"]
+            for rtype, cap in ROUTER_CAPABILITIES.items():
+                ssh = "SSH 지원" if cap.ssh else "SSH 미지원"
+                lines.append(f"- **{rtype}**: {ssh} | {cap.description[:50]}...")
+            return "\n".join(lines)
+
+    elif action == "connect":
+        if not host or not router_type:
+            return "host와 router_type이 필요합니다."
+        result = await mgr.connect(host, router_type, username, password)
+        return result["message"]
+
+    elif action == "exec":
+        if not host or not command:
+            return "host와 command가 필요합니다."
+        return await mgr.execute(host, command)
+
+    elif action == "status":
+        if host:
+            connected = mgr.is_connected(host)
+            return f"{host}: {'연결됨' if connected else '연결되지 않음'}"
+        else:
+            conns = mgr._connected_routers
+            if not conns:
+                return "연결된 라우터가 없습니다."
+            lines = ["## 연결된 라우터\n"]
+            for ip, cfg in conns.items():
+                lines.append(
+                    f"- {ip} ({cfg['type']}) — {cfg['username']}@{ip}:{cfg['port']}"
+                )
+            return "\n".join(lines)
+
+    elif action == "disconnect":
+        if mgr.disconnect(host):
+            return f"{host} 연결 해제됨"
+        return f"{host}는 연결되어 있지 않습니다."
+
+    return (
+        f"알 수 없는 action: {action}. "
+        "사용 가능: info, connect, exec, status, disconnect"
+    )
+
+
 def register_builtin_tools(registry) -> None:
     """Register all built-in tools into the given ToolRegistry."""
     for t in [shell_exec, web_search, file_read, file_write, messenger_connect,
-              swarm_role, delegate_tasks, network_scan]:
+              swarm_role, delegate_tasks, network_scan, router_manage]:
         registry.register(t)
