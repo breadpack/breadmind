@@ -477,7 +477,10 @@
                     <div class="section">
                         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
                             <h2 style="margin:0;">Sessions</h2>
-                            <button onclick="newSession()" style="background:#3b82f6;border:none;color:#fff;padding:2px 8px;border-radius:4px;cursor:pointer;font-size:11px;">+ New</button>
+                            <span>
+                                <button onclick="clearAllSessions()" title="전체 삭제" style="background:transparent;border:1px solid #475569;color:#94a3b8;padding:2px 6px;border-radius:4px;cursor:pointer;font-size:10px;margin-right:4px;">Clear</button>
+                                <button onclick="newSession()" style="background:#3b82f6;border:none;color:#fff;padding:2px 8px;border-radius:4px;cursor:pointer;font-size:11px;">+ New</button>
+                            </span>
                         </div>
                         <div id="sessionList"><div class="tool-item" style="color:#64748b">Loading...</div></div>
                     </div>
@@ -699,6 +702,7 @@
                     return `<div class="tool-item" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;${isActive ? 'background:#334155;border-radius:4px;' : ''}" onclick="switchSession('${sid}')">
                         <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;${isActive ? 'color:#60a5fa;' : ''}">${escapeHtml(title)}</span>
                         <span style="font-size:10px;color:#64748b;margin-left:4px;flex-shrink:0;">${time}</span>
+                        <span class="session-delete" onclick="event.stopPropagation();deleteSession('${sid}')" title="삭제" style="margin-left:4px;color:#64748b;font-size:12px;cursor:pointer;opacity:0.5;flex-shrink:0;">✕</span>
                     </div>`;
                 }).join('');
             } catch(e) {}
@@ -711,6 +715,30 @@
                 ws.send(JSON.stringify({ type: 'switch_session', session_id: sessionId }));
             }
             loadSessions();
+        }
+
+        async function deleteSession(sessionId) {
+            try {
+                await fetch('/api/sessions/' + sessionId, { method: 'DELETE' });
+                if (currentSessionId === sessionId) {
+                    newSession();
+                }
+                loadSessions();
+            } catch(e) {}
+        }
+
+        async function clearAllSessions() {
+            if (!confirm('모든 세션을 삭제하시겠습니까?')) return;
+            try {
+                const resp = await fetch('/api/sessions');
+                const data = await resp.json();
+                for (const s of (data.sessions || [])) {
+                    const sid = s.session_id.replace('web:', '');
+                    await fetch('/api/sessions/' + sid, { method: 'DELETE' });
+                }
+                newSession();
+                loadSessions();
+            } catch(e) {}
         }
 
         function newSession() {
