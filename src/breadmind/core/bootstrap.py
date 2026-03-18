@@ -70,6 +70,7 @@ class AppComponents:
     oauth_manager: Any = None
     credential_vault: Any = None
     personal_scheduler: Any = None
+    bg_job_manager: Any = None
     event_bus: EventBus | None = None
 
 
@@ -690,6 +691,33 @@ async def bootstrap_all(
             logger.info("Phase 5 complete: messenger initialized")
         except Exception as e:
             logger.error("Phase 5 failed (messenger): %s", e)
+
+    # ── Phase 6: Background Jobs (requires DB + Redis) ─────────────
+    try:
+        from breadmind.storage.bg_jobs_store import BgJobsStore
+        from breadmind.tasks.manager import BackgroundJobManager
+        from breadmind.tools.builtin import set_bg_job_manager
+
+        # Only enable with real DB (not FileSettingsStore)
+        if hasattr(components.db, "acquire"):
+            store = BgJobsStore(components.db)
+            task_cfg = getattr(config, "task", None)
+            redis_url = task_cfg.redis_url if task_cfg else "redis://localhost:6379/0"
+            max_monitors = task_cfg.max_concurrent_monitors if task_cfg else 10
+
+            mgr = BackgroundJobManager(store, redis_url=redis_url, max_monitors=max_monitors)
+            await mgr.recover_on_startup()
+
+            retention = task_cfg.completed_retention_days if task_cfg else 30
+            await mgr.cleanup_old_jobs(retention)
+
+            set_bg_job_manager(mgr)
+            components.bg_job_manager = mgr
+            logger.info("Phase 6 complete: background jobs initialized")
+        else:
+            logger.info("Phase 6 skipped: background jobs require PostgreSQL")
+    except Exception as e:
+        logger.warning("Phase 6 failed (background jobs): %s", e)
 
     # ── Personal Scheduler (after messenger) ───────────────────────
     if components.adapter_registry is not None and message_router is not None:

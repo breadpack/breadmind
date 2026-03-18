@@ -29,6 +29,7 @@ from breadmind.web.routes.infrastructure import router as infra_router
 from breadmind.web.routes.personal import router as personal_router
 from breadmind.web.routes.workers import setup_worker_routes
 from breadmind.web.routes.credential_input import setup_credential_input_routes
+from breadmind.web.routes.bg_jobs import setup_bg_job_routes
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,8 @@ class WebApp:
                  container_executor=None, swarm_manager=None,
                  skill_store=None, performance_tracker=None, search_engine=None,
                  token_manager=None, commander=None,
-                 messenger_security=None, lifecycle_manager=None, orchestrator=None):
+                 messenger_security=None, lifecycle_manager=None, orchestrator=None,
+                 bg_job_manager=None):
         self.app = FastAPI(title="BreadMind", version="0.1.0")
         # Expose self via FastAPI state so Depends() helpers can reach it
         self.app.state.app_state = self
@@ -73,6 +75,7 @@ class WebApp:
         self._messenger_security = messenger_security
         self._lifecycle_manager = lifecycle_manager
         self._orchestrator = orchestrator
+        self._bg_job_manager = bg_job_manager
 
         # CORS middleware
         if config and hasattr(config, 'security'):
@@ -287,6 +290,7 @@ class WebApp:
         setup_worker_routes(app, self)
         setup_chat_routes(app, self)
         setup_credential_input_routes(app, self)
+        setup_bg_job_routes(app, self)
         app.include_router(oauth_router)
         app.include_router(integrations_router)
         app.include_router(personal_router)

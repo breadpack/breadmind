@@ -298,6 +298,27 @@ async def run():
                 from breadmind.tools.builtin import set_orchestrator
                 set_orchestrator(messenger_components["orchestrator"])
 
+            # Initialize background job manager (requires PostgreSQL + Redis)
+            bg_job_manager = None
+            try:
+                if hasattr(db, "acquire"):
+                    from breadmind.storage.bg_jobs_store import BgJobsStore
+                    from breadmind.tasks.manager import BackgroundJobManager
+                    from breadmind.tools.builtin import set_bg_job_manager
+
+                    bg_store = BgJobsStore(db)
+                    bg_job_manager = BackgroundJobManager(
+                        bg_store,
+                        redis_url=config.task.redis_url,
+                        max_monitors=config.task.max_concurrent_monitors,
+                    )
+                    await bg_job_manager.recover_on_startup()
+                    await bg_job_manager.cleanup_old_jobs(config.task.completed_retention_days)
+                    set_bg_job_manager(bg_job_manager)
+                    logger.info("Background job manager initialized")
+            except Exception as e:
+                logger.warning("Background jobs not available: %s", e)
+
             # Commander mode initialization
             commander = None
             if mode == "commander":
@@ -378,6 +399,7 @@ async def run():
                 messenger_security=messenger_components["security"] if messenger_components else None,
                 lifecycle_manager=messenger_components["lifecycle"] if messenger_components else None,
                 orchestrator=messenger_components["orchestrator"] if messenger_components else None,
+                bg_job_manager=bg_job_manager,
             )
             # Expose personal assistant components to web routes
             if memory_components.get("adapter_registry"):
