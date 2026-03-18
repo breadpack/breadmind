@@ -94,19 +94,37 @@ ROUTER_CAPABILITIES: dict[str, RouterCapability] = {
     "iptime": RouterCapability(
         ssh=False,
         web_api=True,
-        cli_commands=[],
-        description="ipTIME 라우터는 SSH를 지원하지 않습니다. "
-                    "웹 관리 페이지를 통해 제어합니다.",
-        setup_guide="웹 브라우저로 http://192.168.0.1 접속. 기본 계정: admin / admin",
+        cli_commands=[
+            "browser:navigate http://192.168.0.1",
+            "browser:get_text (연결된 기기 목록)",
+            "browser:get_text (네트워크 설정)",
+            "browser:screenshot (현재 상태)",
+        ],
+        description="ipTIME 라우터는 SSH를 지원하지 않지만, BreadMind의 브라우저 도구로 "
+                    "웹 관리 페이지에 접속하여 설정을 확인하고 변경할 수 있습니다.",
+        setup_guide="기본 주소: http://192.168.0.1 / 기본 계정: admin / admin",
     ),
     "tplink": RouterCapability(
         ssh=False,
         web_api=True,
-        cli_commands=[],
-        description="TP-Link 라우터는 일반적으로 SSH를 지원하지 않습니다. "
-                    "웹 관리 페이지를 사용합니다.",
-        setup_guide="웹 브라우저로 http://192.168.0.1 또는 "
-                     "http://tplinkwifi.net 접속.",
+        cli_commands=[
+            "browser:navigate http://192.168.0.1",
+            "browser:get_text (상태 확인)",
+            "browser:screenshot (현재 상태)",
+        ],
+        description="TP-Link 라우터는 SSH를 지원하지 않지만, BreadMind의 브라우저 도구로 "
+                    "웹 관리 페이지에 접속하여 제어할 수 있습니다.",
+        setup_guide="기본 주소: http://192.168.0.1 또는 http://tplinkwifi.net",
+    ),
+    "netgear": RouterCapability(
+        ssh=False,
+        web_api=True,
+        cli_commands=[
+            "browser:navigate http://192.168.1.1",
+            "browser:get_text (상태 확인)",
+        ],
+        description="Netgear 라우터는 BreadMind의 브라우저 도구로 웹 관리 페이지에 접속하여 제어합니다.",
+        setup_guide="기본 주소: http://192.168.1.1 또는 http://routerlogin.net / 기본 계정: admin / password",
     ),
 }
 
@@ -144,13 +162,26 @@ class RouterManager:
         """
         cap = self.get_capabilities(router_type)
         if not cap.ssh:
+            # SSH 미지원 → 브라우저로 웹 관리 페이지 접근 안내
+            admin_url = f"http://{host}"
+            self._connected_routers[host] = {
+                "type": router_type,
+                "mode": "browser",
+                "admin_url": admin_url,
+                "host": host,
+            }
             return {
-                "success": False,
+                "success": True,
                 "message": (
-                    f"{router_type} 라우터는 SSH를 지원하지 않습니다. "
-                    f"웹 관리 페이지({cap.setup_guide})를 사용하세요."
+                    f"{router_type} 라우터는 SSH를 지원하지 않지만, "
+                    f"브라우저로 관리 페이지에 접속할 수 있습니다.\n"
+                    f"관리자 페이지: {admin_url}\n"
+                    f"{cap.setup_guide}\n\n"
+                    f"'browser' 도구로 `navigate {admin_url}` 하면 "
+                    f"설정을 확인하고 변경할 수 있습니다."
                 ),
-                "web_only": True,
+                "mode": "browser",
+                "admin_url": admin_url,
             }
 
         import asyncio
@@ -199,10 +230,22 @@ class RouterManager:
             return {"success": False, "message": f"연결 오류: {e}"}
 
     async def execute(self, host: str, command: str) -> str:
-        """Execute a command on a connected router."""
+        """Execute a command on a connected router (SSH or browser)."""
         config = self._connected_routers.get(host)
         if not config:
             return f"[error] {host}에 연결되지 않았습니다. 먼저 연결하세요."
+
+        # Browser mode — delegate to browser tool
+        if config.get("mode") == "browser":
+            admin_url = config.get("admin_url", f"http://{host}")
+            return (
+                f"[browser_mode] 이 라우터는 브라우저로 제어합니다.\n"
+                f"'browser' 도구를 사용하세요:\n"
+                f"  action=navigate, url={admin_url}\n"
+                f"  action=get_text (페이지 내용 읽기)\n"
+                f"  action=click, selector=... (버튼 클릭)\n"
+                f"  action=screenshot (화면 캡처)"
+            )
 
         import asyncio
 
@@ -211,8 +254,8 @@ class RouterManager:
                 "ssh",
                 "-o", "StrictHostKeyChecking=no",
                 "-o", "ConnectTimeout=5",
-                "-p", str(config['port']),
-                f"{config['username']}@{host}",
+                "-p", str(config.get('port', 22)),
+                f"{config.get('username', 'root')}@{host}",
                 command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
