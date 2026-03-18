@@ -811,6 +811,46 @@
                     return '<a href="' + url + '" target="_blank" class="chat-action-btn" onclick="window.open(this.href, \'_blank\', \'width=600,height=700\'); return false;">\uD83D\uDD17 연결하기</a>';
                 });
             }
+            // Convert [REQUEST_INPUT] tags to dynamic inline forms
+            if (type === 'bot') {
+                html = html.replace(/\[REQUEST_INPUT\]([\s\S]*?)\[\/REQUEST_INPUT\]/g, function(match, jsonStr) {
+                    try {
+                        const config = JSON.parse(jsonStr.trim());
+                        const formId = 'dynform-' + (config.id || Date.now());
+
+                        let fieldsHtml = '';
+                        (config.fields || []).forEach(f => {
+                            const inputType = f.type || 'text';
+                            const required = f.required ? 'required' : '';
+                            const value = f.value || '';
+                            fieldsHtml += `
+                                <div class="dynform-field">
+                                    <label class="dynform-label">${f.label || f.name}</label>
+                                    <input type="${inputType}"
+                                           name="${f.name}"
+                                           value="${value}"
+                                           placeholder="${f.placeholder || ''}"
+                                           class="dynform-input"
+                                           ${required}
+                                           data-form-id="${formId}">
+                                </div>`;
+                        });
+
+                        return `
+                            <div class="dynform" id="${formId}">
+                                <div class="dynform-header">${config.title || '입력 요청'}</div>
+                                ${config.description ? `<div class="dynform-desc">${config.description}</div>` : ''}
+                                <div class="dynform-fields">${fieldsHtml}</div>
+                                <div class="dynform-actions">
+                                    <button class="btn-secondary" onclick="this.closest('.dynform').style.display='none'">취소</button>
+                                    <button class="btn-primary" onclick="submitDynForm('${formId}', ${JSON.stringify(JSON.stringify(config.submit_message || ''))})">확인</button>
+                                </div>
+                            </div>`;
+                    } catch (e) {
+                        return '<div class="error">입력 폼 파싱 실패</div>';
+                    }
+                });
+            }
             // Detect approval request and render inline buttons (fallback for non-WebSocket paths)
             if (type === 'bot') {
                 const approvalMatch = displayText.match(/(?:승인|[Aa]pproval)\s*ID[:\s]*([a-f0-9-]+)/);
@@ -853,6 +893,47 @@
             try { mermaid.run({nodes: div.querySelectorAll('.mermaid')}); } catch(e) {}
             messagesDiv.appendChild(div);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function submitDynForm(formId, templateStr) {
+            const form = document.getElementById(formId);
+            if (!form) return;
+
+            const template = JSON.parse(templateStr);
+            const inputs = form.querySelectorAll('.dynform-input');
+            let message = template;
+
+            // Check required fields
+            let valid = true;
+            inputs.forEach(inp => {
+                if (inp.required && !inp.value.trim()) {
+                    inp.classList.add('invalid');
+                    valid = false;
+                } else {
+                    inp.classList.remove('invalid');
+                }
+            });
+
+            if (!valid) {
+                if (typeof showToast === 'function') showToast('필수 항목을 입력하세요', 'warning');
+                return;
+            }
+
+            // Replace {field_name} placeholders with values
+            inputs.forEach(inp => {
+                const placeholder = '{' + inp.name + '}';
+                message = message.split(placeholder).join(inp.value);
+            });
+
+            // Hide the form
+            form.style.display = 'none';
+
+            // Send as a chat message
+            const inputEl = document.getElementById('messageInput');
+            if (inputEl && typeof sendMessage === 'function') {
+                inputEl.value = message;
+                sendMessage();
+            }
         }
 
         function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
