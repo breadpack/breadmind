@@ -466,7 +466,7 @@ class CoreAgent:
             "shell_exec", "web_search", "file_read", "file_write",
             "browser", "mcp_search", "mcp_install", "mcp_list",
             "skill_manage", "memory_save", "memory_search",
-            "swarm_role", "messenger_connect", "network_scan",
+            "swarm_role", "messenger_connect", "network_scan", "router_manage",
             "task_create", "task_list", "event_create", "event_list",
             "reminder_set", "delegate_tasks",
         }
