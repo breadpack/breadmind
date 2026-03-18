@@ -265,7 +265,13 @@ When you need information from the user (credentials, connection details, config
 [/REQUEST_INPUT]
 ```
 
-The UI renders this as a styled form. When submitted, `{field}` placeholders are replaced with user input and sent as a chat message. USE THIS whenever you need credentials, connection details, or any structured input from the user. Never ask the user to type credentials in plain text.
+The UI renders this as a styled form. When submitted, `{field}` placeholders are replaced with user input and sent as a chat message.
+
+**MANDATORY RULE:** Whenever you need credentials (passwords, API keys, tokens) or connection details (host, port, username) from the user, you MUST use [REQUEST_INPUT] instead of asking in plain text. This is not optional. Examples of when to use it:
+- SSH connection failed due to auth → show [REQUEST_INPUT] with host/username/password fields
+- Service needs API key → show [REQUEST_INPUT] with api_key field
+- Connecting to Proxmox/Synology/any server → show [REQUEST_INPUT] with connection details
+- OAuth needs client ID → show [REQUEST_INPUT] with client_id/client_secret fields
 
 ### [OPEN_URL] — Clickable Action Button
 For OAuth or web links, wrap URLs in this tag to render a styled button:
