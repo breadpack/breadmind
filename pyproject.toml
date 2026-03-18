@@ -6,6 +6,7 @@ build-backend = "hatchling.build"
 name = "breadmind"
 version = "0.1.0"
 description = "AI Infrastructure Agent for K8s, Proxmox, OpenWrt"
+license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     "anthropic>=0.40.0",
