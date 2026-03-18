@@ -256,6 +256,29 @@ class CoreAgent:
         if self._profiler:
             self._profiler.record_intent(user, intent.category.value)
 
+        # Auto-resolve credential_ref in user message — bypass LLM
+        import re as _cred_re
+        cred_match = _cred_re.search(r"credential_ref:([\w:.@\-]+)", message)
+        if cred_match and self._tools.has_tool("router_manage"):
+            cred_ref = f"credential_ref:{cred_match.group(1)}"
+            # Extract host/username from message context
+            host_match = _cred_re.search(r"(\d+\.\d+\.\d+\.\d+)", message)
+            host = host_match.group(1) if host_match else ""
+            user_match = _cred_re.search(r"(\w+)@", message)
+            uname = user_match.group(1) if user_match else "root"
+            if host:
+                try:
+                    result = await self._tools.execute("router_manage", {
+                        "action": "connect",
+                        "host": host,
+                        "router_type": "openwrt",
+                        "username": uname,
+                        "password": cred_ref,
+                    })
+                    return result.output
+                except Exception as e:
+                    logger.warning("Auto credential_ref connect failed: %s", e)
+
         # Build initial messages
         system_msg = LLMMessage(role="system", content=self._system_prompt)
         user_msg = LLMMessage(role="user", content=message)
