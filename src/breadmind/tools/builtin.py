@@ -653,10 +653,12 @@ async def router_manage(
             try:
                 from breadmind.storage.credential_vault import CredentialVault
                 vault = mgr._vault
+                logger.info("Resolving credential_ref: %s, vault=%s", password[:60], vault is not None)
                 if vault:
                     import json as _json
                     cred_id = CredentialVault.extract_id(password)
                     raw = await vault.retrieve(cred_id)
+                    logger.info("Vault retrieve for %s: found=%s", cred_id, raw is not None)
                     if raw:
                         # Try JSON first (router credentials stored as JSON)
                         try:
@@ -666,8 +668,9 @@ async def router_manage(
                         except (ValueError, TypeError):
                             # Plain string from form submission
                             actual_password = raw
-            except Exception:
-                pass
+                        logger.info("Credential resolved, password length: %d", len(actual_password))
+            except Exception as e:
+                logger.error("Credential resolution error: %s", e)
 
         if cap.ssh and not actual_password:
             import json as _json

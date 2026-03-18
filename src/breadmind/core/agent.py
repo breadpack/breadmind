@@ -409,13 +409,14 @@ class CoreAgent:
                 on_new_tool_detected=self._detect_new_tool,
                 _injected_provider=self._provider,
             )
+            msg_count_before = len(messages)
             await self._tool_executor.process_tool_calls(
                 response.tool_calls, messages, exec_ctx,
             )
 
-            # Check if any tool returned a [REQUEST_INPUT] form — bypass LLM
-            # and return directly to user so the form JSON is not corrupted
-            for msg in reversed(messages):
+            # Check only NEW tool messages from this turn for [REQUEST_INPUT]
+            new_messages = messages[msg_count_before:]
+            for msg in reversed(new_messages):
                 if msg.role == "tool" and msg.content and "[REQUEST_INPUT]" in msg.content:
                     import re as _re
                     raw = msg.content
