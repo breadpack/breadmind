@@ -578,8 +578,17 @@ for _internal_param in ("_agent", "_provider", "_registry"):
         _defn.parameters["required"].remove(_internal_param)
 
 
+@tool(description="Scan the local network to discover the router, gateway, and all connected devices. "
+      "Identifies router type (ipTIME, OpenWrt, ASUS, etc.) and device types (server, NAS, PC, phone). "
+      "Use when the user asks about their network, connected devices, or home server setup.")
+async def network_scan() -> str:
+    """Scan and report network environment."""
+    from breadmind.core.network_awareness import network_scan_tool
+    return await network_scan_tool()
+
+
 def register_builtin_tools(registry) -> None:
     """Register all built-in tools into the given ToolRegistry."""
     for t in [shell_exec, web_search, file_read, file_write, messenger_connect,
-              swarm_role, delegate_tasks]:
+              swarm_role, delegate_tasks, network_scan]:
         registry.register(t)
