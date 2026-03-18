@@ -4,8 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +110,7 @@ class K8sPodAnalyzer(BaseAnalyzer):
             })
             if not output.success or "No resources" in output.output:
                 return results
-            lines = [l for l in output.output.strip().split("\n") if l and not l.startswith("NAMESPACE")]
+            lines = [line for line in output.output.strip().split("\n") if line and not line.startswith("NAMESPACE")]
             for line in lines:
                 parts = line.split()
                 if len(parts) >= 4:

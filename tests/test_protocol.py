@@ -1,7 +1,6 @@
 import pytest
-import time
 from breadmind.network.protocol import (
-    MessageEnvelope, MessageType, create_message,
+    MessageType, create_message,
     serialize_message, deserialize_message,
     MessageIntegrityError, MessageSequenceError,
 )
@@ -72,7 +71,7 @@ def test_create_message_with_trace_id():
     assert msg.reply_to == "msg-456"
 
 
-from breadmind.network.protocol import SequenceTracker
+from breadmind.network.protocol import SequenceTracker  # noqa: E402
 
 def test_sequence_tracker_increments():
     tracker = SequenceTracker()

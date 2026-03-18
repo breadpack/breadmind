@@ -169,8 +169,8 @@ class GitHubIssuesAdapter(ServiceAdapter):
 
     def _issue_to_task(self, issue: dict) -> Task:
         labels = [
-            l["name"] if isinstance(l, dict) else l
-            for l in issue.get("labels", [])
+            label["name"] if isinstance(label, dict) else label
+            for label in issue.get("labels", [])
         ]
         assignees = issue.get("assignees", [])
         priority = "high" if "priority:high" in labels else "medium"

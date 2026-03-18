@@ -26,11 +26,11 @@ def tool(description: str):
         for name, param in sig.parameters.items():
             prop = {"type": "string"}
             annotation = param.annotation
-            if annotation == int:
+            if annotation is int:
                 prop = {"type": "integer"}
-            elif annotation == float:
+            elif annotation is float:
                 prop = {"type": "number"}
-            elif annotation == bool:
+            elif annotation is bool:
                 prop = {"type": "boolean"}
             properties[name] = prop
             if param.default is inspect.Parameter.empty:

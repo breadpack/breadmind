@@ -389,7 +389,7 @@ def _expand_env(obj):
 
 # Re-export env/secrets functions for backward compatibility.
 # Implementation lives in config_env.py.
-from breadmind.config_env import (  # noqa: F401
+from breadmind.config_env import (  # noqa: F401, E402
     _VALID_API_KEY_NAMES,
     set_env_file_path,
     encrypt_value,
