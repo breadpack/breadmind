@@ -679,7 +679,7 @@ async def router_manage(
         if cap.ssh and not actual_password:
             import json as _json
             form = {
-                "id": f"ssh-{host.replace('.', '-')}",
+                "id": f"ssh-{host}",
                 "title": f"SSH 접속 정보 — {router_type.upper()} ({host})",
                 "description": f"{cap.setup_guide}",
                 "fields": [

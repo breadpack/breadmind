@@ -827,7 +827,7 @@
                 html = html.replace(/\[REQUEST_INPUT\]([\s\S]*?)\[\/REQUEST_INPUT\]/g, function(match, jsonStr) {
                     try {
                         const config = JSON.parse(jsonStr.trim());
-                        const formId = 'dynform-' + (config.id || '') + '-' + Date.now();
+                        const formId = (config.id || 'form') + '-' + Math.random().toString(36).slice(2, 6);
 
                         let fieldsHtml = '';
                         (config.fields || []).forEach(f => {
@@ -949,13 +949,12 @@
                 .then(r => r.json())
                 .then(data => {
                     form.style.display = 'none';
-                    // Append credential refs so LLM can use them for tool calls
+                    // Append credential refs so LLM can pass them to tools
                     let msg = data.sanitized_message;
                     if (data.refs && Object.keys(data.refs).length > 0) {
-                        const refParts = Object.entries(data.refs).map(
-                            ([k, v]) => k + '=' + v
-                        );
-                        msg += ' [credentials: ' + refParts.join(', ') + ']';
+                        Object.entries(data.refs).forEach(([k, v]) => {
+                            msg += '\n' + k + ': ' + v;
+                        });
                     }
                     const inputEl = document.getElementById('messageInput');
                     if (inputEl && typeof sendMessage === 'function') {
