@@ -185,6 +185,29 @@ class Database:
                     created_at TIMESTAMPTZ DEFAULT NOW()
                 );
 
+                CREATE TABLE IF NOT EXISTS bg_jobs (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    celery_task_id VARCHAR(255),
+                    title VARCHAR(200) NOT NULL,
+                    description TEXT DEFAULT '',
+                    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                    job_type VARCHAR(20) NOT NULL DEFAULT 'single',
+                    "user" VARCHAR(100) DEFAULT '',
+                    channel VARCHAR(200) DEFAULT '',
+                    platform VARCHAR(20) DEFAULT 'web',
+                    progress JSONB DEFAULT '{"last_completed_step": 0, "total_steps": 0, "message": "", "percentage": 0}',
+                    result TEXT,
+                    error TEXT,
+                    execution_plan JSONB DEFAULT '[]',
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ DEFAULT NOW(),
+                    started_at TIMESTAMPTZ,
+                    completed_at TIMESTAMPTZ,
+                    metadata JSONB DEFAULT '{}'
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_bg_jobs_status ON bg_jobs(status);
+                CREATE INDEX IF NOT EXISTS idx_bg_jobs_user ON bg_jobs("user");
                 CREATE INDEX IF NOT EXISTS idx_tasks_user_status ON tasks(user_id, status);
                 CREATE INDEX IF NOT EXISTS idx_tasks_due_at ON tasks(due_at) WHERE status = 'pending';
                 CREATE INDEX IF NOT EXISTS idx_events_user_time ON events(user_id, start_at);

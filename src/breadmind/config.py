@@ -98,6 +98,15 @@ class SecurityConfig:
 
 
 @dataclass
+class TaskConfig:
+    """Background task system configuration (Celery + Redis)."""
+    redis_url: str = "redis://localhost:6379/0"
+    max_concurrent_monitors: int = 10
+    result_max_size_kb: int = 100
+    completed_retention_days: int = 30
+
+
+@dataclass
 class NetworkConfig:
     """Distributed agent network configuration."""
     mode: str = "standalone"  # standalone | commander | worker
@@ -123,6 +132,7 @@ class AppConfig:
     mcp: MCPConfig = field(default_factory=MCPConfig)
     web: WebConfig = field(default_factory=WebConfig)
     security: SecurityConfig = field(default_factory=SecurityConfig)
+    task: TaskConfig = field(default_factory=TaskConfig)
     network: NetworkConfig = field(default_factory=NetworkConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     timeouts: TimeoutsConfig = field(default_factory=TimeoutsConfig)
@@ -436,6 +446,11 @@ def load_config(config_dir: str = "config") -> AppConfig:
     env_cors = os.environ.get("BREADMIND_CORS_ORIGINS")
     if env_cors:
         config.security.cors_origins = [o.strip() for o in env_cors.split(",")]
+
+    # Redis URL for background tasks
+    redis_url = os.environ.get("BREADMIND_REDIS_URL")
+    if redis_url:
+        config.task.redis_url = redis_url
 
     return config
 
