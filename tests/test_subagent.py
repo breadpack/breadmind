@@ -1,12 +1,11 @@
 import asyncio
 import hashlib
 import hmac
-import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from fastapi.testclient import TestClient
 
-from breadmind.core.subagent import SubAgentManager, SubAgentTask
+from breadmind.core.subagent import SubAgentManager
 from breadmind.web.webhook import WebhookManager, WebhookEndpoint
 from breadmind.web.app import WebApp
 

@@ -1,11 +1,10 @@
 """Tests for Commander WebSocket hub."""
 
 import pytest
-import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from breadmind.network.commander import Commander
-from breadmind.network.protocol import MessageType, create_message, serialize_message
+from breadmind.network.protocol import MessageType, create_message
 from breadmind.network.registry import AgentRegistry, AgentStatus
 
 

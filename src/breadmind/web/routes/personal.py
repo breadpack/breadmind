@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from breadmind.personal.cache import get_cache

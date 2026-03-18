@@ -470,7 +470,7 @@ def setup_config_routes(r: APIRouter, app_state):
         db=Depends(get_db),
     ):
         """Update persona settings."""
-        from breadmind.config import DEFAULT_PERSONA_PRESETS, DEFAULT_PERSONA, build_system_prompt
+        from breadmind.config import DEFAULT_PERSONA_PRESETS
         data = await request.json()
 
         # Build persona from input

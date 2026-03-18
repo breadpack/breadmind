@@ -1,5 +1,4 @@
 from enum import Enum
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 class SafetyResult(Enum):

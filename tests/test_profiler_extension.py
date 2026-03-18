@@ -1,5 +1,4 @@
 """Tests for UserProfiler role/domain extension."""
-import pytest
 
 
 def test_profiler_has_role_field():

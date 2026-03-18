@@ -1,6 +1,6 @@
 """SyncEngine conflict resolution tests."""
 from datetime import datetime, timezone, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 import pytest
 
 

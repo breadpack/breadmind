@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from fastapi.testclient import TestClient
 from breadmind.web.app import WebApp
 
@@ -299,7 +299,7 @@ def test_post_api_key_saves(tmp_path, monkeypatch):
     monkeypatch.setattr(config_module, "save_env_var", mock_save)
     # Mock aiohttp to skip real API validation
     import aiohttp
-    from unittest.mock import AsyncMock, MagicMock, patch
+    from unittest.mock import AsyncMock, MagicMock
     mock_resp = MagicMock()
     mock_resp.status = 200
     mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
@@ -434,7 +434,7 @@ def test_post_mcp_updates_config():
 
 def test_get_persona_returns_default():
     """Test GET /api/config/persona returns default persona when none configured."""
-    from breadmind.config import AppConfig, DEFAULT_PERSONA
+    from breadmind.config import AppConfig
     config = AppConfig()
     app = WebApp(message_handler=lambda m, **kw: "ok", config=config)
     client = TestClient(app.app)

@@ -7,12 +7,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import platform
 import re
 import socket
 from dataclasses import dataclass, field
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +151,7 @@ def _get_dns_servers() -> list[str]:
                     match = re.search(r"(\d+\.\d+\.\d+\.\d+)", line)
                     if match:
                         servers.append(match.group(1))
-                elif in_dns and line.strip() and not ":" in line.split(".", 1)[0]:
+                elif in_dns and line.strip() and ":" not in line.split(".", 1)[0]:
                     match = re.search(r"(\d+\.\d+\.\d+\.\d+)", line)
                     if match:
                         servers.append(match.group(1))
@@ -190,7 +188,7 @@ async def identify_router(gateway_ip: str) -> RouterInfo:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, timeout=timeout, ssl=False, allow_redirects=True) as resp:
                     text = await resp.text()
-                    headers = dict(resp.headers)
+                    dict(resp.headers)
                     final_url = str(resp.url)
 
                     info.admin_url = final_url

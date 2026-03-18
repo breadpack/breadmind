@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from datetime import datetime, timezone
 
 from breadmind.storage.models import EpisodicNote, KGEntity, KGRelation
 

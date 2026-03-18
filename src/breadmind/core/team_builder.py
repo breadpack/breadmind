@@ -4,7 +4,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable, Awaitable
+from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
     from breadmind.core.swarm import SwarmManager
@@ -167,7 +167,7 @@ class TeamBuilder:
                 role_name = parts[1].strip()
                 description = parts[2].strip()
                 system_prompt = parts[3].strip()
-                keywords_str = parts[4].strip() if len(parts) > 4 else ""
+                parts[4].strip() if len(parts) > 4 else ""
 
                 if not role_name:
                     continue

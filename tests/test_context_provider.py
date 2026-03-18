@@ -1,5 +1,4 @@
 """Tests for ContextProvider plugin pattern and PersonalContextProvider."""
-from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, MagicMock
 import pytest
 

@@ -1,7 +1,7 @@
 """Tests for worker deployment: token manager, install generator, routes."""
 import pytest
 from datetime import datetime, timezone, timedelta
-from breadmind.network.token_manager import TokenManager, JoinToken
+from breadmind.network.token_manager import TokenManager
 from breadmind.network.install_generator import generate_install_script
 
 
@@ -72,7 +72,7 @@ class TestTokenManager:
     def test_cleanup_expired(self):
         mgr = TokenManager()
         t1 = mgr.create_token()
-        t2 = mgr.create_token()
+        mgr.create_token()
         t1.expires_at = datetime.now(timezone.utc) - timedelta(hours=1)
         cleaned = mgr.cleanup_expired()
         assert cleaned == 1
@@ -96,7 +96,7 @@ class TestTokenManager:
 
         db = FakeDB()
         mgr1 = TokenManager(db=db)
-        t = mgr1.create_token(created_by="persist-test")
+        mgr1.create_token(created_by="persist-test")
         await mgr1.save_to_db()
 
         mgr2 = TokenManager(db=db)

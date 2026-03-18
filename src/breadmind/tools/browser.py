@@ -9,12 +9,10 @@ Requires:  pip install 'breadmind[browser]'
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import json
 import logging
 import os
-from pathlib import Path
 from typing import Any
 
 from breadmind.tools.registry import tool

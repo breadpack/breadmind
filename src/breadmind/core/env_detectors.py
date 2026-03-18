@@ -6,7 +6,6 @@ Each function populates a subset of ScanResult fields.
 from __future__ import annotations
 
 import asyncio
-import os
 import platform
 import shutil
 from typing import TYPE_CHECKING

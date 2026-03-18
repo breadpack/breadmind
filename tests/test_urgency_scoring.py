@@ -1,5 +1,4 @@
 """Tests for urgency scoring in intent classification."""
-import pytest
 
 
 def test_critical_urgency_korean():

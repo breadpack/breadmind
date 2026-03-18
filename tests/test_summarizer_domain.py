@@ -1,5 +1,4 @@
 """Tests for domain entity preservation in summarization."""
-import pytest
 
 
 def test_extract_task_ids():

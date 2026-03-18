@@ -1,6 +1,5 @@
 """Tests for adapter input validation during authentication."""
 import pytest
-from unittest.mock import AsyncMock
 
 
 @pytest.mark.asyncio

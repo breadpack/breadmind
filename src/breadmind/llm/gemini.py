@@ -223,7 +223,7 @@ class GeminiProvider(LLMProvider):
         input_tokens = usage_meta.get("promptTokenCount", 0)
         output_tokens = usage_meta.get("candidatesTokenCount", 0)
 
-        finish_reason = candidate.get("finishReason", "STOP")
+        candidate.get("finishReason", "STOP")
         stop_reason = "tool_use" if tool_calls else "end_turn"
 
         return LLMResponse(

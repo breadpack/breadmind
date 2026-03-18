@@ -3,7 +3,7 @@ from breadmind.memory.embedding import EmbeddingService
 from breadmind.memory.episodic import EpisodicMemory
 from breadmind.memory.semantic import SemanticMemory
 from breadmind.core.skill_store import SkillStore
-from breadmind.core.smart_retriever import SmartRetriever, extract_keywords
+from breadmind.core.smart_retriever import SmartRetriever
 
 
 class TestSmartRetrievalIntegration:

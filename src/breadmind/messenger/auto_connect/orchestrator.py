@@ -7,7 +7,6 @@ from dataclasses import dataclass
 
 from breadmind.messenger.auto_connect.base import (
     AutoConnector,
-    GatewayState,
     SetupStep,
     WizardState,
 )

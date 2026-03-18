@@ -1,8 +1,7 @@
 import pytest
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
 from breadmind.core.safety import SafetyGuard, SafetyResult
-from breadmind.memory.working import WorkingMemory, ConversationSession
+from breadmind.memory.working import WorkingMemory
 from breadmind.llm.base import LLMMessage
 
 @pytest.fixture
@@ -122,7 +121,7 @@ def test_session_timeout_creates_fresh():
 
 def test_session_not_expired():
     memory = WorkingMemory(session_timeout_minutes=30)
-    session = memory.get_or_create_session("s1", user="u", channel="c")
+    memory.get_or_create_session("s1", user="u", channel="c")
     memory.add_message("s1", LLMMessage(role="user", content="message"))
 
     # Should keep existing session
@@ -133,7 +132,7 @@ def test_session_not_expired():
 def test_cleanup_expired():
     memory = WorkingMemory(session_timeout_minutes=1)
     s1 = memory.get_or_create_session("s1")
-    s2 = memory.get_or_create_session("s2")
+    memory.get_or_create_session("s2")
 
     # Expire s1 only
     s1.last_active = datetime.now(timezone.utc) - timedelta(minutes=2)

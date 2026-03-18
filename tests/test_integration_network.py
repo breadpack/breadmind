@@ -1,14 +1,12 @@
 """Integration test: Commander <-> Worker message flow."""
 
 import pytest
-import json
-import asyncio
 from unittest.mock import AsyncMock, MagicMock
 from breadmind.network.commander import Commander
 from breadmind.network.worker import Worker
 from breadmind.network.registry import AgentRegistry, AgentStatus, RoleDefinition
 from breadmind.network.protocol import (
-    MessageType, create_message, serialize_message, deserialize_message,
+    MessageType, create_message, deserialize_message,
 )
 
 SESSION_KEY = b"integration-test-key-32-bytes!!"

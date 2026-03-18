@@ -5,7 +5,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse
 
 logger = logging.getLogger(__name__)
 

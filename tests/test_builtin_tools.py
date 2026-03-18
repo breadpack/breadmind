@@ -2,12 +2,11 @@ import pytest
 import os
 import sys
 import tempfile
-from pathlib import Path
 from unittest.mock import AsyncMock, patch, MagicMock
 from breadmind.tools.builtin import (
     shell_exec, web_search, file_read, file_write,
     _is_dangerous_command, _is_command_allowed, _validate_path,
-    DANGEROUS_PATTERNS, BASE_DIRECTORY,
+    BASE_DIRECTORY,
     ToolSecurityConfig,
 )
 import breadmind.tools.builtin as builtin_module

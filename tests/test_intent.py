@@ -1,5 +1,4 @@
 """Tests for intent classifier."""
-import pytest
 from breadmind.core.intent import classify, IntentCategory, get_think_budget
 
 

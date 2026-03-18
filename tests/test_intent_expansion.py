@@ -1,5 +1,4 @@
 """Tests for expanded intent categories."""
-import pytest
 
 
 def test_schedule_intent_korean():

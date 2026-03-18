@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from breadmind.llm.base import LLMMessage, ToolCall
-from breadmind.tools.registry import ToolRegistry, ToolResult
+from breadmind.tools.registry import ToolRegistry
 from breadmind.core.safety import SafetyGuard, SafetyResult
 
 if TYPE_CHECKING:

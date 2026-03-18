@@ -1,5 +1,4 @@
 import pytest
-import json
 import threading
 from breadmind.tools.mcp_protocol import (
     create_initialize_request, create_tools_list_request,

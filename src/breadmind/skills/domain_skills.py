@@ -24,7 +24,7 @@ class DetectedDomain:
 def detect_domains() -> list[DetectedDomain]:
     """Detect installed domain software and return matching domains."""
     results: list[DetectedDomain] = []
-    os_name = platform.system()
+    platform.system()
 
     for domain_name, checks in _DETECTION_MAP.items():
         detected = []

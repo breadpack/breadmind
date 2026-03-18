@@ -3,7 +3,6 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -165,7 +164,7 @@ class SwarmManager:
 
     def __init__(self, message_handler=None, custom_roles: dict[str, SwarmMember] | None = None,
                  tracker=None, team_builder=None, skill_store=None):
-        from breadmind.core.swarm_executor import SwarmCoordinator, SwarmExecutor
+        from breadmind.core.swarm_executor import SwarmCoordinator
 
         self._message_handler = message_handler
         self._roles = {**DEFAULT_ROLES}

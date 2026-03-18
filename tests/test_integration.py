@@ -1,15 +1,15 @@
 import asyncio
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from fastapi.testclient import TestClient
 
 from breadmind.core.agent import CoreAgent
-from breadmind.core.safety import SafetyGuard, SafetyResult
-from breadmind.tools.registry import ToolRegistry, tool, ToolResult
+from breadmind.core.safety import SafetyGuard
+from breadmind.tools.registry import ToolRegistry, tool
 from breadmind.memory.working import WorkingMemory
 from breadmind.monitoring.engine import MonitoringEngine, MonitoringEvent, MonitoringRule
 from breadmind.web.app import WebApp
-from breadmind.llm.base import LLMProvider, LLMMessage, LLMResponse, ToolCall, TokenUsage, ToolDefinition
+from breadmind.llm.base import LLMProvider, LLMResponse, ToolCall, TokenUsage
 
 
 # --- Helpers ---

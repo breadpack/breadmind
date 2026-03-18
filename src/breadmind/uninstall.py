@@ -78,13 +78,13 @@ def stop_service():
         nssm_path = _find_nssm()
         svc_removed = False
         if nssm_path:
-            r = subprocess.run([nssm_path, "stop", "BreadMind"],
+            subprocess.run([nssm_path, "stop", "BreadMind"],
                                 capture_output=True, timeout=15)
             r2 = subprocess.run([nssm_path, "remove", "BreadMind", "confirm"],
                                  capture_output=True, timeout=15)
             svc_removed = r2.returncode == 0
         if not svc_removed:
-            r = subprocess.run(["sc", "stop", "BreadMind"],
+            subprocess.run(["sc", "stop", "BreadMind"],
                                 capture_output=True, timeout=15)
             r2 = subprocess.run(["sc", "delete", "BreadMind"],
                                  capture_output=True, timeout=15)
