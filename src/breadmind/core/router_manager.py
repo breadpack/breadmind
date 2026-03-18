@@ -186,57 +186,53 @@ class RouterManager:
             }
 
         import asyncio
+        import asyncssh
 
         try:
-            proc = await asyncio.create_subprocess_exec(
-                "ssh",
-                "-o", "StrictHostKeyChecking=no",
-                "-o", "ConnectTimeout=5",
-                "-p", str(port),
-                f"{username}@{host}",
-                "echo", "connected",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+            async with asyncssh.connect(
+                host, port=port, username=username, password=password,
+                known_hosts=None, connect_timeout=10,
+            ) as conn:
+                result = await conn.run("echo connected", timeout=5)
+                if result.exit_status == 0:
+                    # Store credentials in vault (encrypted), NOT in memory
+                    cred_id = f"router:{host}:ssh"
+                    if self._vault and password:
+                        import json as _json
+                        await self._vault.store(cred_id, _json.dumps({
+                            "username": username,
+                            "password": password,
+                            "port": port,
+                        }))
 
-            if proc.returncode == 0:
-                # Store credentials in vault (encrypted), NOT in memory
-                cred_id = f"router:{host}:ssh"
-                if self._vault and password:
-                    import json as _json
-                    await self._vault.store(cred_id, _json.dumps({
+                    self._connected_routers[host] = {
+                        "type": router_type,
                         "username": username,
-                        "password": password,
                         "port": port,
-                    }))
+                        "host": host,
+                        "credential_ref": cred_id,
+                    }
 
-                self._connected_routers[host] = {
-                    "type": router_type,
-                    "username": username,
-                    "port": port,
-                    "host": host,
-                    # No password in memory — use vault ref
-                    "credential_ref": cred_id,
-                }
+                    # Add to SSH allowed hosts so shell_exec can reach it
+                    from breadmind.tools.builtin import ToolSecurityConfig
 
-                # Add to SSH allowed hosts so shell_exec can reach it
-                from breadmind.tools.builtin import ToolSecurityConfig
+                    current = ToolSecurityConfig.get_config()
+                    allowed: list[str] = current.get("allowed_ssh_hosts", [])
+                    if host not in allowed:
+                        allowed.append(host)
+                        ToolSecurityConfig.update(allowed_ssh_hosts=allowed)
 
-                current = ToolSecurityConfig.get_config()
-                allowed: list[str] = current.get("allowed_ssh_hosts", [])
-                if host not in allowed:
-                    allowed.append(host)
-                    ToolSecurityConfig.update(allowed_ssh_hosts=allowed)
+                    return {
+                        "success": True,
+                        "message": f"{router_type} 라우터({host}) 연결 성공!",
+                    }
+                else:
+                    return {"success": False, "message": f"SSH 연결 실패: {result.stderr}"}
 
-                return {
-                    "success": True,
-                    "message": f"{router_type} 라우터({host}) 연결 성공!",
-                }
-            else:
-                error = stderr.decode(errors="ignore").strip()
-                return {"success": False, "message": f"SSH 연결 실패: {error}"}
-
+        except asyncssh.PermissionDenied:
+            return {"success": False, "message": "SSH 인증 실패: 사용자명 또는 비밀번호가 올바르지 않습니다."}
+        except asyncssh.DisconnectError as e:
+            return {"success": False, "message": f"SSH 연결 거부: {e}"}
         except asyncio.TimeoutError:
             return {"success": False, "message": "SSH 연결 시간 초과 (10초)"}
         except Exception as e:
@@ -260,24 +256,32 @@ class RouterManager:
                 f"  action=screenshot (화면 캡처)"
             )
 
-        import asyncio
+        import asyncssh
+
+        # Retrieve password from vault if needed
+        password = None
+        cred_ref = config.get("credential_ref")
+        if cred_ref and self._vault:
+            import json as _json
+            raw = await self._vault.retrieve(cred_ref)
+            if raw:
+                try:
+                    data = _json.loads(raw)
+                    password = data.get("password")
+                except (ValueError, TypeError):
+                    password = raw
 
         try:
-            proc = await asyncio.create_subprocess_exec(
-                "ssh",
-                "-o", "StrictHostKeyChecking=no",
-                "-o", "ConnectTimeout=5",
-                "-p", str(config.get('port', 22)),
-                f"{config.get('username', 'root')}@{host}",
-                command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
-            output = stdout.decode(errors="ignore")
-            if stderr:
-                output += "\n" + stderr.decode(errors="ignore")
-            return output.strip()
+            async with asyncssh.connect(
+                host, port=config.get("port", 22),
+                username=config.get("username", "root"),
+                password=password, known_hosts=None, connect_timeout=10,
+            ) as conn:
+                result = await conn.run(command, timeout=30)
+                output = result.stdout or ""
+                if result.stderr:
+                    output += "\n" + result.stderr
+                return output.strip()
         except asyncio.TimeoutError:
             return "[error] 명령 실행 시간 초과"
         except Exception as e:
