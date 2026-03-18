@@ -1,6 +1,6 @@
 """Tests for skill auto-discovery from marketplace."""
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from breadmind.skills.auto_discovery import (
     auto_discover_skills,
     apply_fallback_skills,
@@ -61,7 +61,7 @@ class TestAutoDiscover:
         skill_store = AsyncMock()
         skill_store.get_skill.return_value = MagicMock()  # Already exists
 
-        result = await auto_discover_skills(
+        await auto_discover_skills(
             detected_tools=["nginx"],
             search_engine=search_engine,
             skill_store=skill_store,
@@ -90,7 +90,7 @@ class TestAutoDiscover:
         search_engine = AsyncMock()
         skill_store = AsyncMock()
 
-        result = await auto_discover_skills(
+        await auto_discover_skills(
             detected_tools=["obscure-tool-xyz"],
             search_engine=search_engine,
             skill_store=skill_store,

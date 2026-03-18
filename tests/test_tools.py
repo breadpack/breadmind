@@ -1,9 +1,7 @@
 import pytest
 import time
-import asyncio
 from breadmind.tools.registry import ToolRegistry, ToolResultCache, ToolResult, tool, MAX_OUTPUT_SIZE
-from breadmind.tools.metrics import MetricsCollector, ToolMetrics
-from breadmind.llm.base import ToolDefinition
+from breadmind.tools.metrics import MetricsCollector
 
 
 @tool(description="Echo the input message back")

@@ -168,7 +168,7 @@ def setup_worker_routes(r: APIRouter, app_state):
         )
 
         commander_url = _get_commander_ws_url(app)
-        base_url = _get_base_url(app)
+        _get_base_url(app)
 
         from breadmind.network.install_generator import generate_install_script
         script = generate_install_script(

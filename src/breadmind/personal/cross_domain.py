@@ -5,7 +5,6 @@ Enables queries that span multiple domains (e.g., "tasks due before next meeting
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any
 
 from breadmind.personal.adapters.base import AdapterRegistry
 from breadmind.personal.models import Task, Event

@@ -1,8 +1,8 @@
 import pytest
 from datetime import datetime, timezone, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
-from breadmind.memory.working import WorkingMemory, ConversationSession
+from breadmind.memory.working import WorkingMemory
 from breadmind.memory.episodic import EpisodicMemory
 from breadmind.memory.semantic import SemanticMemory
 from breadmind.memory.profiler import UserProfiler, UserPreference, UserPattern

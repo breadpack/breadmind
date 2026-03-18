@@ -3,7 +3,7 @@ import pytest
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 from breadmind.network.worker import Worker, WorkerState
-from breadmind.network.protocol import MessageType, create_message, serialize_message
+from breadmind.network.protocol import MessageType, create_message
 
 SESSION_KEY = b"test-key-32-bytes-long-enough!!"
 

@@ -113,7 +113,7 @@ class BehaviorTracker:
         assistant_section = ""
         if metrics.get("assistant_messages"):
             assistant_section = (
-                f"- Agent responses:\n"
+                "- Agent responses:\n"
                 + "\n".join(f"  - {m}" for m in metrics["assistant_messages"])
                 + "\n"
             )

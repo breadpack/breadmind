@@ -2,7 +2,6 @@
 import asyncio
 import logging
 import time
-from typing import Any
 
 from breadmind.core.swarm import (
     DEFAULT_ROLES,

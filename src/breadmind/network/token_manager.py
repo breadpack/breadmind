@@ -6,7 +6,6 @@ After validation, a mTLS certificate is issued via PKIManager.
 from __future__ import annotations
 
 import logging
-import os
 import secrets
 from base64 import urlsafe_b64encode
 from dataclasses import dataclass, field

@@ -1,6 +1,5 @@
 """Domain model unit tests."""
 from datetime import datetime, timezone
-import pytest
 
 
 def test_task_defaults():

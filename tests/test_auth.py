@@ -1,6 +1,5 @@
 import time
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from fastapi.testclient import TestClient
 
 from breadmind.web.auth import AuthManager
@@ -271,7 +270,7 @@ class TestAuthStatusEndpoint:
         app = _make_app(auth=auth)
         client = TestClient(app.app)
         # Login
-        login_resp = client.post("/api/auth/login", json={"password": "testpassword123"})
+        client.post("/api/auth/login", json={"password": "testpassword123"})
         # Check status (cookie is set automatically in TestClient)
         resp = client.get("/api/auth/status")
         assert resp.status_code == 200

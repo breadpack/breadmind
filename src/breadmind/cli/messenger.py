@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import argparse
 import asyncio
-import sys
 
 
 async def cmd_setup(args):

@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 from breadmind.tools.meta import create_meta_tools
 from breadmind.tools.mcp_client import MCPClientManager, MCPServerInfo
 from breadmind.tools.registry_search import (
-    RegistrySearchEngine, RegistrySearchResult, RegistryConfig,
+    RegistrySearchEngine, RegistrySearchResult,
 )
 
 @pytest.fixture

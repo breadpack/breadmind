@@ -436,7 +436,6 @@ async def swarm_role(action: str, name: str = "", system_prompt: str = "", descr
         _swarm_manager.add_role(name, system_prompt, description or name)
         if _swarm_db:
             try:
-                import asyncio
                 await _swarm_db.set_setting("swarm_roles", _swarm_manager.export_roles())
             except Exception:
                 pass

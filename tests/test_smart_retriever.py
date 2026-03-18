@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from breadmind.core.smart_retriever import (
-    SmartRetriever, ScoredSkill, ContextItem, extract_keywords,
+    SmartRetriever, ScoredSkill, extract_keywords,
 )
 
 

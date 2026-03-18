@@ -1,9 +1,8 @@
 import asyncio
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 from breadmind.core.swarm import (
-    SwarmManager, SwarmCoordinator, SwarmTask, SwarmResult,
-    SwarmContext, SwarmMember, DEFAULT_ROLES,
+    SwarmManager, SwarmCoordinator, SwarmTask, SwarmContext, SwarmMember, DEFAULT_ROLES,
 )
 
 

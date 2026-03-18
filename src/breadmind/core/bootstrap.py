@@ -502,7 +502,7 @@ async def init_agent(config, provider, registry, guard, db, memory_components):
             from breadmind.core.env_scanner import scan_environment, store_scan_in_memory
             logger.info("First run detected — scanning environment...")
             scan = await scan_environment()
-            stored = await store_scan_in_memory(
+            await store_scan_in_memory(
                 scan,
                 episodic_memory=memory_components["episodic_memory"],
                 semantic_memory=memory_components["semantic_memory"],
@@ -670,7 +670,7 @@ async def bootstrap_all(
     # ── Phase 5: Messenger (optional) ────────────────────────────────
     if message_router is not None:
         try:
-            messenger = await init_messenger(
+            await init_messenger(
                 components.db, message_router, event_callback,
             )
             # Messenger components are not stored on AppComponents by default;

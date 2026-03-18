@@ -1,6 +1,5 @@
 # tests/test_pki.py
 import pytest
-import tempfile
 from pathlib import Path
 from breadmind.network.pki import (
     PKIManager, CertificateInfo,

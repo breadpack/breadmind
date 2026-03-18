@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from breadmind.mcp.install_assistant import InstallAssistant
 from breadmind.mcp.store import MCPStore
-from breadmind.llm.base import LLMResponse, LLMMessage, ToolDefinition, TokenUsage
+from breadmind.llm.base import LLMResponse, ToolDefinition, TokenUsage
 from breadmind.tools.mcp_client import MCPServerInfo
 from breadmind.tools.registry_search import RegistrySearchResult
 from breadmind.web.app import WebApp

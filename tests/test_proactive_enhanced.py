@@ -1,6 +1,6 @@
 """Tests for enhanced proactive suggestions."""
 from datetime import datetime, timezone, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 import pytest
 
 

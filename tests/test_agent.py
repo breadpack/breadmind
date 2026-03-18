@@ -2,13 +2,12 @@ import asyncio
 import json
 import logging
 import pytest
-from datetime import timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from breadmind.core.agent import CoreAgent
 from breadmind.llm.base import LLMResponse, LLMMessage, ToolCall, TokenUsage
 from breadmind.tools.registry import ToolRegistry, ToolResult, tool
 from breadmind.core.safety import SafetyGuard
-from breadmind.core.audit import AuditLogger, AuditEntry
+from breadmind.core.audit import AuditLogger
 from breadmind.memory.working import WorkingMemory
 
 @tool(description="Test tool")
@@ -186,7 +185,7 @@ async def test_tool_timeout(agent):
         ),
         _make_response(content="Tool timed out."),
     ])
-    result = await agent.handle_message("use slow tool", user="test", channel="test")
+    await agent.handle_message("use slow tool", user="test", channel="test")
     # The agent should have continued after the timeout
     assert agent._provider.chat.call_count == 2
     # Check the tool result message sent to the LLM contains timeout info
@@ -732,9 +731,9 @@ def test_update_timeouts_rejects_invalid(agent):
 
 @pytest.mark.asyncio
 async def test_agent_triggers_tool_gap_detector_on_not_found():
-    from unittest.mock import AsyncMock, MagicMock
+    from unittest.mock import AsyncMock
     from breadmind.core.agent import CoreAgent
-    from breadmind.tools.registry import ToolRegistry, ToolResult
+    from breadmind.tools.registry import ToolRegistry
     from breadmind.core.safety import SafetyGuard, SafetyResult
     from breadmind.llm.base import LLMResponse, ToolCall, TokenUsage
 
@@ -769,11 +768,11 @@ async def test_agent_triggers_tool_gap_detector_on_not_found():
 
 @pytest.mark.asyncio
 async def test_agent_uses_context_builder():
-    from unittest.mock import AsyncMock, MagicMock
+    from unittest.mock import AsyncMock
     from breadmind.core.agent import CoreAgent
     from breadmind.tools.registry import ToolRegistry
-    from breadmind.core.safety import SafetyGuard, SafetyResult
-    from breadmind.llm.base import LLMResponse, LLMMessage, TokenUsage
+    from breadmind.core.safety import SafetyGuard
+    from breadmind.llm.base import LLMResponse, TokenUsage
 
     registry = MagicMock(spec=ToolRegistry)
     registry.get_all_definitions.return_value = []
@@ -794,7 +793,7 @@ async def test_agent_uses_context_builder():
 
     agent = CoreAgent(provider=provider, tool_registry=registry,
                       safety_guard=guard, context_builder=context_builder)
-    result = await agent.handle_message("hi", "user1", "ch1")
+    await agent.handle_message("hi", "user1", "ch1")
 
     # Verify context_builder was called
     context_builder.build_context.assert_called_once()

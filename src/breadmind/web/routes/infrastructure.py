@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -115,7 +115,7 @@ async def connect_service(body: ConnectRequest) -> dict:
     _connections[key] = config
 
     # Persist to DB
-    db = getattr(getattr(body, '_request', None), 'app', None)
+    getattr(getattr(body, '_request', None), 'app', None)
     # Simple persistence via _connections dict for now
 
     return {"connected": True, "key": key, "service_type": body.service_type}

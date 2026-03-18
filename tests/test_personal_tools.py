@@ -1,6 +1,5 @@
 """Tests for personal assistant LLM tool functions."""
-from datetime import datetime, timezone, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 import pytest
 
 

@@ -6,7 +6,7 @@ import json
 import logging
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
-from breadmind.web.dependencies import get_app_state, get_working_memory
+from breadmind.web.dependencies import get_working_memory
 
 logger = logging.getLogger(__name__)
 

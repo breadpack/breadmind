@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from enum import Enum
@@ -10,7 +9,7 @@ from typing import Any
 
 from breadmind.network.protocol import (
     MessageEnvelope, MessageType, SequenceTracker,
-    create_message, serialize_message, deserialize_message,
+    create_message, serialize_message,
 )
 
 logger = logging.getLogger(__name__)

@@ -6,7 +6,6 @@ from breadmind.tools.mcp_client import (
     MCPClientManager, MCPServerInfo, _StdioServerConfig,
     _check_prompt_injection, _sanitize_output, MAX_RESPONSE_SIZE,
 )
-from breadmind.tools.mcp_protocol import encode_message
 
 
 @pytest.fixture

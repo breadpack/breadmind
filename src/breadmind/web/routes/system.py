@@ -6,11 +6,10 @@ import logging
 import os
 import sys
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import JSONResponse
 
 from breadmind.web.dependencies import (
-    get_app_state, get_auth, get_db, get_config, get_agent,
-    get_message_handler, get_monitoring_engine, get_webhook_manager,
+    get_app_state, get_auth, get_db, get_message_handler, get_monitoring_engine, get_webhook_manager,
 )
 
 logger = logging.getLogger(__name__)
@@ -385,7 +384,7 @@ def setup_system_routes(r: APIRouter, app_state):
         results = []
         try:
             from breadmind.uninstall import (
-                stop_service, remove_service_files, remove_config,
+                remove_service_files, remove_config,
                 drop_database, remove_docker_resources,
             )
             from breadmind.config import get_default_config_dir
