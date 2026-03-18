@@ -842,13 +842,17 @@
                                 '</div>';
                         });
 
+                        // Store submit_message in a global map to avoid HTML escaping issues
+                        window._dynformTemplates = window._dynformTemplates || {};
+                        window._dynformTemplates[formId] = config.submit_message || '';
+
                         return '<div class="dynform" id="' + formId + '">' +
                             '<div class="dynform-header">' + (config.title || '입력 요청') + '</div>' +
                             (config.description ? '<div class="dynform-desc">' + config.description + '</div>' : '') +
                             '<div class="dynform-fields">' + fieldsHtml + '</div>' +
                             '<div class="dynform-actions">' +
                             '<button class="btn-secondary" onclick="this.closest(\'.dynform\').style.display=\'none\'">취소</button>' +
-                            '<button class="btn-primary" onclick="submitDynForm(\'' + formId + '\', ' + JSON.stringify(JSON.stringify(config.submit_message || '')) + ')">확인</button>' +
+                            '<button class="btn-primary" data-form-id="' + formId + '" onclick="submitDynForm(this.dataset.formId)">확인</button>' +
                             '</div></div>';
                     } catch (e) {
                         return '<div class="error">입력 폼 파싱 실패</div>';
@@ -903,11 +907,11 @@
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
 
-        function submitDynForm(formId, templateStr) {
+        function submitDynForm(formId) {
             const form = document.getElementById(formId);
             if (!form) return;
 
-            const template = JSON.parse(templateStr);
+            const template = (window._dynformTemplates && window._dynformTemplates[formId]) || '';
             const inputs = form.querySelectorAll('.dynform-input');
 
             // Check required fields
@@ -945,9 +949,17 @@
                 .then(r => r.json())
                 .then(data => {
                     form.style.display = 'none';
+                    // Append credential refs so LLM can use them for tool calls
+                    let msg = data.sanitized_message;
+                    if (data.refs && Object.keys(data.refs).length > 0) {
+                        const refParts = Object.entries(data.refs).map(
+                            ([k, v]) => k + '=' + v
+                        );
+                        msg += ' [credentials: ' + refParts.join(', ') + ']';
+                    }
                     const inputEl = document.getElementById('messageInput');
                     if (inputEl && typeof sendMessage === 'function') {
-                        inputEl.value = data.sanitized_message;
+                        inputEl.value = msg;
                         sendMessage();
                     }
                 })

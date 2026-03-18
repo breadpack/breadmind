@@ -658,9 +658,14 @@ async def router_manage(
                     cred_id = CredentialVault.extract_id(password)
                     raw = await vault.retrieve(cred_id)
                     if raw:
-                        data = _json.loads(raw)
-                        actual_password = data.get("password", "")
-                        actual_username = data.get("username", username)
+                        # Try JSON first (router credentials stored as JSON)
+                        try:
+                            data = _json.loads(raw)
+                            actual_password = data.get("password", raw)
+                            actual_username = data.get("username", username)
+                        except (ValueError, TypeError):
+                            # Plain string from form submission
+                            actual_password = raw
             except Exception:
                 pass
 
