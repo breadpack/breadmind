@@ -36,22 +36,28 @@ curl -fsSL https://raw.githubusercontent.com/breadpack/breadmind/master/deploy/i
 curl -fsSL https://raw.githubusercontent.com/breadpack/breadmind/master/deploy/install/install.sh | bash -s -- --external-db
 ```
 
-**pip 설치:**
+**pip 원라이너 설치:**
 
 ```bash
-pip install breadmind
+pip install git+https://github.com/breadpack/breadmind.git
 ```
 
 전체 기능 설치:
 
 ```bash
-pip install "breadmind[browser,messenger,container,embeddings]"
+pip install "breadmind[browser,messenger,container,embeddings] @ git+https://github.com/breadpack/breadmind.git"
+```
+
+특정 버전 설치:
+
+```bash
+pip install git+https://github.com/breadpack/breadmind.git@v0.1.0
 ```
 
 **소스에서 설치 (개발):**
 
 ```bash
-git clone git@github.com:breadpack/breadmind.git
+git clone https://github.com/breadpack/breadmind.git
 cd breadmind
 pip install -e ".[dev,browser,messenger,container,embeddings]"
 ```
