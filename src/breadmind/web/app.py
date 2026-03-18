@@ -28,6 +28,7 @@ from breadmind.web.routes.oauth import router as oauth_router
 from breadmind.web.routes.infrastructure import router as infra_router
 from breadmind.web.routes.personal import router as personal_router
 from breadmind.web.routes.workers import setup_worker_routes
+from breadmind.web.routes.credential_input import setup_credential_input_routes
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +164,8 @@ class WebApp:
         async def auth_middleware(request: Request, call_next):
             path = request.url.path
             # Skip auth for certain paths
-            skip_paths = ["/api/auth/", "/health", "/api/webhook/receive/", "/api/workers/install-script"]
+            skip_paths = ["/api/auth/", "/health", "/api/webhook/receive/", "/api/workers/install-script",
+                         "/credential-input/", "/api/vault/submit-external/"]
             if any(path.startswith(p) for p in skip_paths):
                 return await call_next(request)
 
@@ -284,6 +286,7 @@ class WebApp:
         setup_messenger_routes(app, self)
         setup_worker_routes(app, self)
         setup_chat_routes(app, self)
+        setup_credential_input_routes(app, self)
         app.include_router(oauth_router)
         app.include_router(integrations_router)
         app.include_router(personal_router)

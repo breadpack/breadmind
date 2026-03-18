@@ -1,5 +1,7 @@
 import asyncio
+import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Callable, Any
 from abc import ABC, abstractmethod
@@ -106,9 +108,57 @@ class MessageRouter:
 
         if self._message_handler:
             if asyncio.iscoroutinefunction(self._message_handler):
-                return await self._message_handler(msg)
-            return self._message_handler(msg)
+                response = await self._message_handler(msg)
+            else:
+                response = self._message_handler(msg)
+
+            # Intercept [REQUEST_INPUT] blocks for messenger channels
+            if response and isinstance(response, str) and "[REQUEST_INPUT]" in response:
+                response = await self._convert_request_input_to_url(
+                    response, msg.platform, msg.channel_id,
+                )
+            return response
         return None
+
+    async def _convert_request_input_to_url(
+        self, response: str, platform: str, channel_id: str,
+    ) -> str:
+        """Replace [REQUEST_INPUT]...[/REQUEST_INPUT] blocks with external URLs."""
+        match = re.search(
+            r"\[REQUEST_INPUT\]([\s\S]*?)\[/REQUEST_INPUT\]",
+            response,
+        )
+        if not match:
+            return response
+
+        try:
+            form_json = json.loads(match.group(1).strip())
+        except (json.JSONDecodeError, ValueError):
+            logger.warning("Failed to parse REQUEST_INPUT JSON for messenger")
+            return response
+
+        from breadmind.web.routes.credential_input import get_token_store, _get_base_url
+
+        store = get_token_store()
+        result = store.create(
+            form=form_json,
+            callback={
+                "platform": platform,
+                "channel_id": channel_id,
+                "message": "Credentials submitted successfully.",
+            },
+            base_url=_get_base_url(),
+        )
+
+        url = result["url"]
+        # Remove the [REQUEST_INPUT] block from the response
+        pre_text = response[:match.start()].strip()
+        pre_text = pre_text.replace("[NEED_CREDENTIALS]", "").strip()
+
+        link_msg = f"Please enter your credentials at the link below:\n{url}"
+        if pre_text:
+            return f"{pre_text}\n\n{link_msg}"
+        return link_msg
 
     async def send_message(self, platform: str, channel_id: str, text: str):
         gw = self._gateways.get(platform)
