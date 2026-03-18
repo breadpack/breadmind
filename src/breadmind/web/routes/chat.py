@@ -33,53 +33,45 @@ class _SecureFormResponse(BaseModel):
     refs: dict[str, str]
 
 
-@router.post("/api/vault/submit-form", response_model=_SecureFormResponse)
-async def submit_secure_form(body: _SecureFormRequest, request: Request):
-    """Store password-type fields in the vault, return a sanitized message.
-
-    Non-secret fields are kept as-is in the message.  Secret fields are
-    replaced with ``credential_ref:xxx`` tokens so that the chat message
-    never contains plaintext passwords.
-    """
-    # Authentication check — same pattern as auth_middleware in app.py
-    app_state = request.app.state.app_state
-    auth = getattr(app_state, "_auth", None)
-    if auth and auth.enabled and not auth.authenticate_request(request):
-        from fastapi.responses import JSONResponse
-        return JSONResponse(status_code=401, content={"error": "Authentication required"})
-    vault = getattr(request.app.state, "credential_vault", None)
-    refs: dict[str, str] = {}
-    replacements: dict[str, str] = {}  # {field_name} -> display value
-
-    for field in body.fields:
-        if field.type == "password" and vault:
-            cred_id = f"form:{body.form_id}:{field.name}"
-            await vault.store(cred_id, field.value)
-            ref = vault.make_ref(cred_id)
-            refs[field.name] = ref
-            replacements[field.name] = ref
-        else:
-            replacements[field.name] = field.value
-
-    # Build the sanitized message
-    if body.submit_message:
-        message = body.submit_message
-        for name, display in replacements.items():
-            message = message.replace("{" + name + "}", display)
-    else:
-        parts = []
-        for name, display in replacements.items():
-            if display and not display.startswith("credential_ref:"):
-                parts.append(f"{name}: {display}")
-            elif display:
-                parts.append(f"{name}: [secured]")
-        message = ", ".join(parts)
-
-    return _SecureFormResponse(sanitized_message=message, refs=refs)
-
-
 def setup_chat_routes(r: APIRouter, app_state):
     """Register chat and session routes."""
+
+    @r.post("/api/vault/submit-form", response_model=_SecureFormResponse)
+    async def submit_secure_form(body: _SecureFormRequest, request: Request):
+        """Store password-type fields in the vault, return a sanitized message."""
+        # Authentication check
+        auth = getattr(app_state, "_auth", None)
+        if auth and auth.enabled and not auth.authenticate_request(request):
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=401, content={"error": "Authentication required"})
+        vault = getattr(request.app.state, "credential_vault", None)
+        refs: dict[str, str] = {}
+        replacements: dict[str, str] = {}
+
+        for field in body.fields:
+            if field.type == "password" and vault:
+                cred_id = f"form:{body.form_id}:{field.name}"
+                await vault.store(cred_id, field.value)
+                ref = vault.make_ref(cred_id)
+                refs[field.name] = ref
+                replacements[field.name] = ref
+            else:
+                replacements[field.name] = field.value
+
+        if body.submit_message:
+            message = body.submit_message
+            for name, display in replacements.items():
+                message = message.replace("{" + name + "}", display)
+        else:
+            parts = []
+            for name, display in replacements.items():
+                if display and not display.startswith("credential_ref:"):
+                    parts.append(f"{name}: {display}")
+                elif display:
+                    parts.append(f"{name}: [secured]")
+            message = ", ".join(parts)
+
+        return _SecureFormResponse(sanitized_message=message, refs=refs)
 
     @r.get("/api/sessions")
     async def list_sessions(working_memory=Depends(get_working_memory)):
