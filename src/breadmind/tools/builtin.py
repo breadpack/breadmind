@@ -649,6 +649,10 @@ async def router_manage(
         # Resolve credential_ref from vault if password is a reference
         actual_password = password
         actual_username = username
+        import logging as _logging
+        _log = _logging.getLogger("breadmind.tools.builtin")
+        _log.info("router_manage connect: pw_len=%d starts_with_ref=%s pw_preview=%s",
+                  len(password), password.startswith("credential_ref:"), password[:30])
         if password.startswith("credential_ref:"):
             try:
                 from breadmind.storage.credential_vault import CredentialVault

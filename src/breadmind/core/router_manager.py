@@ -188,6 +188,9 @@ class RouterManager:
         import asyncio
         import asyncssh
 
+        logger.info("SSH connect attempt: host=%s user=%s pw_len=%s pw_starts=%s",
+                    host, username, len(password) if password else 0,
+                    password[:15] if password else "None")
         try:
             async with asyncssh.connect(
                 host, port=port, username=username, password=password,
