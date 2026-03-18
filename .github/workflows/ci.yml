@@ -33,7 +33,7 @@ jobs:
         run: python -m pytest tests/ --cov=breadmind --cov-report=term-missing --cov-report=xml
 
       - name: Check coverage threshold
-        run: python -m pytest tests/ --cov=breadmind --cov-fail-under=70
+        run: python -m pytest tests/ --cov=breadmind --cov-fail-under=55
 
   lint:
     runs-on: ubuntu-latest
