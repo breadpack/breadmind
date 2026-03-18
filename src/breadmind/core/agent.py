@@ -317,6 +317,10 @@ class CoreAgent:
         all_tools = self._tools.get_all_definitions()
         tools = self._filter_relevant_tools(all_tools, message, intent=intent)
 
+        # Track recent tool calls for loop detection
+        _recent_tool_calls: list[tuple[str, str]] = []  # [(tool_name, args_hash), ...]
+        _LOOP_THRESHOLD = 3  # same call repeated N times = loop
+
         for turn in range(self._max_turns):
             # Apply conversation summarization if available
             chat_messages = messages
@@ -410,6 +414,32 @@ class CoreAgent:
                         self._safe_analyze(session_id, list(messages))
                     )
                 return final_content
+
+            # Detect tool call loops (same tool+args repeated)
+            import hashlib as _hl
+            for tc in response.tool_calls:
+                args_hash = _hl.md5(
+                    json.dumps(tc.arguments, sort_keys=True, default=str).encode()
+                ).hexdigest()[:8]
+                _recent_tool_calls.append((tc.name, args_hash))
+
+            # Check if the last N calls are identical
+            if len(_recent_tool_calls) >= _LOOP_THRESHOLD:
+                last_n = _recent_tool_calls[-_LOOP_THRESHOLD:]
+                if len(set(last_n)) == 1:
+                    loop_tool = last_n[0][0]
+                    logger.warning("Tool call loop detected: %s called %d times with same args",
+                                   loop_tool, _LOOP_THRESHOLD)
+                    loop_msg = (
+                        f"동일한 도구({loop_tool})가 같은 인자로 {_LOOP_THRESHOLD}회 반복 "
+                        f"호출되어 중단합니다. 다른 방법을 시도해주세요."
+                    )
+                    if self._working_memory is not None:
+                        self._working_memory.add_message(
+                            session_id,
+                            LLMMessage(role="assistant", content=loop_msg),
+                        )
+                    return loop_msg
 
             # Process tool calls — add assistant message, then delegate to ToolExecutor
             assistant_msg = LLMMessage(

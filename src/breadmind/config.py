@@ -39,7 +39,7 @@ class LoggingConfig:
 class LLMConfig:
     default_provider: str = "claude"
     default_model: str = "claude-sonnet-4-6"
-    tool_call_max_turns: int = 10
+    tool_call_max_turns: int = 20
     tool_call_timeout_seconds: int = 30
 
 
