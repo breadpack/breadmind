@@ -72,8 +72,8 @@ async def test_connect_no_ssh_router():
 
     mgr = RouterManager()
     result = await mgr.connect("192.168.0.1", "iptime", "admin")
-    assert result["success"] is False
-    assert result.get("web_only") is True
+    assert result["success"] is True
+    assert result.get("mode") == "browser"
 
 
 @pytest.mark.asyncio

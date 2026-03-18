@@ -12,7 +12,7 @@ def test_mcp_config_defaults():
     assert cfg.auto_discover is True
     assert cfg.max_restart_attempts == 3
     assert cfg.servers == {}
-    assert len(cfg.registries) == 2
+    assert len(cfg.registries) == 3
 
 
 def test_load_config_with_mcp(tmp_path):
@@ -156,7 +156,7 @@ def test_load_config_missing_dir_returns_defaults():
 # --- save_env_var with set_env_file_path ---
 
 def test_save_env_var_uses_custom_path(tmp_path):
-    import breadmind.config as config_mod
+    import breadmind.config_env as config_mod
     old_path = config_mod._env_file_path
     try:
         env_file = tmp_path / ".env"

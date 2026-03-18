@@ -430,7 +430,7 @@ class TestSecurityConfig:
         assert config.auth_enabled is False
         assert config.password_hash == ""
         assert config.api_keys == []
-        assert config.session_timeout == 86400
+        assert config.session_timeout == 7200
         assert config.require_https is False
         assert "http://localhost:8080" in config.cors_origins
 

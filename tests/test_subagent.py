@@ -129,10 +129,12 @@ async def test_webhook_handle_valid_path():
     wm = WebhookManager()
     wm.set_message_handler(handler)
     ep = WebhookEndpoint(id="ep1", name="Test", path="my-hook",
-                         event_type="generic", action="Received: {payload}")
+                         event_type="generic", action="Received: {payload}",
+                         secret="test-secret")
     wm.add_endpoint(ep)
 
-    result = await wm.handle_webhook("my-hook", {"key": "value"})
+    result = await wm.handle_webhook("my-hook", {"key": "value"},
+                                     headers={"x-webhook-secret": "test-secret"})
     assert result["status"] == "ok"
     assert "processed" in result["response"]
     handler.assert_called_once()
@@ -160,9 +162,11 @@ async def test_webhook_handle_disabled():
 async def test_webhook_handle_no_handler():
     wm = WebhookManager()
     ep = WebhookEndpoint(id="ep1", name="Test", path="no-handler",
-                         event_type="generic", action="x")
+                         event_type="generic", action="x",
+                         secret="test-secret")
     wm.add_endpoint(ep)
-    result = await wm.handle_webhook("no-handler", {})
+    result = await wm.handle_webhook("no-handler", {},
+                                     headers={"x-webhook-secret": "test-secret"})
     assert result["status"] == "ok"
     assert "no handler" in result.get("message", "").lower()
 
@@ -173,9 +177,11 @@ async def test_webhook_handle_sync_handler():
     wm = WebhookManager()
     wm.set_message_handler(handler)
     ep = WebhookEndpoint(id="ep1", name="Test", path="sync-hook",
-                         event_type="generic", action="Got: {payload}")
+                         event_type="generic", action="Got: {payload}",
+                         secret="test-secret")
     wm.add_endpoint(ep)
-    result = await wm.handle_webhook("sync-hook", {"data": 1})
+    result = await wm.handle_webhook("sync-hook", {"data": 1},
+                                     headers={"x-webhook-secret": "test-secret"})
     assert result["status"] == "ok"
 
 
@@ -185,9 +191,11 @@ async def test_webhook_handler_exception():
     wm = WebhookManager()
     wm.set_message_handler(handler)
     ep = WebhookEndpoint(id="ep1", name="Test", path="err-hook",
-                         event_type="generic", action="x")
+                         event_type="generic", action="x",
+                         secret="test-secret")
     wm.add_endpoint(ep)
-    result = await wm.handle_webhook("err-hook", {})
+    result = await wm.handle_webhook("err-hook", {},
+                                     headers={"x-webhook-secret": "test-secret"})
     assert result["status"] == "error"
     assert "webhook boom" in result["error"]
 
@@ -256,10 +264,12 @@ async def test_get_event_log():
     wm = WebhookManager()
     wm.set_message_handler(handler)
     ep = WebhookEndpoint(id="ep1", name="Log Test", path="log-hook",
-                         event_type="generic", action="x")
+                         event_type="generic", action="x",
+                         secret="test-secret")
     wm.add_endpoint(ep)
-    await wm.handle_webhook("log-hook", {"a": 1})
-    await wm.handle_webhook("log-hook", {"b": 2})
+    headers = {"x-webhook-secret": "test-secret"}
+    await wm.handle_webhook("log-hook", {"a": 1}, headers=headers)
+    await wm.handle_webhook("log-hook", {"b": 2}, headers=headers)
     log = wm.get_event_log()
     assert len(log) == 2
     assert log[0]["endpoint"] == "Log Test"
@@ -315,7 +325,7 @@ def test_verify_secret_no_secret_configured():
     wm = WebhookManager()
     ep = WebhookEndpoint(id="ep1", name="Open", path="open", event_type="generic",
                          action="x", secret="")
-    assert wm._verify_secret(ep, b"", {}) is True
+    assert wm._verify_secret(ep, b"", {}) is False
 
 
 def test_verify_secret_secret_set_no_header_rejects():
@@ -484,10 +494,12 @@ def test_api_webhook_receive(web_app_with_managers):
 
     # Add endpoint
     ep = WebhookEndpoint(id="rcv1", name="Receiver", path="test-receive",
-                         event_type="generic", action="Got: {payload}")
+                         event_type="generic", action="Got: {payload}",
+                         secret="test-secret")
     webhook_mgr.add_endpoint(ep)
 
-    resp = client.post("/api/webhook/receive/test-receive", json={"event": "push"})
+    resp = client.post("/api/webhook/receive/test-receive", json={"event": "push"},
+                       headers={"x-webhook-secret": "test-secret"})
     assert resp.status_code == 200
     assert resp.json()["status"] == "ok"
 

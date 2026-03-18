@@ -263,7 +263,8 @@ async def test_shell_exec_ssh_with_port_username_key_file():
         mock_asyncssh = MagicMock()
         mock_asyncssh.connect = MagicMock(return_value=mock_connect)
 
-        with patch.dict("sys.modules", {"asyncssh": mock_asyncssh}):
+        with patch.dict("sys.modules", {"asyncssh": mock_asyncssh}), \
+             patch("breadmind.tools.builtin._get_known_hosts", return_value=None):
             result = await shell_exec(
                 command="uptime",
                 host="myserver.example.com",
@@ -305,7 +306,8 @@ async def test_shell_exec_ssh_default_port_no_username_no_key():
         mock_asyncssh = MagicMock()
         mock_asyncssh.connect = MagicMock(return_value=mock_connect)
 
-        with patch.dict("sys.modules", {"asyncssh": mock_asyncssh}):
+        with patch.dict("sys.modules", {"asyncssh": mock_asyncssh}), \
+             patch("breadmind.tools.builtin._get_known_hosts", return_value=None):
             result = await shell_exec(
                 command="hostname",
                 host="server.example.com",

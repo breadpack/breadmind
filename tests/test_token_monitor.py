@@ -79,7 +79,7 @@ async def test_get_alerts_only_unhealthy():
         return OAuthCredentials(
             provider="microsoft",
             access_token="tok",
-            expires_at=time.time() + 7200,
+            expires_at=time.time() + 90000,  # >24h so not flagged as expiring-soon
         )
 
     oauth.get_credentials = mock_get_creds

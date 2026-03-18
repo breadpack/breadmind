@@ -215,14 +215,14 @@ async def test_cooldown_blocks_tool(registry):
         safety_guard=guard,
     )
 
-    # First call executes normally
+    # First call executes normally (use system: channel to trigger cooldown logic)
     provider.chat = AsyncMock(side_effect=[
         _make_response(
             tool_calls=[ToolCall(id="tc1", name="test_tool", arguments={"input": "a"})],
         ),
         _make_response(content="done1"),
     ])
-    await agent.handle_message("run tool", user="bob", channel="ops")
+    await agent.handle_message("run tool", user="bob", channel="system:auto")
 
     # Second call — same tool should be in cooldown
     provider.chat = AsyncMock(side_effect=[
@@ -231,7 +231,7 @@ async def test_cooldown_blocks_tool(registry):
         ),
         _make_response(content="done2"),
     ])
-    await agent.handle_message("run tool again", user="bob", channel="ops")
+    await agent.handle_message("run tool again", user="bob", channel="system:auto")
 
     # Check the second round's tool result mentions cooldown
     second_call_messages = provider.chat.call_args.kwargs.get("messages") or provider.chat.call_args[0][0]

@@ -52,12 +52,20 @@ SAMPLE_PR = {
 }
 
 
+def _mock_aiohttp_session_for_auth(status=200, json_data=None):
+    """Patch aiohttp.ClientSession so authenticate() doesn't make real HTTP calls."""
+    resp = _make_response(status=status, json_data=json_data)
+    session = _make_session(resp)
+    return patch("aiohttp.ClientSession", return_value=_session_ctx(session))
+
+
 @pytest.fixture
 async def adapter():
     from breadmind.personal.adapters.github_issues import GitHubIssuesAdapter
 
     a = GitHubIssuesAdapter()
-    await a.authenticate({"token": "ghp_test", "owner": "myorg", "repo": "myrepo"})
+    with _mock_aiohttp_session_for_auth(status=200):
+        await a.authenticate({"token": "ghp_test", "owner": "myorg", "repo": "myrepo"})
     return a
 
 
@@ -66,9 +74,10 @@ async def test_authenticate_success():
     from breadmind.personal.adapters.github_issues import GitHubIssuesAdapter
 
     a = GitHubIssuesAdapter()
-    result = await a.authenticate(
-        {"token": "ghp_test", "owner": "myorg", "repo": "myrepo"}
-    )
+    with _mock_aiohttp_session_for_auth(status=200):
+        result = await a.authenticate(
+            {"token": "ghp_test", "owner": "myorg", "repo": "myrepo"}
+        )
     assert result is True
     assert a.domain == "task"
     assert a.source == "github"
