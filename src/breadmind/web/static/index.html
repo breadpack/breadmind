@@ -827,7 +827,7 @@
                 html = html.replace(/\[REQUEST_INPUT\]([\s\S]*?)\[\/REQUEST_INPUT\]/g, function(match, jsonStr) {
                     try {
                         const config = JSON.parse(jsonStr.trim());
-                        const formId = 'dynform-' + (config.id || Date.now());
+                        const formId = 'dynform-' + (config.id || '') + '-' + Date.now();
 
                         let fieldsHtml = '';
                         (config.fields || []).forEach(f => {
