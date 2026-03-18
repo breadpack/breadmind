@@ -123,19 +123,23 @@ class CredentialVault:
         """
         if not text:
             return text
-        # 1. Protect credential_ref tokens with placeholders
-        refs = _CREDENTIAL_REF_RE.findall(text)
+        # 1. Protect credential_ref tokens AND their surrounding key labels
+        #    e.g. "password: credential_ref:xxx" must not be redacted
+        _ref_with_context = re.compile(
+            r"(?:\w+\s*[:=]\s*)?credential_ref:[\w:.@\-]+"
+        )
+        matches = list(_ref_with_context.finditer(text))
         protected = text
         placeholders: dict[str, str] = {}
-        for i, ref in enumerate(refs):
-            ph = f"__CREF_PLACEHOLDER_{i}__"
-            placeholders[ph] = ref
-            protected = protected.replace(ref, ph, 1)
+        for i, m in enumerate(reversed(matches)):
+            ph = f"\x00CREF{i}\x00"
+            placeholders[ph] = m.group(0)
+            protected = protected[:m.start()] + ph + protected[m.end():]
         # 2. Redact sensitive patterns
         result = _SENSITIVE_PATTERNS.sub("[REDACTED]", protected)
         # 3. Restore placeholders
-        for ph, ref in placeholders.items():
-            result = result.replace(ph, ref)
+        for ph, original in placeholders.items():
+            result = result.replace(ph, original)
         return result
 
     # ── Migration ─────────────────────────────────────────────────────
