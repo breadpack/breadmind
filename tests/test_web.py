@@ -88,7 +88,7 @@ def test_config_endpoint():
     assert resp.status_code == 200
     data = resp.json()
     assert "llm" in data
-    assert data["llm"]["default_provider"] == "claude"
+    assert data["llm"]["default_provider"] == "gemini"
 
 def test_safety_endpoint():
     safety = {"blacklist": {"k8s": ["delete_ns"]}, "require_approval": ["shell_exec"]}
@@ -986,8 +986,9 @@ def test_check_update_returns_version_info(monkeypatch):
     """Test GET /api/update/check returns version info with mocked aiohttp."""
     import aiohttp
 
+    # The endpoint calls GitHub Releases API which returns {"tag_name": "v0.2.0", "body": "..."}
     mock_json = AsyncMock(return_value={
-        "info": {"version": "0.2.0", "summary": "New features"}
+        "tag_name": "v0.2.0", "body": "New features"
     })
     mock_resp = MagicMock()
     mock_resp.status = 200
@@ -1001,6 +1002,10 @@ def test_check_update_returns_version_info(monkeypatch):
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
     monkeypatch.setattr(aiohttp, "ClientSession", lambda: mock_session)
+
+    # Also mock importlib.metadata.version to return a known current version
+    import importlib.metadata
+    monkeypatch.setattr(importlib.metadata, "version", lambda name: "0.1.0")
 
     app = WebApp(message_handler=lambda m, **kw: "ok")
     client = TestClient(app.app)

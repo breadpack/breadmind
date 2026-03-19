@@ -149,7 +149,7 @@ llm:
 
 def test_load_config_missing_dir_returns_defaults():
     cfg = load_config("/nonexistent/path/that/does/not/exist")
-    assert cfg.llm.default_provider == "claude"
+    assert cfg.llm.default_provider == "gemini"
     assert cfg.mcp.auto_discover is True
 
 

@@ -430,7 +430,7 @@ def test_main_parse_args_defaults():
     try:
         sys.argv = ["breadmind"]
         args = _parse_args()
-        assert args.web is False
+        assert args.command == "web"
         assert args.port is None
         assert args.host is None
         assert args.log_level is None
@@ -442,9 +442,9 @@ def test_main_parse_args_web_with_port():
     import sys
     original_argv = sys.argv
     try:
-        sys.argv = ["breadmind", "--web", "--port", "9090", "--host", "127.0.0.1", "--log-level", "DEBUG"]
+        sys.argv = ["breadmind", "web", "--port", "9090", "--host", "127.0.0.1", "--log-level", "DEBUG"]
         args = _parse_args()
-        assert args.web is True
+        assert args.command == "web"
         assert args.port == 9090
         assert args.host == "127.0.0.1"
         assert args.log_level == "DEBUG"
