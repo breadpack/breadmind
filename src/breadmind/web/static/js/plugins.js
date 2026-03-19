@@ -89,10 +89,10 @@
         if (!container) return;
 
         // Hide detail panel initially (full width for browse)
-        const detailPanel = document.querySelector('#tab-plugins .store-right');
+        const detailPanel = document.getElementById('plugin-detail-panel');
         if (detailPanel) detailPanel.style.display = 'none';
-        const leftPanel = document.querySelector('#tab-plugins .store-left');
-        if (leftPanel) leftPanel.style.flex = '1';
+        const leftPanel = document.getElementById('plugin-browse-panel');
+        if (leftPanel) { leftPanel.style.flex = '1'; leftPanel.style.width = 'auto'; }
 
         // Load installed plugins
         let installed = [];
@@ -119,7 +119,7 @@
         if (installed.length > 0) {
             html += `<div class="cat-section" data-pcat="Installed">`;
             html += `<h3 style="color:#e2e8f0;font-size:14px;margin-bottom:8px;">✅ 설치됨 (${installed.length})</h3>`;
-            html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;">';
+            html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;">';
             for (const p of installed) {
                 const statusDot = p.enabled ? '🟢' : '⚪';
                 html += `<div class="server-card" onclick="showPluginDetail('${p.name}','installed')" style="cursor:pointer;">
@@ -146,7 +146,7 @@
 
             html += `<div class="cat-section" data-pcat="${cat.category}">`;
             html += `<h3 style="color:#e2e8f0;font-size:14px;margin-bottom:8px;">${cat.icon} ${cat.category}</h3>`;
-            html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;">';
+            html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;">';
             for (const p of curated.slice(0, 4)) {
                 html += renderPluginCard(p, 'popular');
             }
@@ -247,7 +247,7 @@
             resultsDiv.innerHTML = '<p style="color:#64748b;">검색 결과가 없습니다.</p>';
             return;
         }
-        let html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;">';
+        let html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;">';
         for (const r of results) {
             html += renderPluginCard(r, 'popular');
         }
@@ -257,10 +257,10 @@
 
     window.showPluginDetail = async function(name, source) {
         // Show detail panel
-        const detailPanel = document.querySelector('#tab-plugins .store-right');
-        const leftPanel = document.querySelector('#tab-plugins .store-left');
+        const detailPanel = document.getElementById('plugin-detail-panel');
+        const leftPanel = document.getElementById('plugin-browse-panel');
         if (detailPanel) detailPanel.style.display = '';
-        if (leftPanel) leftPanel.style.flex = '0 0 45%';
+        if (leftPanel) { leftPanel.style.flex = '0 0 45%'; leftPanel.style.width = '45%'; }
 
         const detail = document.getElementById('plugin-detail');
 
@@ -356,10 +356,10 @@
             await fetchJSON(`/api/plugins/${encodeURIComponent(name)}`, { method: 'DELETE' });
             if (window.showToast) window.showToast(`${name} 삭제됨`, 'success');
             document.getElementById('plugin-detail').innerHTML = '<p style="color:#64748b;">플러그인을 선택하면 상세 정보가 표시됩니다.</p>';
-            const detailPanel = document.querySelector('#tab-plugins .store-right');
-            const leftPanel = document.querySelector('#tab-plugins .store-left');
+            const detailPanel = document.getElementById('plugin-detail-panel');
+            const leftPanel = document.getElementById('plugin-browse-panel');
             if (detailPanel) detailPanel.style.display = 'none';
-            if (leftPanel) leftPanel.style.flex = '1';
+            if (leftPanel) { leftPanel.style.flex = '1'; leftPanel.style.width = 'auto'; }
             window.loadPluginsFeatured();
         } catch(e) {
             if (window.showToast) window.showToast('삭제 실패: ' + e.message, 'error');
