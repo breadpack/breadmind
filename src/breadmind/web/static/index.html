@@ -592,7 +592,7 @@
                     <button onclick="searchPlugins()">Search</button>
                 </div>
                 <div class="store-content" style="flex:1;display:flex;gap:16px;overflow:hidden;">
-                    <div class="store-left" style="flex:0 0 45%;overflow-y:auto;">
+                    <div class="store-left" style="flex:1;overflow-y:auto;">
                         <div class="store-toggle">
                             <button class="active" onclick="pluginToggle('browse',this)">Browse</button>
                             <button onclick="pluginToggle('installed',this)">Installed</button>
@@ -601,7 +601,7 @@
                         <div id="plugin-results" style="display:none;"></div>
                         <div id="plugin-installed" style="display:none;"></div>
                     </div>
-                    <div class="store-right" style="flex:1;overflow-y:auto;">
+                    <div class="store-right" style="display:none;flex:1;overflow-y:auto;">
                         <h3>Plugin Details</h3>
                         <div id="plugin-detail">
                             <p style="color:#64748b;">플러그인을 선택하면 상세 정보가 표시됩니다.</p>
