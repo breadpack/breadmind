@@ -141,6 +141,55 @@ DEFAULT_ROLES: dict[str, SwarmMember] = {
 }
 
 
+def _render_role_prompt(role_vars: dict) -> str:
+    parts = []
+    if role_vars.get("role_name"):
+        parts.append(f"You are a {role_vars['role_name']}.")
+    if role_vars.get("expertise"):
+        parts.append(f"Expertise: {role_vars['expertise']}")
+    if role_vars.get("decision_criteria"):
+        parts.append(f"Decision criteria: {role_vars['decision_criteria']}")
+    if role_vars.get("domain_context"):
+        parts.append(role_vars["domain_context"])
+    if role_vars.get("preferred_tools"):
+        tools = role_vars["preferred_tools"]
+        if isinstance(tools, list):
+            parts.append(f"Use tools: {', '.join(tools)}")
+    parts.append("Output format: classify each finding as [Critical], [Warning], or [OK] with a one-line summary.")
+    return "\n\n".join(parts)
+
+
+def build_default_roles(prompt_builder=None) -> dict[str, SwarmMember]:
+    """Build default roles. Uses PromptBuilder templates if available, falls back to hardcoded."""
+    if prompt_builder is None:
+        return dict(DEFAULT_ROLES)
+
+    roles = {}
+    role_configs = {
+        "k8s_expert": "Kubernetes cluster analysis and management",
+        "proxmox_expert": "Proxmox virtualization management",
+        "openwrt_expert": "Network and OpenWrt management",
+        "security_analyst": "Security analysis and vulnerability assessment",
+        "performance_analyst": "Performance analysis and optimization",
+        "general": "General-purpose analysis (fallback)",
+    }
+
+    for role_name, description in role_configs.items():
+        role_vars = prompt_builder._load_role(role_name, None)
+        if role_vars:
+            system_prompt = _render_role_prompt(role_vars)
+            roles[role_name] = SwarmMember(
+                role=role_name,
+                system_prompt=system_prompt,
+                description=description,
+                source="template",
+            )
+        elif role_name in DEFAULT_ROLES:
+            roles[role_name] = DEFAULT_ROLES[role_name]
+
+    return roles
+
+
 @dataclass
 class SwarmResult:
     id: str
@@ -163,11 +212,12 @@ class SwarmManager:
     _MAX_SWARMS = 100
 
     def __init__(self, message_handler=None, custom_roles: dict[str, SwarmMember] | None = None,
-                 tracker=None, team_builder=None, skill_store=None):
+                 tracker=None, team_builder=None, skill_store=None,
+                 prompt_builder=None):
         from breadmind.core.swarm_executor import SwarmCoordinator
 
         self._message_handler = message_handler
-        self._roles = {**DEFAULT_ROLES}
+        self._roles = build_default_roles(prompt_builder)
         if custom_roles:
             self._roles.update(custom_roles)
         self._coordinator = SwarmCoordinator(message_handler=message_handler)
