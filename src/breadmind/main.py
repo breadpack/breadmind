@@ -27,17 +27,36 @@ def _find_free_port(preferred: int, max_attempts: int = 10) -> int:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="BreadMind AI Infrastructure Agent")
-    parser.add_argument("--web", action="store_true", help="Start web UI mode with uvicorn")
-    parser.add_argument("--host", default=None, help="Web server host (default: from config or 0.0.0.0)")
-    parser.add_argument("--port", type=int, default=None, help="Web server port (default: from config or 8080)")
-    parser.add_argument("--config-dir", default=None,
-                        help="Config directory path (default: platform-specific)")
-    parser.add_argument("--log-level", default=None, choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-                        help="Logging level (default: from config or INFO)")
-    parser.add_argument("--mode", choices=["standalone", "commander", "worker"], default="standalone",
-                        help="Run mode: standalone (default), commander, or worker")
-    parser.add_argument("--commander-url", default="", help="Commander WebSocket URL (worker mode only)")
-    return parser.parse_args()
+    sub = parser.add_subparsers(dest="command")
+
+    # breadmind web --host 0.0.0.0 --port 8080
+    web_parser = sub.add_parser("web", help="Start web UI mode with uvicorn")
+    web_parser.add_argument("--host", default=None, help="Web server host (default: from config or 0.0.0.0)")
+    web_parser.add_argument("--port", type=int, default=None, help="Web server port (default: from config or 8080)")
+    web_parser.add_argument("--config-dir", default=None, help="Config directory path")
+    web_parser.add_argument("--log-level", default=None,
+                            choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], help="Logging level")
+    web_parser.add_argument("--mode", choices=["standalone", "commander", "worker"], default="standalone",
+                            help="Run mode: standalone (default), commander, or worker")
+    web_parser.add_argument("--commander-url", default="", help="Commander WebSocket URL (worker mode only)")
+
+    # breadmind update
+    sub.add_parser("update", help="Check for updates and install if available")
+
+    # breadmind version
+    sub.add_parser("version", help="Show current version")
+
+    args = parser.parse_args()
+    # Default to web if no command given
+    if args.command is None:
+        args.command = "web"
+        args.host = None
+        args.port = None
+        args.config_dir = None
+        args.log_level = None
+        args.mode = "standalone"
+        args.commander_url = ""
+    return args
 
 
 async def run_worker(config, args):
@@ -67,8 +86,78 @@ async def run_worker(config, args):
     # TODO: Connect WebSocket, start heartbeat loop, wait for shutdown
 
 
+def _get_version() -> str:
+    try:
+        from importlib.metadata import version
+        return version("breadmind")
+    except Exception:
+        return "0.0.0"
+
+
+async def _run_update():
+    """Check for updates and install if available."""
+    import aiohttp
+
+    current = _get_version()
+    print(f"  Current version: v{current}")
+    print("  Checking for updates...")
+
+    latest = current
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                "https://api.github.com/repos/breadpack/breadmind/releases/latest",
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    tag = data.get("tag_name", "").lstrip("v")
+                    if tag:
+                        latest = tag
+    except Exception as e:
+        print(f"  Failed to check updates: {e}")
+        return
+
+    try:
+        from packaging.version import Version
+        update_available = Version(latest) > Version(current)
+    except Exception:
+        update_available = latest != current and latest > current
+
+    if not update_available:
+        print(f"  Already up to date (v{current})")
+        return
+
+    print(f"  Update available: v{current} → v{latest}")
+    print("  Installing...")
+
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "-m", "pip", "install", "--upgrade",
+        "git+https://github.com/breadpack/breadmind.git",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+
+    if proc.returncode == 0:
+        new_ver = _get_version()
+        print(f"  Updated to v{new_ver}")
+        print("  Restart the service to apply: breadmind --web")
+    else:
+        print(f"  Update failed:\n{stderr.decode('utf-8', errors='replace')[-500:]}")
+
+
 async def run():
     args = _parse_args()
+
+    if args.command == "version":
+        print(f"BreadMind v{_get_version()}")
+        return
+
+    if args.command == "update":
+        await _run_update()
+        return
+
     config_dir = args.config_dir or get_default_config_dir()
 
     # Try platform config dir first, fall back to local ./config
@@ -117,7 +206,7 @@ async def run():
     db_extra_settings: dict = await apply_db_settings(config, db)
 
     # First-run setup wizard (CLI mode only, web has its own UI)
-    if not args.web:
+    if not args.command == "web":
         from breadmind.core.setup_wizard import is_first_run_async, run_cli_wizard
         if await is_first_run_async(db):
             await run_cli_wizard(db, config)
@@ -209,7 +298,7 @@ async def run():
                             if latest != current:
                                 print(f"  Update available: v{current} → v{latest}")
                                 # If web app running, broadcast notification
-                                if args.web and 'web_app' in dir():
+                                if args.command == "web" and 'web_app' in dir():
                                     await web_app.broadcast_event({
                                         "type": "update_available",
                                         "current": current,
@@ -258,7 +347,7 @@ async def run():
     await memory_gc.start()
 
     try:
-        if args.web:
+        if args.command == "web":
             import uvicorn
             from breadmind.web.app import WebApp
 
