@@ -7,3 +7,5 @@ dist/
 build/
 .pytest_cache/
 
+.playwright-mcp
+breadmind_test.log
