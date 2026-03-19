@@ -10,21 +10,89 @@
         return resp.json();
     }
 
-    // Featured categories with plugin recommendations
-    const PLUGIN_CATEGORIES = [
-        { name: 'Coding Agents', icon: '💻', description: 'AI 코딩 어시스턴트 연동' },
-        { name: 'Infrastructure', icon: '🏗️', description: '인프라 관리 도구 확장' },
-        { name: 'Monitoring', icon: '📊', description: '모니터링 및 알림' },
-        { name: 'Security', icon: '🔒', description: '보안 도구 및 스캐너' },
-        { name: 'DevOps', icon: '🚀', description: 'CI/CD 및 배포' },
-        { name: 'Communication', icon: '💬', description: '메신저 및 알림 확장' },
-        { name: 'Storage', icon: '📁', description: '파일 및 데이터 관리' },
-        { name: 'AI & LLM', icon: '🤖', description: 'AI 모델 및 도구' },
+    // Curated popular plugins (always shown even without marketplace API)
+    const POPULAR_PLUGINS = [
+        {
+            category: 'Coding Agents', icon: '💻',
+            plugins: [
+                { name: 'aider', description: 'AI pair programming in your terminal', author: 'paul-gauthier', stars: 25000, source: 'https://github.com/breadmind-plugins/aider-adapter', tags: ['coding', 'ai'] },
+                { name: 'continue', description: 'Open-source AI code assistant for VS Code and JetBrains', author: 'continuedev', stars: 19000, source: 'https://github.com/breadmind-plugins/continue-adapter', tags: ['coding', 'ide'] },
+                { name: 'cursor-rules', description: 'Cursor AI editor rules and templates', author: 'community', stars: 8500, source: 'https://github.com/breadmind-plugins/cursor-rules', tags: ['coding', 'cursor'] },
+                { name: 'cline', description: 'Autonomous coding agent for VS Code', author: 'cline', stars: 15000, source: 'https://github.com/breadmind-plugins/cline-adapter', tags: ['coding', 'agent'] },
+            ]
+        },
+        {
+            category: 'Infrastructure', icon: '🏗️',
+            plugins: [
+                { name: 'terraform-helper', description: 'Terraform plan/apply automation with drift detection', author: 'breadmind', stars: 320, source: 'https://github.com/breadmind-plugins/terraform-helper', tags: ['iac', 'terraform'] },
+                { name: 'ansible-runner', description: 'Run Ansible playbooks from BreadMind chat', author: 'community', stars: 180, source: 'https://github.com/breadmind-plugins/ansible-runner', tags: ['automation', 'ansible'] },
+                { name: 'docker-compose', description: 'Docker Compose stack management and monitoring', author: 'breadmind', stars: 450, source: 'https://github.com/breadmind-plugins/docker-compose', tags: ['docker', 'containers'] },
+                { name: 'helm-charts', description: 'Helm chart repository search and deploy', author: 'community', stars: 210, source: 'https://github.com/breadmind-plugins/helm-charts', tags: ['kubernetes', 'helm'] },
+            ]
+        },
+        {
+            category: 'Monitoring', icon: '📊',
+            plugins: [
+                { name: 'grafana-bridge', description: 'Query Grafana dashboards and alerts from chat', author: 'breadmind', stars: 560, source: 'https://github.com/breadmind-plugins/grafana-bridge', tags: ['monitoring', 'grafana'] },
+                { name: 'prometheus-query', description: 'PromQL queries and alert management', author: 'community', stars: 340, source: 'https://github.com/breadmind-plugins/prometheus-query', tags: ['monitoring', 'prometheus'] },
+                { name: 'uptime-kuma', description: 'Uptime Kuma status monitoring integration', author: 'community', stars: 280, source: 'https://github.com/breadmind-plugins/uptime-kuma', tags: ['monitoring', 'uptime'] },
+            ]
+        },
+        {
+            category: 'Security', icon: '🔒',
+            plugins: [
+                { name: 'trivy-scanner', description: 'Container image vulnerability scanning with Trivy', author: 'breadmind', stars: 420, source: 'https://github.com/breadmind-plugins/trivy-scanner', tags: ['security', 'scanning'] },
+                { name: 'cert-manager', description: 'TLS certificate monitoring and renewal alerts', author: 'community', stars: 310, source: 'https://github.com/breadmind-plugins/cert-manager', tags: ['security', 'tls'] },
+            ]
+        },
+        {
+            category: 'DevOps', icon: '🚀',
+            plugins: [
+                { name: 'github-actions', description: 'GitHub Actions workflow management and monitoring', author: 'breadmind', stars: 680, source: 'https://github.com/breadmind-plugins/github-actions', tags: ['ci', 'github'] },
+                { name: 'argocd', description: 'ArgoCD GitOps deployment management', author: 'community', stars: 290, source: 'https://github.com/breadmind-plugins/argocd', tags: ['gitops', 'argocd'] },
+                { name: 'jenkins-bridge', description: 'Jenkins job triggering and build status', author: 'community', stars: 190, source: 'https://github.com/breadmind-plugins/jenkins-bridge', tags: ['ci', 'jenkins'] },
+            ]
+        },
+        {
+            category: 'Communication', icon: '💬',
+            plugins: [
+                { name: 'webhook-relay', description: 'Forward and transform webhooks between services', author: 'breadmind', stars: 230, source: 'https://github.com/breadmind-plugins/webhook-relay', tags: ['webhook', 'integration'] },
+                { name: 'pagerduty', description: 'PagerDuty incident management integration', author: 'community', stars: 170, source: 'https://github.com/breadmind-plugins/pagerduty', tags: ['alerting', 'oncall'] },
+            ]
+        },
+        {
+            category: 'AI & LLM', icon: '🤖',
+            plugins: [
+                { name: 'ollama-models', description: 'Ollama model management and switching', author: 'breadmind', stars: 890, source: 'https://github.com/breadmind-plugins/ollama-models', tags: ['ai', 'ollama', 'local'] },
+                { name: 'rag-toolkit', description: 'RAG pipeline tools for document Q&A', author: 'community', stars: 520, source: 'https://github.com/breadmind-plugins/rag-toolkit', tags: ['ai', 'rag'] },
+                { name: 'prompt-library', description: 'Curated prompt templates for infrastructure tasks', author: 'breadmind', stars: 340, source: 'https://github.com/breadmind-plugins/prompt-library', tags: ['ai', 'prompts'] },
+            ]
+        },
     ];
+
+    const PLUGIN_CATEGORIES = POPULAR_PLUGINS.map(c => ({ name: c.category, icon: c.icon }));
+
+    function renderPluginCard(p, source) {
+        const starsHtml = p.stars ? `<span style="color:#fbbf24;font-size:11px;">★ ${p.stars >= 1000 ? (p.stars/1000).toFixed(1)+'k' : p.stars}</span>` : '';
+        return `<div class="server-card" onclick="showPluginDetail('${p.name}','${source}')" style="cursor:pointer;">
+            <div class="server-name">${p.name}</div>
+            <div class="server-desc">${(p.description || '').slice(0, 100)}</div>
+            <div class="server-meta">
+                <span class="server-source">${p.author || 'community'}</span>
+                ${starsHtml}
+            </div>
+        </div>`;
+    }
 
     window.loadPluginsFeatured = async function() {
         const container = document.getElementById('plugin-categories');
         if (!container) return;
+
+        // Hide detail panel initially (full width for browse)
+        const detailPanel = document.querySelector('#tab-plugins .store-right');
+        if (detailPanel) detailPanel.style.display = 'none';
+        const leftPanel = document.querySelector('#tab-plugins .store-left');
+        if (leftPanel) leftPanel.style.flex = '1';
 
         // Load installed plugins
         let installed = [];
@@ -33,11 +101,11 @@
             installed = data.plugins || [];
         } catch(e) { /* ignore */ }
 
-        // Load marketplace
-        let featured = [];
+        // Load marketplace (merge with curated)
+        let marketResults = [];
         try {
             const data = await fetchJSON('/api/marketplace/search?q=');
-            featured = data.results || [];
+            marketResults = data.results || [];
         } catch(e) { /* ignore */ }
 
         // Build category buttons
@@ -47,11 +115,11 @@
         }
         html += '</div>';
 
-        // Show installed as "Recommended" if any
+        // Show installed plugins section
         if (installed.length > 0) {
             html += `<div class="cat-section" data-pcat="Installed">`;
             html += `<h3 style="color:#e2e8f0;font-size:14px;margin-bottom:8px;">✅ 설치됨 (${installed.length})</h3>`;
-            html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;">';
+            html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;">';
             for (const p of installed) {
                 const statusDot = p.enabled ? '🟢' : '⚪';
                 html += `<div class="server-card" onclick="showPluginDetail('${p.name}','installed')" style="cursor:pointer;">
@@ -63,56 +131,26 @@
             html += '</div></div>';
         }
 
-        // Show featured/marketplace by category
-        if (featured.length > 0) {
-            // Group by tags
-            const grouped = {};
-            for (const cat of PLUGIN_CATEGORIES) {
-                grouped[cat.name] = [];
-            }
-            for (const p of featured) {
-                const tags = p.tags || [];
-                let matched = false;
-                for (const cat of PLUGIN_CATEGORIES) {
-                    const catLower = cat.name.toLowerCase();
-                    if (tags.some(t => t.toLowerCase().includes(catLower)) ||
-                        (p.type || '').toLowerCase().includes(catLower) ||
-                        (p.description || '').toLowerCase().includes(catLower)) {
-                        grouped[cat.name].push(p);
-                        matched = true;
-                    }
-                }
-                if (!matched && grouped['Infrastructure']) {
-                    grouped['Infrastructure'].push(p);
+        // Show popular/curated plugins by category
+        for (const cat of POPULAR_PLUGINS) {
+            // Merge marketplace results into curated list (avoid duplicates)
+            const curated = [...cat.plugins];
+            for (const mr of marketResults) {
+                const tags = mr.tags || [];
+                const catLower = cat.category.toLowerCase();
+                if ((tags.some(t => t.toLowerCase().includes(catLower)) || (mr.type || '').toLowerCase().includes(catLower)) &&
+                    !curated.find(c => c.name === mr.name)) {
+                    curated.push(mr);
                 }
             }
 
-            for (const cat of PLUGIN_CATEGORIES) {
-                const plugins = grouped[cat.name];
-                if (plugins && plugins.length > 0) {
-                    html += `<div class="cat-section" data-pcat="${cat.name}">`;
-                    html += `<h3 style="color:#e2e8f0;font-size:14px;margin-bottom:8px;">${cat.icon} ${cat.name}</h3>`;
-                    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;">';
-                    for (const p of plugins.slice(0, 4)) {
-                        html += `<div class="server-card" onclick="showPluginDetail('${p.name}','marketplace')" style="cursor:pointer;">
-                            <div class="server-name">${p.name}</div>
-                            <div class="server-desc">${(p.description || '').slice(0, 100)}</div>
-                            <div class="server-meta">
-                                <span class="server-source">${p.author || 'community'}</span>
-                                ${p.stars ? `<span style="color:#fbbf24;font-size:11px;">★${p.stars}</span>` : ''}
-                            </div>
-                        </div>`;
-                    }
-                    html += '</div></div>';
-                }
+            html += `<div class="cat-section" data-pcat="${cat.category}">`;
+            html += `<h3 style="color:#e2e8f0;font-size:14px;margin-bottom:8px;">${cat.icon} ${cat.category}</h3>`;
+            html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;">';
+            for (const p of curated.slice(0, 4)) {
+                html += renderPluginCard(p, 'popular');
             }
-        }
-
-        if (!installed.length && !featured.length) {
-            html += `<div style="text-align:center;padding:40px;color:#64748b;">
-                <p style="font-size:16px;margin-bottom:8px;">📦 플러그인이 없습니다</p>
-                <p style="font-size:13px;">검색하거나 로컬/Git URL로 설치하세요.</p>
-            </div>`;
+            html += '</div></div>';
         }
 
         container.innerHTML = html;
@@ -183,41 +221,54 @@
         resultsDiv.style.display = '';
         resultsDiv.innerHTML = '<p style="color:#64748b;">검색 중...</p>';
 
+        // Search curated first
+        const queryLower = query.toLowerCase();
+        let results = [];
+        for (const cat of POPULAR_PLUGINS) {
+            for (const p of cat.plugins) {
+                if (p.name.toLowerCase().includes(queryLower) || (p.description || '').toLowerCase().includes(queryLower)) {
+                    results.push({...p, _category: cat.category});
+                }
+            }
+        }
+
+        // Also search marketplace
         try {
             const data = await fetchJSON(`/api/marketplace/search?q=${encodeURIComponent(query)}`);
-            const results = data.results || [];
-            if (results.length === 0) {
-                resultsDiv.innerHTML = '<p style="color:#64748b;">검색 결과가 없습니다.</p>';
-                return;
+            const mr = data.results || [];
+            for (const p of mr) {
+                if (!results.find(r => r.name === p.name)) {
+                    results.push(p);
+                }
             }
-            let html = '';
-            for (const r of results) {
-                html += `<div class="server-card" onclick="showPluginDetail('${r.name}','marketplace')" style="cursor:pointer;margin-bottom:8px;">
-                    <div class="server-name">${r.name}</div>
-                    <div class="server-desc">${(r.description || '').slice(0, 100)}</div>
-                    <div class="server-meta">
-                        <span class="server-source">${r.author || 'community'}</span>
-                        ${r.stars ? `<span style="color:#fbbf24;font-size:11px;">★${r.stars}</span>` : ''}
-                    </div>
-                </div>`;
-            }
-            resultsDiv.innerHTML = html;
-        } catch(e) {
-            resultsDiv.innerHTML = '<p style="color:#f87171;">검색 실패: ' + e.message + '</p>';
+        } catch(e) { /* ignore */ }
+
+        if (results.length === 0) {
+            resultsDiv.innerHTML = '<p style="color:#64748b;">검색 결과가 없습니다.</p>';
+            return;
         }
+        let html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;">';
+        for (const r of results) {
+            html += renderPluginCard(r, 'popular');
+        }
+        html += '</div>';
+        resultsDiv.innerHTML = html;
     };
 
     window.showPluginDetail = async function(name, source) {
+        // Show detail panel
+        const detailPanel = document.querySelector('#tab-plugins .store-right');
+        const leftPanel = document.querySelector('#tab-plugins .store-left');
+        if (detailPanel) detailPanel.style.display = '';
+        if (leftPanel) leftPanel.style.flex = '0 0 45%';
+
         const detail = document.getElementById('plugin-detail');
+
         if (source === 'installed') {
-            // Show installed plugin detail
             try {
                 const data = await fetchJSON('/api/plugins');
                 const plugin = (data.plugins || []).find(p => p.name === name);
-                if (!plugin) {
-                    detail.innerHTML = '<p style="color:#f87171;">플러그인을 찾을 수 없습니다.</p>';
-                    return;
-                }
+                if (!plugin) { detail.innerHTML = '<p style="color:#f87171;">플러그인을 찾을 수 없습니다.</p>'; return; }
                 const statusText = plugin.enabled ? '활성' : '비활성';
                 const statusColor = plugin.enabled ? '#34d399' : '#94a3b8';
                 detail.innerHTML = `
@@ -237,47 +288,46 @@
                             style="padding:8px 16px;background:#450a0a;border:1px solid #7f1d1d;border-radius:8px;color:#fca5a5;cursor:pointer;font-size:13px;">
                             삭제
                         </button>
-                    </div>
-                `;
-            } catch(e) {
-                detail.innerHTML = '<p style="color:#f87171;">로드 실패: ' + e.message + '</p>';
-            }
+                    </div>`;
+            } catch(e) { detail.innerHTML = '<p style="color:#f87171;">로드 실패: ' + e.message + '</p>'; }
         } else {
-            // Show marketplace plugin detail
-            try {
-                const data = await fetchJSON(`/api/marketplace/search?q=${encodeURIComponent(name)}`);
-                const plugin = (data.results || []).find(p => p.name === name);
-                if (!plugin) {
-                    detail.innerHTML = '<p style="color:#64748b;">상세 정보를 찾을 수 없습니다.</p>';
-                    return;
-                }
-                const tags = (plugin.tags || []).map(t =>
-                    `<span style="font-size:10px;padding:2px 6px;border-radius:8px;background:#1e293b;color:#60a5fa;">${t}</span>`
-                ).join(' ');
-                detail.innerHTML = `
-                    <div style="margin-bottom:16px;">
-                        <h3 style="color:#e2e8f0;font-size:18px;margin-bottom:4px;">${plugin.name}</h3>
-                        <span style="font-size:12px;color:#64748b;">v${plugin.version || '?'}</span>
-                        ${plugin.stars ? `<span style="color:#fbbf24;font-size:12px;margin-left:8px;">★ ${plugin.stars}</span>` : ''}
-                        ${plugin.downloads ? `<span style="color:#64748b;font-size:12px;margin-left:8px;">↓ ${plugin.downloads}</span>` : ''}
-                    </div>
-                    <p style="color:#94a3b8;font-size:13px;margin-bottom:12px;">${plugin.description || 'No description'}</p>
-                    <div style="margin-bottom:16px;">${tags}</div>
-                    ${plugin.source ? `<p style="color:#64748b;font-size:12px;margin-bottom:16px;">📦 ${plugin.source}</p>` : ''}
-                    <div style="display:flex;gap:8px;">
-                        <button onclick="window._installPluginFromStore('${plugin.source || plugin.name}')"
-                            style="padding:8px 20px;background:#3b82f6;border:none;border-radius:8px;color:white;cursor:pointer;font-size:13px;">
-                            설치
-                        </button>
-                    </div>
-                `;
-            } catch(e) {
-                detail.innerHTML = '<p style="color:#f87171;">로드 실패: ' + e.message + '</p>';
+            // Find from curated or marketplace
+            let plugin = null;
+            for (const cat of POPULAR_PLUGINS) {
+                plugin = cat.plugins.find(p => p.name === name);
+                if (plugin) break;
             }
+            if (!plugin) {
+                try {
+                    const data = await fetchJSON(`/api/marketplace/search?q=${encodeURIComponent(name)}`);
+                    plugin = (data.results || []).find(p => p.name === name);
+                } catch(e) { /* ignore */ }
+            }
+            if (!plugin) { detail.innerHTML = '<p style="color:#64748b;">상세 정보를 찾을 수 없습니다.</p>'; return; }
+
+            const tags = (plugin.tags || []).map(t =>
+                `<span style="font-size:10px;padding:2px 6px;border-radius:8px;background:#1e293b;color:#60a5fa;">${t}</span>`
+            ).join(' ');
+            const starsHtml = plugin.stars ? `<span style="color:#fbbf24;font-size:12px;margin-left:8px;">★ ${plugin.stars >= 1000 ? (plugin.stars/1000).toFixed(1)+'k' : plugin.stars}</span>` : '';
+            detail.innerHTML = `
+                <div style="margin-bottom:16px;">
+                    <h3 style="color:#e2e8f0;font-size:18px;margin-bottom:4px;">${plugin.name}</h3>
+                    <span style="font-size:12px;color:#64748b;">v${plugin.version || 'latest'}</span>
+                    ${starsHtml}
+                </div>
+                <p style="color:#94a3b8;font-size:13px;margin-bottom:12px;">${plugin.description || 'No description'}</p>
+                ${tags ? `<div style="margin-bottom:16px;">${tags}</div>` : ''}
+                ${plugin.author ? `<p style="color:#64748b;font-size:12px;margin-bottom:8px;">by ${plugin.author}</p>` : ''}
+                ${plugin.source ? `<p style="color:#64748b;font-size:12px;margin-bottom:16px;">📦 ${plugin.source}</p>` : ''}
+                <div style="display:flex;gap:8px;">
+                    <button onclick="window._installPluginFromStore('${plugin.source || plugin.name}')"
+                        style="padding:8px 20px;background:#3b82f6;border:none;border-radius:8px;color:white;cursor:pointer;font-size:13px;">
+                        설치
+                    </button>
+                </div>`;
         }
     };
 
-    // Install from store
     window._installPluginFromStore = async function(source) {
         try {
             await fetchJSON('/api/plugins/install', { method: 'POST', body: JSON.stringify({ source }) });
@@ -288,22 +338,6 @@
         }
     };
 
-    // Install from local/git input
-    window._installPluginManual = async function() {
-        const input = document.getElementById('plugin-manual-install');
-        const source = input ? input.value.trim() : '';
-        if (!source) return;
-        try {
-            await fetchJSON('/api/plugins/install', { method: 'POST', body: JSON.stringify({ source }) });
-            if (window.showToast) window.showToast('플러그인이 설치되었습니다.', 'success');
-            input.value = '';
-            window.loadPluginsFeatured();
-        } catch(e) {
-            if (window.showToast) window.showToast('설치 실패: ' + e.message, 'error');
-        }
-    };
-
-    // Toggle enable/disable
     window._togglePluginFromStore = async function(name, enable) {
         try {
             const action = enable ? 'enable' : 'disable';
@@ -316,19 +350,21 @@
         }
     };
 
-    // Uninstall
     window._uninstallPluginFromStore = async function(name) {
         if (!confirm(`"${name}" 플러그인을 삭제하시겠습니까?`)) return;
         try {
             await fetchJSON(`/api/plugins/${encodeURIComponent(name)}`, { method: 'DELETE' });
             if (window.showToast) window.showToast(`${name} 삭제됨`, 'success');
             document.getElementById('plugin-detail').innerHTML = '<p style="color:#64748b;">플러그인을 선택하면 상세 정보가 표시됩니다.</p>';
+            const detailPanel = document.querySelector('#tab-plugins .store-right');
+            const leftPanel = document.querySelector('#tab-plugins .store-left');
+            if (detailPanel) detailPanel.style.display = 'none';
+            if (leftPanel) leftPanel.style.flex = '1';
             window.loadPluginsFeatured();
         } catch(e) {
             if (window.showToast) window.showToast('삭제 실패: ' + e.message, 'error');
         }
     };
 
-    // Alias for legacy references
     window.initPluginsTab = window.loadPluginsFeatured;
 })();
