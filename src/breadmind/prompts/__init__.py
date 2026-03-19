@@ -1,3 +1,3 @@
-from breadmind.prompts.builder import PromptContext
+from breadmind.prompts.builder import PromptBuilder, PromptContext
 
-__all__ = ["PromptContext"]
+__all__ = ["PromptBuilder", "PromptContext"]
