@@ -46,6 +46,21 @@ def _parse_args() -> argparse.Namespace:
     # breadmind version
     sub.add_parser("version", help="Show current version")
 
+    # breadmind plugin <action>
+    plugin_parser = sub.add_parser("plugin", help="Plugin management")
+    plugin_sub = plugin_parser.add_subparsers(dest="plugin_action")
+    plugin_sub.add_parser("list", help="List installed plugins")
+    install_p = plugin_sub.add_parser("install", help="Install a plugin")
+    install_p.add_argument("source", help="Plugin source (path, git URL, or marketplace name)")
+    uninstall_p = plugin_sub.add_parser("uninstall", help="Uninstall a plugin")
+    uninstall_p.add_argument("name", help="Plugin name")
+    search_p = plugin_sub.add_parser("search", help="Search marketplace")
+    search_p.add_argument("query", help="Search query")
+    enable_p = plugin_sub.add_parser("enable", help="Enable plugin")
+    enable_p.add_argument("name")
+    disable_p = plugin_sub.add_parser("disable", help="Disable plugin")
+    disable_p.add_argument("name")
+
     args = parser.parse_args()
     # Default to web if no command given
     if args.command is None:
@@ -147,6 +162,83 @@ async def _run_update():
         print(f"  Update failed:\n{stderr.decode('utf-8', errors='replace')[-500:]}")
 
 
+async def _run_plugin_command(args):
+    """Handle `breadmind plugin` subcommands."""
+    import os as _os
+    from pathlib import Path as _Path
+
+    if _os.name == 'nt':
+        plugins_base = _Path(_os.environ.get("APPDATA", _Path.home())) / "breadmind" / "plugins" / "installed"
+    else:
+        plugins_base = _Path.home() / ".breadmind" / "plugins" / "installed"
+
+    action = getattr(args, "plugin_action", None)
+
+    if action == "list":
+        from breadmind.plugins.manager import PluginManager
+        mgr = PluginManager(plugins_dir=plugins_base)
+        manifests = await mgr.discover()
+        if not manifests:
+            print("No plugins installed.")
+            return
+        for m in manifests:
+            info = await mgr._registry.get(m.name)
+            enabled = info.get("enabled", True) if info else True
+            status = "enabled" if enabled else "disabled"
+            print(f"  {m.name} v{m.version} [{status}] — {m.description}")
+
+    elif action == "install":
+        from breadmind.plugins.manager import PluginManager
+        mgr = PluginManager(plugins_dir=plugins_base)
+        source = args.source
+        # Try marketplace first if it looks like a simple name (no path/URL)
+        if not source.startswith(("/", ".", "https://", "git@")) and not _Path(source).exists():
+            from breadmind.plugins.marketplace import MarketplaceClient
+            marketplace = MarketplaceClient()
+            print(f"  Searching marketplace for '{source}'...")
+            try:
+                target = await marketplace.install(source, plugins_base)
+                manifest = await mgr.load_from_directory(target)
+                if manifest:
+                    print(f"  Installed '{manifest.manifest.name}' from marketplace.")
+                return
+            except Exception as e:
+                print(f"  Marketplace install failed ({e}), trying direct source...")
+        manifest = await mgr.install(source)
+        print(f"  Installed plugin: {manifest.name} v{manifest.version}")
+
+    elif action == "uninstall":
+        from breadmind.plugins.manager import PluginManager
+        mgr = PluginManager(plugins_dir=plugins_base)
+        await mgr.uninstall(args.name)
+        print(f"  Uninstalled plugin: {args.name}")
+
+    elif action == "search":
+        from breadmind.plugins.marketplace import MarketplaceClient
+        marketplace = MarketplaceClient()
+        results = await marketplace.search(args.query)
+        if not results:
+            print("  No plugins found.")
+            return
+        for p in results:
+            print(f"  {p.get('name', '?')} v{p.get('version', '?')} — {p.get('description', '')}")
+
+    elif action == "enable":
+        from breadmind.plugins.manager import PluginManager
+        mgr = PluginManager(plugins_dir=plugins_base)
+        await mgr._registry.set_enabled(args.name, True)
+        print(f"  Enabled plugin: {args.name}")
+
+    elif action == "disable":
+        from breadmind.plugins.manager import PluginManager
+        mgr = PluginManager(plugins_dir=plugins_base)
+        await mgr._registry.set_enabled(args.name, False)
+        print(f"  Disabled plugin: {args.name}")
+
+    else:
+        print("Usage: breadmind plugin <list|install|uninstall|search|enable|disable>")
+
+
 async def run():
     args = _parse_args()
 
@@ -156,6 +248,10 @@ async def run():
 
     if args.command == "update":
         await _run_update()
+        return
+
+    if args.command == "plugin":
+        await _run_plugin_command(args)
         return
 
     config_dir = args.config_dir or get_default_config_dir()
@@ -464,6 +560,33 @@ async def run():
 
             asyncio.create_task(_auto_promote_memory())
 
+            # Initialize plugin manager for web mode
+            plugin_mgr = None
+            try:
+                from breadmind.plugins.manager import PluginManager
+                from pathlib import Path as _PluginPath
+                import os as _os
+
+                if _os.name == 'nt':
+                    _plugins_base = _PluginPath(_os.environ.get("APPDATA", _PluginPath.home())) / "breadmind" / "plugins" / "installed"
+                else:
+                    _plugins_base = _PluginPath.home() / ".breadmind" / "plugins" / "installed"
+
+                plugin_mgr = PluginManager(plugins_dir=_plugins_base, tool_registry=registry)
+
+                # Load builtin plugins first
+                _builtin_dir = _PluginPath(__file__).resolve().parent / "plugins" / "builtin"
+                if _builtin_dir.exists():
+                    for _p in _builtin_dir.iterdir():
+                        if _p.is_dir() and (_p / ".claude-plugin" / "plugin.json").exists():
+                            await plugin_mgr.load_from_directory(_p)
+
+                # Load user-installed plugins
+                await plugin_mgr.load_all()
+                logger.info(f"Plugins loaded: {len(plugin_mgr.loaded_plugins)}")
+            except Exception as e:
+                logger.warning(f"Plugin system initialization failed: {e}")
+
             web_app = WebApp(
                 message_handler=agent.handle_message,
                 tool_registry=registry,
@@ -490,6 +613,7 @@ async def run():
                 orchestrator=messenger_components["orchestrator"] if messenger_components else None,
                 bg_job_manager=bg_job_manager,
                 embedding_service=memory_components.get("embedding_service"),
+                plugin_mgr=plugin_mgr,
             )
             # Expose personal assistant components to web routes
             if memory_components.get("adapter_registry"):
