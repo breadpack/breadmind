@@ -11,4 +11,5 @@ blacklist:
     - owrt_factory_reset
     - owrt_firmware_upgrade
 
-require_approval: []
+require_approval:
+  - code_delegate

@@ -143,6 +143,12 @@ async def init_tools(config, safety_cfg):
     except Exception:
         pass
 
+    # Code delegate tool (optional — requires coding sub-package)
+    try:
+        _register_code_delegate(registry, db=None)
+    except Exception as e:
+        logger.warning("Failed to register code_delegate tool: %s", e)
+
     # MCP
     mcp_manager = MCPClientManager(
         max_restart_attempts=config.mcp.max_restart_attempts,
@@ -182,6 +188,26 @@ async def init_tools(config, safety_cfg):
         registry.register(func)
 
     return registry, guard, mcp_manager, search_engine, meta_tools
+
+
+def _register_code_delegate(registry, db) -> None:
+    """Register the code_delegate tool into the registry.
+
+    The tool handler returned by create_code_delegate_tool() is a plain async
+    function without the @tool decorator, so we attach a synthetic
+    _tool_definition before calling registry.register().
+    """
+    from breadmind.coding.tool import create_code_delegate_tool
+    from breadmind.llm.base import ToolDefinition
+
+    tool_def_dict, handler = create_code_delegate_tool(db=db)
+    handler._tool_definition = ToolDefinition(
+        name=tool_def_dict["name"],
+        description=tool_def_dict["description"],
+        parameters=tool_def_dict["parameters"],
+    )
+    registry.register(handler)
+    logger.info("Registered code_delegate tool")
 
 
 async def init_memory(db, provider, config, registry, mcp_manager, search_engine, vault=None):

@@ -21,6 +21,7 @@ class IntentCategory(str, Enum):
     TASK = "task"             # Task/todo management (todo, reminder, checklist)
     SEARCH_FILES = "search_files"  # File search/document lookup
     CONTACT = "contact"       # Contact/person lookup
+    CODING = "coding"         # Software development tasks (implement, refactor, test)
 
 
 @dataclass
@@ -50,6 +51,10 @@ _PATTERNS: list[tuple[re.Pattern, IntentCategory, float]] = [
 
     # CONTACT — contact/person lookup
     (re.compile(r"연락처|전화번호|이메일\s*주소|담당자|contact", re.I), IntentCategory.CONTACT, 0.7),
+
+    # CODING — software development tasks
+    (re.compile(r"코드|구현|개발|리팩토링|버그\s*수정|테스트\s*작성|프로그래밍|코딩", re.I), IntentCategory.CODING, 0.7),
+    (re.compile(r"(?<![a-zA-Z])(code|implement|refactor|fix\s+bug|write\s+test|develop|programming|coding)(?![a-zA-Z])", re.I), IntentCategory.CODING, 0.7),
 
     # EXECUTE — action verbs
     (re.compile(r"(실행|배포|deploy|restart|재시작|설치|install|삭제|delete|remove|생성|create|시작|start|stop|중지|kill|업데이트|update|upgrade|롤백|rollback|스케일|scale|clean|정리)", re.I), IntentCategory.EXECUTE, 0.4),
@@ -94,6 +99,7 @@ _TOOL_HINTS: dict[IntentCategory, set[str]] = {
     IntentCategory.TASK: {"task_create", "task_list", "task_update", "task_delete", "reminder_set"},
     IntentCategory.SEARCH_FILES: {"file_search", "file_read", "file_list"},
     IntentCategory.CONTACT: {"contact_search", "contact_create"},
+    IntentCategory.CODING: {"code_delegate"},
 }
 
 
@@ -117,12 +123,13 @@ _CATEGORY_PRIORITY: dict[IntentCategory, int] = {
     IntentCategory.TASK: 1,
     IntentCategory.CONTACT: 2,
     IntentCategory.SEARCH_FILES: 3,
-    IntentCategory.DIAGNOSE: 4,
-    IntentCategory.EXECUTE: 5,
-    IntentCategory.CONFIGURE: 6,
-    IntentCategory.QUERY: 7,
-    IntentCategory.LEARN: 8,
-    IntentCategory.CHAT: 9,
+    IntentCategory.CODING: 4,
+    IntentCategory.DIAGNOSE: 5,
+    IntentCategory.EXECUTE: 6,
+    IntentCategory.CONFIGURE: 7,
+    IntentCategory.QUERY: 8,
+    IntentCategory.LEARN: 9,
+    IntentCategory.CHAT: 10,
 }
 
 
@@ -201,6 +208,7 @@ _THINK_BUDGETS: dict[IntentCategory, int] = {
     IntentCategory.TASK: 5120,       # Task management — priority assessment
     IntentCategory.SEARCH_FILES: 5120,  # File search — query formulation
     IntentCategory.CONTACT: 3072,    # Contact lookup — simple matching
+    IntentCategory.CODING: 12288,    # Coding tasks — planning, design, implementation strategy
 }
 
 
