@@ -466,6 +466,7 @@
         <div class="tab" onclick="switchTab('monitoring')">Monitoring <span class="count" id="eventCount">0</span></div>
         <div class="tab" onclick="switchTab('store')">MCP Store</div>
         <div class="tab" onclick="switchTab('skills')">Skill Store</div>
+        <div class="tab" onclick="switchTab('plugins')">Plugin Store</div>
         <div class="tab" onclick="switchTab('personal')">📋 비서</div>
         <div class="tab" onclick="switchTab('settings')">Settings</div>
     </div>
@@ -583,6 +584,32 @@
                 </div>
             </div>
         </div>
+        <!-- Plugin Store Tab -->
+        <div class="tab-content" id="tab-plugins">
+            <div style="padding:16px;display:flex;flex-direction:column;height:100%;overflow:hidden;">
+                <div class="store-search">
+                    <input type="text" id="plugin-search-input" placeholder="플러그인 검색..." onkeydown="if(event.key==='Enter')searchPlugins()">
+                    <button onclick="searchPlugins()">Search</button>
+                </div>
+                <div class="store-content" style="flex:1;display:flex;gap:16px;overflow:hidden;">
+                    <div class="store-left" style="flex:0 0 45%;overflow-y:auto;">
+                        <div class="store-toggle">
+                            <button class="active" onclick="pluginToggle('browse',this)">Browse</button>
+                            <button onclick="pluginToggle('installed',this)">Installed</button>
+                        </div>
+                        <div id="plugin-categories"></div>
+                        <div id="plugin-results" style="display:none;"></div>
+                        <div id="plugin-installed" style="display:none;"></div>
+                    </div>
+                    <div class="store-right" style="flex:1;overflow-y:auto;">
+                        <h3>Plugin Details</h3>
+                        <div id="plugin-detail">
+                            <p style="color:#64748b;">플러그인을 선택하면 상세 정보가 표시됩니다.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
         <!-- Personal Assistant Tab -->
         <div class="tab-content" id="tab-personal" style="display:none;flex-direction:column;">
             <div id="personal-content"></div>
@@ -597,12 +624,10 @@
                     <button class="sub-tab" onclick="switchSettingsTab('messenger')" id="stab-messenger">Messenger</button>
                     <button class="sub-tab" onclick="switchSettingsTab('agents')" id="stab-agents">Agents</button>
                     <button class="sub-tab" onclick="switchSettingsTab('system')" id="stab-system">System</button>
-                    <button class="sub-tab" onclick="switchSettingsTab('plugins')" id="stab-plugins">🔌 Plugins</button>
                     <button class="sub-tab" onclick="switchSettingsTab('integrations')" id="stab-integrations">🔗 Integrations</button>
                 </div>
                 <div id="settingsContent" style="flex:1;overflow-y:auto;padding:16px;"><div class="settings-section"><h3>Loading...</h3></div></div>
                 <div id="settings-integrations" style="display:none;flex:1;overflow-y:auto;padding:16px;"><div id="integrations-content"></div></div>
-                <div id="settings-plugins" style="display:none;flex:1;overflow-y:auto;padding:16px;"></div>
             </div>
         </div>
     </div>
@@ -750,7 +775,7 @@
         }
 
         function switchTab(name) {
-            document.querySelectorAll('.tab').forEach((t, i) => { t.classList.toggle('active', ['chat','monitoring','store','skills','personal','settings'][i] === name); });
+            document.querySelectorAll('.tab').forEach((t, i) => { t.classList.toggle('active', ['chat','monitoring','store','skills','plugins','personal','settings'][i] === name); });
             document.querySelectorAll('.tab-content').forEach(c => { c.classList.remove('active'); c.style.display = 'none'; });
             const activeTab = document.getElementById('tab-' + name);
             activeTab.classList.add('active');
@@ -760,6 +785,7 @@
             if (name === 'monitoring') loadEvents();
             if (name === 'store') { loadFeatured(); loadInstalledServers(); }
             if (name === 'skills') { loadSkillsFeatured(); }
+            if (name === 'plugins') { loadPluginsFeatured(); loadPluginsInstalled(); }
             if (name === 'personal') { initPersonalTab(); }
             if (name === 'chat') { if (typeof loadSidebarAssistant === 'function') loadSidebarAssistant(); }
         }
@@ -1685,21 +1711,13 @@
             localStorage.setItem('breadmind_stab', tab);
             document.querySelectorAll('.sub-tab').forEach(b => b.classList.toggle('active', b.id === 'stab-' + tab));
             const integrationsPanel = document.getElementById('settings-integrations');
-            const pluginsPanel = document.getElementById('settings-plugins');
             if (tab === 'integrations') {
                 document.getElementById('settingsContent').style.display = 'none';
                 integrationsPanel.style.display = '';
-                pluginsPanel.style.display = 'none';
                 initIntegrationsTab();
-            } else if (tab === 'plugins') {
-                document.getElementById('settingsContent').style.display = 'none';
-                integrationsPanel.style.display = 'none';
-                pluginsPanel.style.display = '';
-                initPluginsTab();
             } else {
                 document.getElementById('settingsContent').style.display = '';
                 integrationsPanel.style.display = 'none';
-                pluginsPanel.style.display = 'none';
                 document.querySelectorAll('#settingsContent .settings-section').forEach(s => {
                     s.style.display = s.dataset.stab === tab ? '' : 'none';
                 });
