@@ -491,6 +491,31 @@ async def init_agent(config, provider, registry, guard, db, memory_components):
         DEFAULT_PERSONA, behavior_prompt=saved_behavior_prompt,
     )
 
+    # Initialize PromptBuilder
+    from breadmind.prompts.builder import PromptBuilder, PromptContext
+    from pathlib import Path
+    import platform as _plat
+    from datetime import datetime, timezone
+
+    prompts_dir = Path(__file__).resolve().parent.parent / "prompts"
+
+    def _count_tokens(text: str) -> int:
+        return len(text) // 4
+
+    prompt_builder = PromptBuilder(prompts_dir, _count_tokens)
+
+    prompt_context = PromptContext(
+        persona_name=DEFAULT_PERSONA.get("name", "BreadMind"),
+        language=DEFAULT_PERSONA.get("language", "ko"),
+        specialties=DEFAULT_PERSONA.get("specialties", []),
+        os_info=f"{_plat.system()} {_plat.release()} ({_plat.machine()})",
+        current_date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        provider_model=config.llm.model,
+        custom_instructions=saved_behavior_prompt if saved_behavior_prompt else None,
+    )
+
+    provider_name = config.llm.provider
+
     agent_kwargs = dict(
         provider=provider,
         tool_registry=registry,
@@ -502,11 +527,17 @@ async def init_agent(config, provider, registry, guard, db, memory_components):
         context_builder=memory_components.get("context_builder"),
         behavior_prompt=saved_behavior_prompt,
         profiler=memory_components.get("profiler"),
+        prompt_builder=prompt_builder,
     )
     if audit_logger is not None:
         agent_kwargs["audit_logger"] = audit_logger
 
     agent = CoreAgent(**agent_kwargs)
+
+    # Set PromptBuilder-related attributes
+    agent._provider_name = provider_name
+    agent._prompt_context = prompt_context
+    agent._persona = DEFAULT_PERSONA.get("preset", "professional")
 
     # Wire BehaviorTracker
     behavior_tracker = BehaviorTracker(
