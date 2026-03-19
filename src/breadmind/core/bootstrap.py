@@ -72,6 +72,7 @@ class AppComponents:
     personal_scheduler: Any = None
     bg_job_manager: Any = None
     event_bus: EventBus | None = None
+    plugin_mgr: Any = None
 
 
 def _detect_package_managers() -> list[str]:
@@ -815,5 +816,34 @@ async def bootstrap_all(
             logger.info("PersonalScheduler started")
         except Exception as e:
             logger.warning("PersonalScheduler not started: %s", e)
+
+    # ── Phase 7: Plugin System ────────────────────────────────────────
+    try:
+        from breadmind.plugins.manager import PluginManager
+        from pathlib import Path as _Path
+        import os as _os
+
+        # User plugins directory
+        if _os.name == 'nt':
+            plugins_base = _Path(_os.environ.get("APPDATA", _Path.home())) / "breadmind" / "plugins" / "installed"
+        else:
+            plugins_base = _Path.home() / ".breadmind" / "plugins" / "installed"
+
+        plugin_mgr = PluginManager(plugins_dir=plugins_base, tool_registry=components.registry)
+
+        # Load builtin plugins first
+        builtin_dir = _Path(__file__).resolve().parent.parent / "plugins" / "builtin"
+        if builtin_dir.exists():
+            for p in builtin_dir.iterdir():
+                if p.is_dir() and (p / ".claude-plugin" / "plugin.json").exists():
+                    await plugin_mgr.load_from_directory(p)
+
+        # Load user-installed plugins
+        await plugin_mgr.load_all()
+
+        components.plugin_mgr = plugin_mgr
+        logger.info(f"Phase 7 complete: plugins loaded ({len(plugin_mgr.loaded_plugins)})")
+    except Exception as e:
+        logger.warning(f"Phase 7 failed (plugin system): {e}")
 
     return components

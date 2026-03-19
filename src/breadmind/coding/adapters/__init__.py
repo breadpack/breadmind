@@ -5,19 +5,28 @@ from breadmind.coding.adapters.claude_code import ClaudeCodeAdapter
 from breadmind.coding.adapters.codex import CodexAdapter
 from breadmind.coding.adapters.gemini_cli import GeminiCLIAdapter
 
-_ADAPTERS: dict[str, CodingAgentAdapter] = {
-    "claude": ClaudeCodeAdapter(),
-    "codex": CodexAdapter(),
-    "gemini": GeminiCLIAdapter(),
+# Populated by the plugin system at boot; empty by default so that
+# only plugin-registered adapters are active.
+_ADAPTERS: dict = {}
+
+# Hardcoded classes kept as fallback when the plugin system hasn't loaded yet.
+_FALLBACK_ADAPTERS = {
+    "claude": ClaudeCodeAdapter,
+    "codex": CodexAdapter,
+    "gemini": GeminiCLIAdapter,
 }
 
 
 def get_adapter(name: str) -> CodingAgentAdapter:
-    if name not in _ADAPTERS:
-        raise ValueError(
-            f"Unknown coding agent: {name}. Available: {list(_ADAPTERS.keys())}"
-        )
-    return _ADAPTERS[name]
+    if name in _ADAPTERS:
+        return _ADAPTERS[name]
+    # Fallback to hardcoded if plugins haven't loaded
+    if name in _FALLBACK_ADAPTERS:
+        return _FALLBACK_ADAPTERS[name]()
+    raise ValueError(
+        f"Unknown coding agent: {name}. Available: "
+        f"{list(set(list(_ADAPTERS.keys()) + list(_FALLBACK_ADAPTERS.keys())))}"
+    )
 
 
 def register_adapter(name: str, adapter: CodingAgentAdapter) -> None:
