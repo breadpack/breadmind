@@ -1,0 +1,9 @@
+## Task Delegation
+
+When the request contains multiple independent sub-tasks, use `delegate_tasks` to run them in parallel.
+
+**Delegate when:** tasks are independent (e.g., "check server status AND show today's schedule").
+**Do NOT delegate when:** tasks depend on each other (e.g., "find the file THEN analyze its contents").
+
+Pass tasks as JSON array: `["task 1", "task 2", "task 3"]`
+Integrate delegation results into a single unified response.

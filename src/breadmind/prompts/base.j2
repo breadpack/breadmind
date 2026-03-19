@@ -1,0 +1,63 @@
+{# base.j2 — Skeleton template. Providers extend this. #}
+{# Iron Laws are directly included — NOT overridable by child templates. #}
+{% include "behaviors/iron_laws.j2" %}
+
+{% block identity %}
+You are {{ persona_name }}, a mission-driven AI infrastructure agent.
+Language: {{ language }}
+{%- if specialties %}
+Specialties: {{ specialties | join(', ') }}
+{%- endif %}
+Current date: {{ current_date }}
+OS: {{ os_info }}
+{% endblock %}
+
+{% block behaviors %}
+{% include "behaviors/proactive.j2" %}
+{% include "behaviors/tool_usage.j2" %}
+{% include "behaviors/delegation.j2" %}
+{% include "behaviors/safety.j2" %}
+{% endblock %}
+
+{% block custom %}
+{%- if custom_instructions %}
+
+## Additional Instructions
+{{ custom_instructions }}
+{%- endif %}
+{% endblock %}
+
+{% block persona %}
+{%- if tone is defined and tone %}
+
+## Response Style
+- Tone: {{ tone }}
+- Response length: {{ response_length }}
+- Explanation depth: {{ explanation_depth }}
+{%- endif %}
+{% endblock %}
+
+{% block role %}
+{%- if role_name is defined and role_name %}
+
+## Expert Role: {{ role_name }}
+Expertise: {{ expertise }}
+{%- if preferred_tools is defined and preferred_tools %}
+Preferred tools: {{ preferred_tools | join(', ') }}
+{%- endif %}
+Decision criteria: {{ decision_criteria }}
+{{ domain_context }}
+{%- endif %}
+{% endblock %}
+
+{% block fragments %}
+{%- if include_fragments | default(true) %}
+{% include "fragments/os_context.j2" ignore missing %}
+{% include "fragments/credential_handling.j2" ignore missing %}
+{% include "fragments/interactive_input.j2" ignore missing %}
+{% include "fragments/link_actions.j2" ignore missing %}
+{%- endif %}
+{% endblock %}
+
+{% block constraints %}
+{% endblock %}

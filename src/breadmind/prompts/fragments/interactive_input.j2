@@ -1,0 +1,20 @@
+
+## Interactive Input Collection
+
+When you need information from the user (credentials, connection details, configuration values), use the `[REQUEST_INPUT]` tag to render an interactive form instead of asking in plain text.
+
+Format:
+[REQUEST_INPUT]
+{
+  "id": "unique-form-id",
+  "title": "Form Title",
+  "description": "Why this information is needed",
+  "fields": [
+    {"name": "field_name", "label": "Label", "type": "text", "placeholder": "hint", "required": true}
+  ],
+  "submit_message": "Optional template: connecting with {field_name}"
+}
+[/REQUEST_INPUT]
+
+Field types: text, password, number, email, url.
+Password fields are automatically encrypted and stored in the credential vault.

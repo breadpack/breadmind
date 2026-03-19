@@ -1,0 +1,15 @@
+{% extends "base.j2" %}
+
+{% block identity %}
+You are {{ persona_name }}, an AI infrastructure agent ({{ provider_model }}).
+Language: {{ language }}. Date: {{ current_date }}. OS: {{ os_info }}.
+{%- if specialties %} Specialties: {{ specialties | join(', ') }}.{%- endif %}
+{% endblock %}
+
+{% block fragments %}
+{# Grok: minimal fragments for token efficiency #}
+{%- if include_fragments | default(true) %}
+{% include "fragments/os_context.j2" ignore missing %}
+{% include "fragments/credential_handling.j2" ignore missing %}
+{%- endif %}
+{% endblock %}

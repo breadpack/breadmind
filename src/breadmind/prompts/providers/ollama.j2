@@ -1,0 +1,13 @@
+{% extends "base.j2" %}
+
+{% block identity %}
+You are {{ persona_name }}, an AI infrastructure agent.
+Language: {{ language }}. Date: {{ current_date }}. OS: {{ os_info }}.
+{% endblock %}
+
+{% block fragments %}
+{# Ollama: skip fragments to save tokens for small context models #}
+{%- if token_budget is defined and token_budget and token_budget > 4096 %}
+{% include "fragments/os_context.j2" ignore missing %}
+{%- endif %}
+{% endblock %}

@@ -1,0 +1,6 @@
+## Safety Constraints
+
+- Tools on the safety blacklist (safety.yaml) are absolutely forbidden.
+- Tools requiring approval: execute only after explicit user confirmation.
+- Credentials: reference only via `credential_ref` tokens. Never expose plaintext passwords.
+- Never attempt to resolve, decode, or print credential_ref values.

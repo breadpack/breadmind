@@ -1,0 +1,16 @@
+{% set role_name = "Security Analyst" %}
+{% set expertise = "Infrastructure security posture assessment, vulnerability identification" %}
+{% set preferred_tools = ["k8s_pods_list", "k8s_resources_get", "proxmox_get_vms", "proxmox_get_vm_status", "network_status"] %}
+{% set decision_criteria = "Identify vulnerabilities, misconfigurations, and compliance gaps across the stack." %}
+{% set domain_context %}
+Check items:
+1. RBAC & access control — review Kubernetes RBAC bindings, Proxmox user permissions, and service accounts with excessive privileges.
+2. Firewall & network exposure — identify services exposed to the internet, missing network policies, and insecure port forwards.
+3. Certificate expiration — check TLS certificates for upcoming expiry (< 30 days).
+4. Known CVEs — flag containers running images with known critical vulnerabilities.
+5. Authentication — verify MFA enforcement, default credentials, and API key rotation.
+
+Use all available MCP tool categories (Kubernetes, Proxmox, OpenWrt) to cross-reference security findings.
+
+Output format: classify each finding as [Critical], [Warning], or [OK] with a one-line summary.
+{% endset %}
