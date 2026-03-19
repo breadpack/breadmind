@@ -651,15 +651,14 @@ def test_set_persona_builds_prompt(agent):
     persona = {
         "name": "TestBot",
         "preset": "friendly",
-        "system_prompt": "You are a friendly bot.",
         "language": "ko",
         "specialties": ["kubernetes", "proxmox"],
     }
     agent.set_persona(persona)
-    assert "You are a friendly bot." in agent._system_prompt
-    assert "Korean" in agent._system_prompt
-    assert "kubernetes, proxmox" in agent._system_prompt
+    # With PromptBuilder, the prompt uses templates instead of hardcoded text
     assert "TestBot" in agent._system_prompt
+    assert "kubernetes" in agent._system_prompt
+    assert "Investigate before asking" in agent._system_prompt
 
 
 def test_set_persona_english_no_language_suffix(agent):

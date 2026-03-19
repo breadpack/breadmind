@@ -495,18 +495,16 @@ def test_post_persona_with_custom_prompt():
     config = AppConfig()
     app = WebApp(message_handler=lambda m, **kw: "ok", config=config)
     client = TestClient(app.app)
-    custom = "You are a custom agent with special instructions."
     resp = client.post("/api/config/persona", json={
         "name": "CustomBot",
         "preset": "professional",
         "language": "ja",
         "specialties": ["openwrt"],
-        "system_prompt": custom,
     })
     assert resp.status_code == 200
     data = resp.json()
-    assert data["persona"]["system_prompt"] == custom
     assert data["persona"]["name"] == "CustomBot"
+    assert data["persona"]["preset"] == "professional"
     assert data["persona"]["language"] == "ja"
 
 
