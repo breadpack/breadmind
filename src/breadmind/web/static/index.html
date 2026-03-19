@@ -597,10 +597,12 @@
                     <button class="sub-tab" onclick="switchSettingsTab('messenger')" id="stab-messenger">Messenger</button>
                     <button class="sub-tab" onclick="switchSettingsTab('agents')" id="stab-agents">Agents</button>
                     <button class="sub-tab" onclick="switchSettingsTab('system')" id="stab-system">System</button>
+                    <button class="sub-tab" onclick="switchSettingsTab('plugins')" id="stab-plugins">🔌 Plugins</button>
                     <button class="sub-tab" onclick="switchSettingsTab('integrations')" id="stab-integrations">🔗 Integrations</button>
                 </div>
                 <div id="settingsContent" style="flex:1;overflow-y:auto;padding:16px;"><div class="settings-section"><h3>Loading...</h3></div></div>
                 <div id="settings-integrations" style="display:none;flex:1;overflow-y:auto;padding:16px;"><div id="integrations-content"></div></div>
+                <div id="settings-plugins" style="display:none;flex:1;overflow-y:auto;padding:16px;"></div>
             </div>
         </div>
     </div>
@@ -1683,13 +1685,21 @@
             localStorage.setItem('breadmind_stab', tab);
             document.querySelectorAll('.sub-tab').forEach(b => b.classList.toggle('active', b.id === 'stab-' + tab));
             const integrationsPanel = document.getElementById('settings-integrations');
+            const pluginsPanel = document.getElementById('settings-plugins');
             if (tab === 'integrations') {
                 document.getElementById('settingsContent').style.display = 'none';
                 integrationsPanel.style.display = '';
+                pluginsPanel.style.display = 'none';
                 initIntegrationsTab();
+            } else if (tab === 'plugins') {
+                document.getElementById('settingsContent').style.display = 'none';
+                integrationsPanel.style.display = 'none';
+                pluginsPanel.style.display = '';
+                initPluginsTab();
             } else {
                 document.getElementById('settingsContent').style.display = '';
                 integrationsPanel.style.display = 'none';
+                pluginsPanel.style.display = 'none';
                 document.querySelectorAll('#settingsContent .settings-section').forEach(s => {
                     s.style.display = s.dataset.stab === tab ? '' : 'none';
                 });
@@ -3552,6 +3562,7 @@
     <script src="/static/js/onboarding.js"></script>
     <script src="/static/js/personal.js"></script>
     <script src="/static/js/integrations.js"></script>
+    <script src="/static/js/plugins.js"></script>
     <script src="/static/js/quick-actions.js"></script>
 </body>
 </html>
