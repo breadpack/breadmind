@@ -205,3 +205,37 @@ def test_render_tool_reminder_non_claude(builder):
     assert builder.render_tool_reminder("gemini") is None
     assert builder.render_tool_reminder("grok") is None
     assert builder.render_tool_reminder("ollama") is None
+
+
+# ── 15. Full integration: all provider x persona x role combos ───
+
+
+def test_full_integration_all_combinations(builder):
+    """Verify ALL provider x persona x role combinations render correctly."""
+    providers = ["claude", "gemini", "grok", "ollama"]
+    personas = ["professional", "friendly", "concise", "humorous"]
+    roles = [
+        "k8s_expert", "proxmox_expert", "openwrt_expert",
+        "security_analyst", "performance_analyst", "general", None,
+    ]
+
+    ctx = PromptContext(
+        persona_name="BreadMind",
+        language="ko",
+        os_info="Linux 6.1",
+        current_date="2026-03-19",
+        provider_model="test-model",
+    )
+
+    for provider in providers:
+        for persona in personas:
+            for role in roles:
+                result = builder.build(
+                    provider, persona=persona, role=role, context=ctx,
+                )
+                assert "Investigate before asking" in result, (
+                    f"Iron Laws missing: {provider}/{persona}/{role}"
+                )
+                assert len(result) > 100, (
+                    f"Prompt too short: {provider}/{persona}/{role}"
+                )
