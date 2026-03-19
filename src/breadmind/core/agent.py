@@ -37,6 +37,7 @@ class CoreAgent:
         context_builder: object | None = None,
         behavior_prompt: str | None = None,
         profiler: object | None = None,
+        prompt_builder: object | None = None,
     ):
         self._provider = provider
         self._tools = tool_registry
@@ -58,6 +59,11 @@ class CoreAgent:
         self._behavior_tracker: object | None = None
         self._progress_callback: object | None = None
         self._profiler = profiler
+        self._prompt_builder = prompt_builder
+        self._provider_name: str = ""
+        self._persona: str = "professional"
+        self._role: str | None = None
+        self._prompt_context: object | None = None
 
         # If behavior_prompt provided, rebuild system_prompt with it
         if behavior_prompt is not None:
@@ -114,6 +120,38 @@ class CoreAgent:
         self._system_prompt = build_system_prompt(
             DEFAULT_PERSONA, behavior_prompt=prompt,
         )
+
+    def set_custom_instructions(self, text: str | None):
+        """Set custom instructions (replaces set_system_prompt for new architecture)."""
+        if self._prompt_builder and self._prompt_context:
+            self._prompt_context.custom_instructions = text
+            self._rebuild_system_prompt()
+        else:
+            # Legacy fallback
+            if text:
+                self._system_prompt = text
+
+    def set_persona_name(self, preset: str):
+        """Set persona preset."""
+        if self._prompt_builder:
+            self._persona = preset
+            self._rebuild_system_prompt()
+
+    def set_role(self, role: str | None):
+        """Set or clear the Swarm expert role."""
+        if self._prompt_builder:
+            self._role = role
+            self._rebuild_system_prompt()
+
+    def _rebuild_system_prompt(self):
+        """Rebuild system prompt from PromptBuilder."""
+        if self._prompt_builder and self._prompt_context:
+            self._system_prompt = self._prompt_builder.build(
+                provider=self._provider_name,
+                persona=self._persona,
+                role=self._role,
+                context=self._prompt_context,
+            )
 
     def add_notification(self, message: str):
         self._notifications.append(message)
@@ -466,6 +504,16 @@ class CoreAgent:
             await self._tool_executor.process_tool_calls(
                 response.tool_calls, messages, exec_ctx,
             )
+
+            # Inject Iron Laws tool reminder into the last new tool message (Claude only)
+            if self._prompt_builder:
+                reminder = self._prompt_builder.render_tool_reminder(self._provider_name)
+                if reminder:
+                    new_msgs = messages[msg_count_before:]
+                    for msg in reversed(new_msgs):
+                        if msg.role == "tool" and isinstance(msg.content, str):
+                            msg.content += f"\n\n{reminder}"
+                            break
 
             # Check only NEW tool messages from this turn for [REQUEST_INPUT]
             new_messages = messages[msg_count_before:]
