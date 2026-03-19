@@ -419,7 +419,7 @@
     </div>
     <header>
         <h1>&#x1F35E; BreadMind</h1>
-        <span class="badge">v0.1.0</span>
+        <span class="badge">v0.1.1</span>
         <div style="flex:1"></div>
         <div class="status">
             <span class="dot" id="statusDot"></span>
@@ -1203,7 +1203,8 @@
                 fetch('/api/config/tool-security').then(r => r.json()).catch(() => ({security:{}})),
                 fetch('/api/messenger/platforms').then(r => r.json()).catch(() => ({platforms:{}})),
                 fetch('/api/config/markets').then(r => r.json()).catch(() => ({markets:[]})),
-            ]).then(([config, safety, monitoring, usage, audit, metrics, approvals, apiKeys, timeoutsData, memoryData, monRules, messengerData, toolSecData, messengerPlatforms, marketsData]) => {
+                fetch('/api/config/embedding').then(r => r.json()).catch(() => ({provider:'auto',model_name:'',ollama_base_url:'http://localhost:11434',cache_size:500,status:{available:false}})),
+            ]).then(([config, safety, monitoring, usage, audit, metrics, approvals, apiKeys, timeoutsData, memoryData, monRules, messengerData, toolSecData, messengerPlatforms, marketsData, embeddingData]) => {
                 const c = document.getElementById('settingsContent');
                 let html = '';
 
@@ -1577,6 +1578,12 @@
                 html += `<div class="section-footer"><button class="save-btn" id="btn-tool-security" onclick="saveToolSecurity()">Save</button></div>`;
                 html += `</div>`;
 
+                // Embedding
+                html += `<div class="settings-section" data-stab="system"><h3>Embedding Model</h3>`;
+                html += `<p style="color:#64748b;font-size:12px;margin-bottom:12px;">텍스트 임베딩 모델 설정. 무료 오픈소스 모델(Ollama, Local)이 우선 사용됩니다.</p>`;
+                html += `<div id="embedding-settings">Loading...</div>`;
+                html += `</div>`;
+
                 // Logging
                 html += `<div class="settings-section" data-stab="system"><h3>Logging</h3>`;
                 html += `<div class="setting-row"><span class="setting-label">Level</span>
@@ -1592,7 +1599,7 @@
 
                 // System Info
                 html += `<div class="settings-section" data-stab="system"><h3>System Info</h3>`;
-                html += `<div class="setting-row"><span class="setting-label">Version</span><span class="setting-value" id="sys-version">v0.1.0</span></div>`;
+                html += `<div class="setting-row"><span class="setting-label">Version</span><span class="setting-value" id="sys-version">v0.1.1</span></div>`;
                 html += `<div class="setting-row"><span class="setting-label">Latest</span><span class="setting-value" id="sys-latest">checking...</span></div>`;
                 html += `<button class="save-btn" id="sys-update-btn" style="display:none;margin-top:8px;" onclick="applyUpdate()">Update Now</button>`;
                 html += ` <button class="save-btn" onclick="checkForUpdate()" style="background:#6366f1;margin-top:8px;">Check for Updates</button>`;
@@ -1659,11 +1666,12 @@
                 loadSafetyEditors(window._safetyData);
                 loadPersona();
                 loadNewSettingsData(timeoutsData, memoryData, monRules, messengerData, toolSecData, messengerPlatforms);
-                const curProvider = (config.llm || {}).default_provider || 'claude';
+                const curProvider = (config.llm || {}).default_provider || 'gemini';
                 const curModel = (config.llm || {}).default_model || '';
                 loadModelsForProvider(curProvider, curModel);
                 checkForUpdate();
                 loadPrompts();
+                renderEmbeddingSettings(embeddingData);
                 switchSettingsTab(_currentSettingsTab || 'general');
             });
         }
@@ -2515,6 +2523,76 @@
             try {
                 const resp = await fetch('/api/config/memory', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
                 if (resp.ok) { flashBtn(btn, true); showToast('Memory settings saved', 'success'); }
+                else { const d = await resp.json(); flashBtn(btn, false); showToast(d.error || 'Failed', 'error'); }
+            } catch(e) { flashBtn(btn, false); showToast('Network error', 'error'); }
+        }
+
+        function renderEmbeddingSettings(data) {
+            const el = document.getElementById('embedding-settings');
+            if (!el) return;
+            const st = data.status || {};
+            const providers = [
+                {v:'auto', l:'Auto (무료 우선)'},
+                {v:'fastembed', l:'FastEmbed (내장, 무료)'},
+                {v:'ollama', l:'Ollama (무료, 별도 설치)'},
+                {v:'local', l:'sentence-transformers (무료, 대용량)'},
+                {v:'gemini', l:'Gemini API (유료)'},
+                {v:'openai', l:'OpenAI API (유료)'},
+                {v:'off', l:'비활성화'},
+            ];
+            const provOpts = providers.map(p =>
+                `<option value="${p.v}" ${data.provider === p.v ? 'selected' : ''}>${p.l}</option>`
+            ).join('');
+            const statusColor = st.available ? '#22c55e' : '#ef4444';
+            const statusText = st.available ? `${st.backend} / ${st.model} (${st.dimensions}D)` : 'Not available';
+            let h = '';
+            h += `<div class="setting-row"><span class="setting-label">Status</span>
+                <span style="color:${statusColor};font-size:13px;font-weight:500;">${statusText}</span></div>`;
+            if (st.available) {
+                h += `<div class="setting-row"><span class="setting-label">Cache</span>
+                    <span class="setting-value">${st.cache_entries || 0} / ${st.max_cache || 0}</span></div>`;
+            }
+            h += `<div class="setting-row"><span class="setting-label">Provider</span>
+                <select id="emb-provider" class="setting-select" onchange="onEmbProviderChange()">${provOpts}</select></div>`;
+            h += `<div class="setting-row" id="emb-model-row"><span class="setting-label">Model</span>
+                <input type="text" id="emb-model" class="setting-input" value="${escapeHtml(data.model_name || '')}"
+                    placeholder="(기본값 사용)" style="flex:1;" /></div>`;
+            h += `<div class="setting-row" id="emb-ollama-row"><span class="setting-label">Ollama URL</span>
+                <input type="text" id="emb-ollama-url" class="setting-input" value="${escapeHtml(data.ollama_base_url || 'http://localhost:11434')}" style="flex:1;" /></div>`;
+            h += `<div class="setting-row"><span class="setting-label">Cache Size</span>
+                <input type="number" id="emb-cache-size" class="setting-input" value="${data.cache_size || 500}" min="10" max="100000" style="width:100px;" /></div>`;
+            h += `<div id="emb-model-hint" style="color:#64748b;font-size:11px;margin:4px 0 8px 0;"></div>`;
+            h += `<div class="section-footer"><button class="save-btn" id="btn-embedding" onclick="saveEmbedding()">Save</button>
+                <span style="color:#64748b;font-size:11px;margin-left:8px;">변경 후 재시작 필요</span></div>`;
+            el.innerHTML = h;
+            window._embProviderDefaults = data.provider_defaults || {};
+            onEmbProviderChange();
+        }
+        function onEmbProviderChange() {
+            const prov = document.getElementById('emb-provider')?.value;
+            const ollamaRow = document.getElementById('emb-ollama-row');
+            const hint = document.getElementById('emb-model-hint');
+            if (ollamaRow) ollamaRow.style.display = (prov === 'ollama' || prov === 'auto') ? 'flex' : 'none';
+            if (hint && window._embProviderDefaults) {
+                const d = window._embProviderDefaults[prov];
+                if (d) hint.textContent = `기본 모델: ${d.model} (${d.dimensions}D)`;
+                else if (prov === 'auto') hint.textContent = '우선순위: FastEmbed(내장) → Ollama → Local → Gemini → OpenAI';
+                else if (prov === 'off') hint.textContent = '임베딩 기반 검색이 비활성화됩니다.';
+                else hint.textContent = '';
+            }
+        }
+        async function saveEmbedding() {
+            const btn = document.getElementById('btn-embedding');
+            btn.disabled = true; btn.textContent = '...';
+            const payload = {
+                provider: document.getElementById('emb-provider').value,
+                model_name: document.getElementById('emb-model').value.trim(),
+                ollama_base_url: document.getElementById('emb-ollama-url').value.trim(),
+                cache_size: parseInt(document.getElementById('emb-cache-size').value) || 500,
+            };
+            try {
+                const resp = await fetch('/api/config/embedding', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+                if (resp.ok) { flashBtn(btn, true); showToast('Embedding settings saved. 재시작 후 적용됩니다.', 'success'); }
                 else { const d = await resp.json(); flashBtn(btn, false); showToast(d.error || 'Failed', 'error'); }
             } catch(e) { flashBtn(btn, false); showToast('Network error', 'error'); }
         }

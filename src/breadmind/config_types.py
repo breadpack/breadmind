@@ -50,6 +50,26 @@ class LimitsConfig:
 
 
 @dataclass
+class EmbeddingConfig:
+    provider: str = "auto"  # "fastembed", "ollama", "local", "gemini", "openai", "auto", "off"
+    model_name: str = ""  # empty = use provider default
+    ollama_base_url: str = "http://localhost:11434"
+    cache_size: int = 500
+
+    # Provider default models (read-only reference)
+    PROVIDER_DEFAULTS: dict = None  # type: ignore[assignment]
+
+    def __post_init__(self):
+        self.PROVIDER_DEFAULTS = {
+            "fastembed": {"model": "BAAI/bge-small-en-v1.5", "dimensions": 384},
+            "ollama": {"model": "nomic-embed-text", "dimensions": 768},
+            "local": {"model": "all-MiniLM-L6-v2", "dimensions": 384},
+            "gemini": {"model": "gemini-embedding-001", "dimensions": 768},
+            "openai": {"model": "text-embedding-3-small", "dimensions": 1536},
+        }
+
+
+@dataclass
 class PollingConfig:
     signal_interval: int = 5
     gmail_interval: int = 30

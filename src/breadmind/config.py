@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from breadmind.config_types import (
+    EmbeddingConfig,
     MemoryGCConfig,
     TimeoutsConfig,
     RetryConfig,
@@ -37,8 +38,8 @@ class LoggingConfig:
 
 @dataclass
 class LLMConfig:
-    default_provider: str = "claude"
-    default_model: str = "claude-sonnet-4-6"
+    default_provider: str = "gemini"
+    default_model: str = "gemini-2.5-flash"
     tool_call_max_turns: int = 20
     tool_call_timeout_seconds: int = 30
 
@@ -140,6 +141,7 @@ class AppConfig:
     limits: LimitsConfig = field(default_factory=LimitsConfig)
     polling: PollingConfig = field(default_factory=PollingConfig)
     memory_gc: MemoryGCConfig = field(default_factory=MemoryGCConfig)
+    embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     _persona: dict = field(default=None)
 
     def validate(self) -> None:
@@ -589,6 +591,13 @@ async def apply_db_settings(config: AppConfig, db) -> dict:
             for key, value in memory_gc_config.items():
                 if hasattr(config.memory_gc, key):
                     setattr(config.memory_gc, key, value)
+
+        # Embedding settings (UI-managed)
+        embedding_config = await db.get_setting("embedding_config")
+        if embedding_config and isinstance(embedding_config, dict):
+            for key in ("provider", "model_name", "ollama_base_url", "cache_size"):
+                if key in embedding_config:
+                    setattr(config.embedding, key, embedding_config[key])
 
     except Exception:
         pass  # DB not available, use file-based config

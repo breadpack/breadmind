@@ -10,14 +10,19 @@ logger = logging.getLogger(__name__)
 
 
 class EmbeddingService:
-    """Text embedding service with provider API support and graceful degradation.
+    """Text embedding service with built-in fastembed and optional external providers.
 
-    Priority: 1) Provider API (Gemini/OpenAI) 2) Local model (fastembed/sentence-transformers) 3) None
+    Priority order (free/built-in first):
+    1. fastembed (built-in, ONNX, ~50MB)
+    2. Ollama (free, requires separate install)
+    3. sentence-transformers (free, heavy ~500MB)
+    4. Gemini API (paid)
+    5. OpenAI API (paid)
     """
 
     def __init__(
         self,
-        provider: str = "auto",  # "gemini", "openai", "ollama", "local", "auto"
+        provider: str = "auto",  # "fastembed", "ollama", "local", "gemini", "openai", "auto", "off"
         api_key: str = "",
         model_name: str = "",
         ollama_base_url: str = "http://localhost:11434",
@@ -45,32 +50,28 @@ class EmbeddingService:
             return
         self._resolved = True
 
-        if self._provider in ("gemini", "auto") and self._api_key:
+        if self._provider == "off":
+            logger.info("Embedding disabled by configuration")
+            return
+
+        # --- 1. fastembed (built-in, lightweight ONNX) ---
+
+        if self._provider in ("fastembed", "auto"):
             try:
-                import aiohttp  # noqa: F401
-                self._backend = "gemini"
-                self._model_name = self._model_name or "gemini-embedding-001"
-                self._dimensions = 768
-                logger.info(f"Embedding backend: Gemini API ({self._model_name})")
+                from fastembed import TextEmbedding  # noqa: F401
+                self._backend = "fastembed"
+                self._model_name = self._model_name or "BAAI/bge-small-en-v1.5"
+                self._dimensions = 384
+                logger.info(f"Embedding backend: fastembed ({self._model_name})")
                 return
             except ImportError:
                 pass
 
-        if self._provider in ("openai", "auto") and self._api_key:
-            try:
-                import aiohttp  # noqa: F401
-                self._backend = "openai"
-                self._model_name = self._model_name or "text-embedding-3-small"
-                self._dimensions = 1536
-                logger.info(f"Embedding backend: OpenAI API ({self._model_name})")
-                return
-            except ImportError:
-                pass
+        # --- 2. Ollama (free, local, requires separate install) ---
 
         if self._provider in ("ollama", "auto"):
             try:
                 import aiohttp  # noqa: F401
-                # Quick connectivity check before committing to ollama
                 import socket
                 host = self._ollama_base_url.replace("http://", "").replace("https://", "")
                 h, _, p = host.partition(":")
@@ -92,6 +93,8 @@ class EmbeddingService:
             except (ImportError, ConnectionError):
                 pass
 
+        # --- 3. sentence-transformers (free, heavy) ---
+
         if self._provider in ("local", "auto"):
             try:
                 import sentence_transformers  # noqa: F401
@@ -103,7 +106,64 @@ class EmbeddingService:
             except ImportError:
                 pass
 
+        # --- 4. Gemini API (paid) ---
+
+        if self._provider in ("gemini", "auto") and self._api_key:
+            try:
+                import aiohttp  # noqa: F401
+                self._backend = "gemini"
+                self._model_name = self._model_name or "gemini-embedding-001"
+                self._dimensions = 768
+                logger.info(f"Embedding backend: Gemini API ({self._model_name})")
+                return
+            except ImportError:
+                pass
+
+        # --- 5. OpenAI API (paid) ---
+
+        if self._provider in ("openai", "auto") and self._api_key:
+            try:
+                import aiohttp  # noqa: F401
+                self._backend = "openai"
+                self._model_name = self._model_name or "text-embedding-3-small"
+                self._dimensions = 1536
+                logger.info(f"Embedding backend: OpenAI API ({self._model_name})")
+                return
+            except ImportError:
+                pass
+
         logger.info("No embedding backend available, embeddings disabled")
+
+    @property
+    def dimensions(self) -> int:
+        if not self._resolved:
+            self._resolve_backend()
+        return self._dimensions
+
+    @property
+    def backend(self) -> str | None:
+        if not self._resolved:
+            self._resolve_backend()
+        return self._backend
+
+    @property
+    def model_name(self) -> str:
+        if not self._resolved:
+            self._resolve_backend()
+        return self._model_name
+
+    def get_status(self) -> dict:
+        """Return current embedding service status for UI display."""
+        if not self._resolved:
+            self._resolve_backend()
+        return {
+            "available": self._backend is not None,
+            "backend": self._backend,
+            "model": self._model_name,
+            "dimensions": self._dimensions,
+            "cache_entries": len(self._cache),
+            "max_cache": self._max_cache,
+        }
 
     def _cache_key(self, text: str) -> str:
         return hashlib.sha256(text.encode()).hexdigest()[:16]
@@ -118,7 +178,9 @@ class EmbeddingService:
 
         result = None
         try:
-            if self._backend == "gemini":
+            if self._backend == "fastembed":
+                result = await self._encode_fastembed(text)
+            elif self._backend == "gemini":
                 result = await self._encode_gemini(text)
             elif self._backend == "openai":
                 result = await self._encode_openai(text)
@@ -141,6 +203,10 @@ class EmbeddingService:
         if not self.is_available():
             return [None] * len(texts)
 
+        # fastembed supports native batch encoding
+        if self._backend == "fastembed":
+            return await self._encode_fastembed_batch(texts)
+
         results: list[list[float] | None] = [None] * len(texts)
         uncached: list[tuple[int, str]] = []
 
@@ -152,10 +218,54 @@ class EmbeddingService:
                 uncached.append((i, text))
 
         if uncached:
-            # Encode uncached items individually (batch API varies by provider)
             for idx, text in uncached:
                 embedding = await self.encode(text)
                 results[idx] = embedding
+
+        return results
+
+    async def _encode_fastembed(self, text: str) -> list[float] | None:
+        def _sync():
+            if self._local_model is None:
+                from fastembed import TextEmbedding
+                self._local_model = TextEmbedding(model_name=self._model_name)
+            embeddings = list(self._local_model.embed([text]))
+            return embeddings[0].tolist() if embeddings else None
+        return await asyncio.to_thread(_sync)
+
+    async def _encode_fastembed_batch(self, texts: list[str]) -> list[list[float] | None]:
+        """Batch encode using fastembed's native batch support."""
+        # Check cache first
+        results: list[list[float] | None] = [None] * len(texts)
+        uncached_indices: list[int] = []
+        uncached_texts: list[str] = []
+        for i, text in enumerate(texts):
+            key = self._cache_key(text)
+            if key in self._cache:
+                results[i] = self._cache[key]
+            else:
+                uncached_indices.append(i)
+                uncached_texts.append(text)
+
+        if not uncached_texts:
+            return results
+
+        def _sync():
+            if self._local_model is None:
+                from fastembed import TextEmbedding
+                self._local_model = TextEmbedding(model_name=self._model_name)
+            return [e.tolist() for e in self._local_model.embed(uncached_texts)]
+
+        try:
+            batch_results = await asyncio.to_thread(_sync)
+            for i, emb in zip(uncached_indices, batch_results):
+                results[i] = emb
+                # Cache the results
+                key = self._cache_key(texts[i])
+                if len(self._cache) < self._max_cache:
+                    self._cache[key] = emb
+        except Exception as e:
+            logger.warning(f"Fastembed batch encode failed: {e}")
 
         return results
 

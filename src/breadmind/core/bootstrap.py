@@ -226,7 +226,31 @@ async def init_memory(db, provider, config, registry, mcp_manager, search_engine
     # Memory layers
     episodic_memory = EpisodicMemory(db=db)
     semantic_memory = SemanticMemory(db=db)
-    embedding_service = EmbeddingService()
+    # Initialize embedding service from config
+    emb_cfg = config.embedding if hasattr(config, 'embedding') else None
+    if emb_cfg:
+        # Resolve API key: provider-specific key or generic
+        import os as _os
+        emb_api_key = ""
+        if emb_cfg.provider in ("gemini", "auto"):
+            emb_api_key = _os.environ.get("GEMINI_API_KEY", "")
+        if not emb_api_key and emb_cfg.provider in ("openai", "auto"):
+            emb_api_key = _os.environ.get("OPENAI_API_KEY", "")
+        if not emb_api_key:
+            emb_api_key = _os.environ.get("GEMINI_API_KEY", "") or _os.environ.get("OPENAI_API_KEY", "")
+        embedding_service = EmbeddingService(
+            provider=emb_cfg.provider,
+            api_key=emb_api_key,
+            model_name=emb_cfg.model_name,
+            ollama_base_url=emb_cfg.ollama_base_url,
+        )
+        embedding_service._max_cache = emb_cfg.cache_size
+    else:
+        embedding_service = EmbeddingService()
+
+    # Sync pgvector column dimensions with resolved embedding model
+    if embedding_service.is_available() and hasattr(db, 'setup_pgvector'):
+        await db.setup_pgvector(embedding_service.dimensions)
 
     smart_retriever = SmartRetriever(
         embedding_service=embedding_service,

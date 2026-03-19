@@ -400,6 +400,7 @@ async def run():
                 lifecycle_manager=messenger_components["lifecycle"] if messenger_components else None,
                 orchestrator=messenger_components["orchestrator"] if messenger_components else None,
                 bg_job_manager=bg_job_manager,
+                embedding_service=memory_components.get("embedding_service"),
             )
             # Expose personal assistant components to web routes
             if memory_components.get("adapter_registry"):

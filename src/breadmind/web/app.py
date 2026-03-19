@@ -43,8 +43,13 @@ class WebApp:
                  skill_store=None, performance_tracker=None, search_engine=None,
                  token_manager=None, commander=None,
                  messenger_security=None, lifecycle_manager=None, orchestrator=None,
-                 bg_job_manager=None):
-        self.app = FastAPI(title="BreadMind", version="0.1.0")
+                 bg_job_manager=None, embedding_service=None):
+        try:
+            from importlib.metadata import version as _pkg_ver
+            _version = _pkg_ver("breadmind")
+        except Exception:
+            _version = "0.0.0"
+        self.app = FastAPI(title="BreadMind", version=_version)
         # Expose self via FastAPI state so Depends() helpers can reach it
         self.app.state.app_state = self
         self._message_handler = message_handler
@@ -76,6 +81,7 @@ class WebApp:
         self._lifecycle_manager = lifecycle_manager
         self._orchestrator = orchestrator
         self._bg_job_manager = bg_job_manager
+        self._embedding_service = embedding_service
 
         # CORS middleware
         if config and hasattr(config, 'security'):

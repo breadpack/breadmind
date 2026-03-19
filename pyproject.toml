@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "breadmind"
-version = "0.1.0"
+version = "0.1.1"
 description = "AI Infrastructure Agent for K8s, Proxmox, OpenWrt"
 license = "MIT"
 requires-python = ">=3.12"
@@ -23,6 +23,7 @@ dependencies = [
     "cryptography>=43.0.0",
     "celery>=5.4.0",
     "redis>=5.0.0",
+    "fastembed>=0.4.0",
 ]
 
 [project.optional-dependencies]

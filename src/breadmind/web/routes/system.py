@@ -252,45 +252,34 @@ def setup_system_routes(r: APIRouter, app_state):
 
     @r.get("/api/update/check")
     async def check_update():
-        """Check for new version from PyPI or GitHub."""
+        """Check for new version from GitHub Releases."""
         import aiohttp
-        current = "0.1.0"
+        try:
+            from importlib.metadata import version as pkg_version
+            current = pkg_version("breadmind")
+        except Exception:
+            current = "0.0.0"
+
         latest = current
         update_available = False
         release_notes = ""
 
         try:
-            # Try PyPI first
             async with aiohttp.ClientSession() as session:
                 async with session.get(
-                    "https://pypi.org/pypi/breadmind/json",
+                    "https://api.github.com/repos/breadpack/breadmind/releases/latest",
                     timeout=aiohttp.ClientTimeout(total=10),
                 ) as resp:
                     if resp.status == 200:
                         data = await resp.json()
-                        latest = data.get("info", {}).get("version", current)
-                        release_notes = data.get("info", {}).get("summary", "")
+                        tag = data.get("tag_name", "").lstrip("v")
+                        if tag:
+                            latest = tag
+                            release_notes = data.get("body", "")[:500]
         except Exception:
             pass
 
-        if latest == current:
-            # Try GitHub releases
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(
-                        "https://api.github.com/repos/breadpack/breadmind/releases/latest",
-                        timeout=aiohttp.ClientTimeout(total=10),
-                    ) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            tag = data.get("tag_name", "").lstrip("v")
-                            if tag:
-                                latest = tag
-                                release_notes = data.get("body", "")[:500]
-            except Exception:
-                pass
-
-        # Simple version comparison
+        # Version comparison
         try:
             from packaging.version import Version
             update_available = Version(latest) > Version(current)

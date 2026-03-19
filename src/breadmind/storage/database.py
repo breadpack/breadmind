@@ -215,14 +215,35 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_files_meta_user_source ON files_meta(user_id, source);
             """)
 
-        # pgvector extension (optional)
+        # pgvector: deferred to setup_pgvector() after embedding config is known
+        await self.setup_pgvector(384)
+
+    async def setup_pgvector(self, dimensions: int = 384):
+        """Set up pgvector column with the given dimensions. Safe to call multiple times."""
         try:
             async with self.acquire() as conn:
                 await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
-                await conn.execute("""
-                    ALTER TABLE episodic_notes
-                    ADD COLUMN IF NOT EXISTS embedding_vec vector(384)
+                dim_row = await conn.fetchrow("""
+                    SELECT atttypmod FROM pg_attribute
+                    WHERE attrelid = 'episodic_notes'::regclass
+                    AND attname = 'embedding_vec'
                 """)
+                if dim_row is None:
+                    await conn.execute(f"""
+                        ALTER TABLE episodic_notes
+                        ADD COLUMN IF NOT EXISTS embedding_vec vector({dimensions})
+                    """)
+                elif dim_row['atttypmod'] != dimensions:
+                    logger.info(
+                        "Embedding dimensions changed (%d → %d), recreating vector column",
+                        dim_row['atttypmod'], dimensions,
+                    )
+                    await conn.execute("DROP INDEX IF EXISTS idx_episodic_embedding_hnsw")
+                    await conn.execute("ALTER TABLE episodic_notes DROP COLUMN embedding_vec")
+                    await conn.execute(f"""
+                        ALTER TABLE episodic_notes
+                        ADD COLUMN embedding_vec vector({dimensions})
+                    """)
                 await conn.execute("""
                     CREATE INDEX IF NOT EXISTS idx_episodic_embedding_hnsw
                     ON episodic_notes USING hnsw (embedding_vec vector_cosine_ops)

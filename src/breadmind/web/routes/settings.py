@@ -1,11 +1,11 @@
-"""Settings UI routes for runtime configuration of system timeouts, retry, limits, polling, and memory GC."""
+"""Settings UI routes for runtime configuration of system timeouts, retry, limits, polling, memory GC, and embedding."""
 from __future__ import annotations
 
 import logging
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
-from breadmind.web.dependencies import get_config, get_db
+from breadmind.web.dependencies import get_app_state, get_config, get_db
 
 logger = logging.getLogger(__name__)
 
@@ -286,3 +286,75 @@ def setup_settings_routes(r: APIRouter, app_state):
                 logger.warning("Failed to persist memory_gc_config: %s", e)
 
         return {"status": "ok", "persisted": db is not None}
+
+    # ── 6. Embedding Config ────────────────────────────────────────────
+
+    _VALID_PROVIDERS = ("auto", "fastembed", "ollama", "local", "gemini", "openai", "off")
+
+    @r.get("/api/config/embedding")
+    async def get_embedding(config=Depends(get_config), app_state=Depends(get_app_state)):
+        """Return current embedding settings and live status."""
+        from breadmind.config_types import EmbeddingConfig
+        emb = config.embedding if config and hasattr(config, "embedding") else EmbeddingConfig()
+        result = {
+            "provider": emb.provider,
+            "model_name": emb.model_name,
+            "ollama_base_url": emb.ollama_base_url,
+            "cache_size": emb.cache_size,
+            "provider_defaults": emb.PROVIDER_DEFAULTS,
+        }
+        # Add live status from the running embedding service
+        svc = getattr(app_state, "_embedding_service", None)
+        if svc:
+            result["status"] = svc.get_status()
+        else:
+            result["status"] = {"available": False, "backend": None, "model": "", "dimensions": 0}
+        return result
+
+    @r.post("/api/config/embedding")
+    async def update_embedding(request: Request, config=Depends(get_config), db=Depends(get_db)):
+        """Update embedding settings. Requires restart to take full effect."""
+        data = await request.json()
+        if not config or not hasattr(config, "embedding"):
+            return JSONResponse(status_code=503, content={"error": "Config not available"})
+
+        emb = config.embedding
+
+        if "provider" in data:
+            if data["provider"] not in _VALID_PROVIDERS:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": f"provider must be one of {_VALID_PROVIDERS}"},
+                )
+            emb.provider = data["provider"]
+
+        if "model_name" in data:
+            emb.model_name = str(data["model_name"]).strip()
+
+        if "ollama_base_url" in data:
+            url = str(data["ollama_base_url"]).strip()
+            if url:
+                emb.ollama_base_url = url
+
+        if "cache_size" in data:
+            val, err = _validate_int(data["cache_size"], "cache_size", 10, 100_000)
+            if err:
+                return JSONResponse(status_code=400, content={"error": err})
+            emb.cache_size = val
+
+        if db:
+            try:
+                await db.set_setting("embedding_config", {
+                    "provider": emb.provider,
+                    "model_name": emb.model_name,
+                    "ollama_base_url": emb.ollama_base_url,
+                    "cache_size": emb.cache_size,
+                })
+            except Exception as e:
+                logger.warning("Failed to persist embedding_config: %s", e)
+
+        return {
+            "status": "ok",
+            "persisted": db is not None,
+            "restart_required": True,
+        }
