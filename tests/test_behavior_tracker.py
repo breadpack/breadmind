@@ -1,27 +1,28 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
-from breadmind.config import build_system_prompt, DEFAULT_PERSONA, _PROACTIVE_BEHAVIOR_PROMPT
+from breadmind.config import build_system_prompt, DEFAULT_PERSONA
 from breadmind.core.behavior_tracker import BehaviorTracker
 from breadmind.llm.base import LLMMessage, LLMResponse, ToolCall, TokenUsage
 
 
-# --- Task 1 tests: build_system_prompt ---
+# --- Task 1 tests: build_system_prompt (now delegates to PromptBuilder) ---
 
 def test_build_system_prompt_default_behavior():
     result = build_system_prompt(DEFAULT_PERSONA)
-    assert _PROACTIVE_BEHAVIOR_PROMPT in result
+    # PromptBuilder includes Iron Laws in the prompt
+    assert "Investigate before asking" in result
 
 
 def test_build_system_prompt_custom_behavior():
     custom = "Custom behavior rules here."
     result = build_system_prompt(DEFAULT_PERSONA, behavior_prompt=custom)
     assert custom in result
-    assert _PROACTIVE_BEHAVIOR_PROMPT not in result
 
 
 def test_build_system_prompt_none_behavior_uses_default():
     result = build_system_prompt(DEFAULT_PERSONA, behavior_prompt=None)
-    assert _PROACTIVE_BEHAVIOR_PROMPT in result
+    # With None behavior_prompt, PromptBuilder uses default behaviors
+    assert "Investigate before asking" in result
 
 
 # --- Helpers ---

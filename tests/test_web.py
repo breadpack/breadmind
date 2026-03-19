@@ -473,8 +473,8 @@ def test_post_persona_updates_config():
 
 
 def test_post_persona_with_preset_change():
-    """Test POST /api/config/persona with preset change uses preset prompt."""
-    from breadmind.config import AppConfig, DEFAULT_PERSONA_PRESETS
+    """Test POST /api/config/persona with preset change."""
+    from breadmind.config import AppConfig
     config = AppConfig()
     app = WebApp(message_handler=lambda m, **kw: "ok", config=config)
     client = TestClient(app.app)
@@ -486,7 +486,7 @@ def test_post_persona_with_preset_change():
     })
     assert resp.status_code == 200
     data = resp.json()
-    assert data["persona"]["system_prompt"] == DEFAULT_PERSONA_PRESETS["concise"]
+    assert data["persona"]["preset"] == "concise"
 
 
 def test_post_persona_with_custom_prompt():
