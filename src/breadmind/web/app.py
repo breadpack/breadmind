@@ -30,6 +30,7 @@ from breadmind.web.routes.personal import router as personal_router
 from breadmind.web.routes.workers import setup_worker_routes
 from breadmind.web.routes.credential_input import setup_credential_input_routes
 from breadmind.web.routes.bg_jobs import setup_bg_job_routes
+from breadmind.web.routes.plugins import router as plugins_router
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,8 @@ class WebApp:
                  skill_store=None, performance_tracker=None, search_engine=None,
                  token_manager=None, commander=None,
                  messenger_security=None, lifecycle_manager=None, orchestrator=None,
-                 bg_job_manager=None, embedding_service=None):
+                 bg_job_manager=None, embedding_service=None,
+                 plugin_mgr=None):
         try:
             from importlib.metadata import version as _pkg_ver
             _version = _pkg_ver("breadmind")
@@ -82,6 +84,8 @@ class WebApp:
         self._orchestrator = orchestrator
         self._bg_job_manager = bg_job_manager
         self._embedding_service = embedding_service
+        self._plugin_mgr = plugin_mgr
+        self._marketplace = None
 
         # CORS middleware
         if config and hasattr(config, 'security'):
@@ -301,6 +305,7 @@ class WebApp:
         app.include_router(integrations_router)
         app.include_router(personal_router)
         app.include_router(infra_router)
+        app.include_router(plugins_router)
 
         # --- Static files (JS, CSS) ---
         static_dir = Path(__file__).parent / "static"
