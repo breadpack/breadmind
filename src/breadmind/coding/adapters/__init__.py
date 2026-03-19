@@ -20,6 +20,14 @@ def get_adapter(name: str) -> CodingAgentAdapter:
     return _ADAPTERS[name]
 
 
+def register_adapter(name: str, adapter: CodingAgentAdapter) -> None:
+    _ADAPTERS[name] = adapter
+
+
+def unregister_adapter(name: str) -> None:
+    _ADAPTERS.pop(name, None)
+
+
 __all__ = [
     "CodingAgentAdapter",
     "CodingResult",
@@ -27,4 +35,6 @@ __all__ = [
     "CodexAdapter",
     "GeminiCLIAdapter",
     "get_adapter",
+    "register_adapter",
+    "unregister_adapter",
 ]
