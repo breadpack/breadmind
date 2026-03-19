@@ -455,12 +455,13 @@ def setup_config_routes(r: APIRouter, app_state):
     @r.get("/api/config/persona")
     async def get_persona(config=Depends(get_config)):
         """Get current persona settings."""
-        from breadmind.config import DEFAULT_PERSONA, DEFAULT_PERSONA_PRESETS
+        from breadmind.config import DEFAULT_PERSONA
+        available_presets = ["professional", "friendly", "concise", "humorous"]
         if config and hasattr(config, '_persona') and config._persona:
             persona = config._persona
         else:
             persona = DEFAULT_PERSONA
-        return {"persona": persona, "presets": list(DEFAULT_PERSONA_PRESETS.keys())}
+        return {"persona": persona, "presets": available_presets}
 
     @r.post("/api/config/persona")
     async def update_persona(
@@ -470,7 +471,7 @@ def setup_config_routes(r: APIRouter, app_state):
         db=Depends(get_db),
     ):
         """Update persona settings."""
-        from breadmind.config import DEFAULT_PERSONA_PRESETS
+        available_presets = {"professional", "friendly", "concise", "humorous"}
         data = await request.json()
 
         # Build persona from input
@@ -480,20 +481,17 @@ def setup_config_routes(r: APIRouter, app_state):
         persona["language"] = data.get("language", "ko")
         persona["specialties"] = data.get("specialties", ["kubernetes", "proxmox", "openwrt"])
 
-        # If preset changed, use preset prompt; otherwise use custom
-        custom_prompt = data.get("system_prompt", "")
-        if custom_prompt:
-            persona["system_prompt"] = custom_prompt
-        elif persona["preset"] in DEFAULT_PERSONA_PRESETS:
-            persona["system_prompt"] = DEFAULT_PERSONA_PRESETS[persona["preset"]]
-        else:
-            persona["system_prompt"] = DEFAULT_PERSONA_PRESETS["professional"]
+        # Validate preset
+        if persona["preset"] not in available_presets:
+            persona["preset"] = "professional"
 
         # Apply to runtime
         if config:
             config._persona = persona
         if agent and hasattr(agent, 'set_persona'):
             agent.set_persona(persona)
+        if agent and hasattr(agent, 'set_persona_name'):
+            agent.set_persona_name(persona["preset"])
 
         # Persist to DB
         if db:

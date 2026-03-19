@@ -67,10 +67,14 @@ class CoreAgent:
 
         # If behavior_prompt provided, rebuild system_prompt with it
         if behavior_prompt is not None:
-            from breadmind.config import build_system_prompt, DEFAULT_PERSONA
-            self._system_prompt = build_system_prompt(
-                DEFAULT_PERSONA, behavior_prompt=behavior_prompt,
-            )
+            if self._prompt_builder and self._prompt_context:
+                self._prompt_context.custom_instructions = behavior_prompt
+                self._rebuild_system_prompt()
+            else:
+                from breadmind.config import build_system_prompt, DEFAULT_PERSONA
+                self._system_prompt = build_system_prompt(
+                    DEFAULT_PERSONA, behavior_prompt=behavior_prompt,
+                )
 
     async def update_provider(self, provider: LLMProvider):
         """Replace the LLM provider at runtime, closing the old one."""
@@ -105,21 +109,30 @@ class CoreAgent:
         self._system_prompt = prompt
 
     def set_persona(self, persona: dict):
-        from breadmind.config import build_system_prompt
-        self._system_prompt = build_system_prompt(
-            persona, behavior_prompt=self._behavior_prompt,
-        )
+        if self._prompt_builder:
+            self._persona = persona.get("preset", "professional")
+            self._rebuild_system_prompt()
+        else:
+            from breadmind.config import build_system_prompt
+            self._system_prompt = build_system_prompt(
+                persona, behavior_prompt=self._behavior_prompt,
+            )
 
     def get_behavior_prompt(self) -> str:
-        from breadmind.config import _PROACTIVE_BEHAVIOR_PROMPT
-        return self._behavior_prompt or _PROACTIVE_BEHAVIOR_PROMPT
+        if self._prompt_builder and self._prompt_context:
+            return self._prompt_context.custom_instructions or ""
+        return self._behavior_prompt or ""
 
     def set_behavior_prompt(self, prompt: str):
-        from breadmind.config import build_system_prompt, DEFAULT_PERSONA
         self._behavior_prompt = prompt
-        self._system_prompt = build_system_prompt(
-            DEFAULT_PERSONA, behavior_prompt=prompt,
-        )
+        if self._prompt_builder and self._prompt_context:
+            self._prompt_context.custom_instructions = prompt
+            self._rebuild_system_prompt()
+        else:
+            from breadmind.config import build_system_prompt, DEFAULT_PERSONA
+            self._system_prompt = build_system_prompt(
+                DEFAULT_PERSONA, behavior_prompt=prompt,
+            )
 
     def set_custom_instructions(self, text: str | None):
         """Set custom instructions (replaces set_system_prompt for new architecture)."""

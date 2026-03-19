@@ -441,7 +441,7 @@ async def init_agent(config, provider, registry, guard, db, memory_components):
     Returns: (agent, behavior_tracker, audit_logger, metrics_collector)
     """
     from breadmind.core.agent import CoreAgent
-    from breadmind.config import build_system_prompt, DEFAULT_PERSONA
+    from breadmind.config import DEFAULT_PERSONA
     from breadmind.core.behavior_tracker import BehaviorTracker
     from breadmind.tools.meta import create_memory_tools
 
@@ -487,10 +487,6 @@ async def init_agent(config, provider, registry, guard, db, memory_components):
         except Exception:
             pass
 
-    system_prompt = build_system_prompt(
-        DEFAULT_PERSONA, behavior_prompt=saved_behavior_prompt,
-    )
-
     # Initialize PromptBuilder
     from breadmind.prompts.builder import PromptBuilder, PromptContext
     from pathlib import Path
@@ -510,11 +506,18 @@ async def init_agent(config, provider, registry, guard, db, memory_components):
         specialties=DEFAULT_PERSONA.get("specialties", []),
         os_info=f"{_plat.system()} {_plat.release()} ({_plat.machine()})",
         current_date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-        provider_model=config.llm.model,
+        provider_model=config.llm.default_model,
         custom_instructions=saved_behavior_prompt if saved_behavior_prompt else None,
     )
 
-    provider_name = config.llm.provider
+    provider_name = config.llm.default_provider
+
+    # Build initial system prompt via PromptBuilder
+    system_prompt = prompt_builder.build(
+        provider=provider_name,
+        persona=DEFAULT_PERSONA.get("preset", "professional"),
+        context=prompt_context,
+    )
 
     agent_kwargs = dict(
         provider=provider,
