@@ -66,6 +66,13 @@ class WorkingMemory:
 
     def clear_session(self, session_id: str):
         self._sessions.pop(session_id, None)
+        # Also delete from DB so it doesn't reappear on restart
+        if self._db:
+            try:
+                import asyncio
+                asyncio.create_task(self._db.delete_conversation(session_id))
+            except Exception:
+                pass
 
     def list_sessions(self) -> list[str]:
         return list(self._sessions.keys())
