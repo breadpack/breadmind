@@ -25,11 +25,11 @@
 
         /* Main content */
         .main { flex: 1; overflow: hidden; display: flex; min-height: 0; }
-        .tab-content { display: none; flex: 1; overflow: hidden; }
+        .tab-content { display: none; flex: 1; overflow: hidden; min-height: 0; }
         .tab-content.active { display: flex; }
 
         /* Chat tab */
-        .container { display: flex; flex: 1; overflow: hidden; }
+        .container { display: flex; flex: 1; overflow: hidden; min-height: 0; }
         .sidebar { width: 260px; background: #1e293b; border-right: 1px solid #334155; padding: 16px; overflow-y: auto; flex-shrink: 0; }
         .sidebar h2 { font-size: 12px; text-transform: uppercase; color: #94a3b8; margin-bottom: 10px; letter-spacing: 1px; }
         .sidebar .section { margin-bottom: 20px; }
@@ -45,7 +45,7 @@
         .message.bot .bubble { background: #1e293b; border: 1px solid #334155; border-bottom-left-radius: 4px; }
         .message .meta { font-size: 11px; color: #64748b; margin-top: 3px; padding: 0 4px; }
         .message.user .meta { text-align: right; }
-        .input-area { padding: 14px 20px; background: #1e293b; border-top: 1px solid #334155; }
+        .input-area { padding: 14px 20px; background: #1e293b; border-top: 1px solid #334155; flex-shrink: 0; }
         .input-row { display: flex; gap: 10px; }
         .input-row input { flex: 1; padding: 10px 14px; background: #0f172a; border: 1px solid #334155; border-radius: 8px; color: #e2e8f0; font-size: 14px; outline: none; }
         .input-row input:focus { border-color: #3b82f6; }
