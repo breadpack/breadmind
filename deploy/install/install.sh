@@ -5,7 +5,7 @@ set -euo pipefail
 # Usage: curl -fsSL https://raw.githubusercontent.com/breadpack/breadmind/master/deploy/install/install.sh | bash
 #   or:  ./install.sh [--external-db] [--help]
 
-BREADMIND_VERSION="0.1.0"
+BREADMIND_VERSION="0.3.0"
 CONFIG_DIR="${HOME}/.config/breadmind"
 EXTERNAL_DB=false
 SKIP_DOCKER_PG=false

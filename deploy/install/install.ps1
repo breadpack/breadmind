@@ -10,7 +10,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$BreadMindVersion = "0.1.0"
+$BreadMindVersion = "0.3.0"
 $ConfigDir = Join-Path $env:APPDATA "breadmind"
 $NssmUrl = "https://nssm.cc/release/nssm-2.24.zip"
 
