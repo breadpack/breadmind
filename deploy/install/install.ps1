@@ -403,7 +403,7 @@ function Setup-Service {
     # Strategy 1: NSSM service
     if (Install-Nssm) {
         try {
-            nssm install BreadMind $pythonPath "-m" "breadmind" "--web" "--config-dir" $ConfigDir
+            nssm install BreadMind $pythonPath "-m" "breadmind" "web" "--config-dir" $ConfigDir
             nssm set BreadMind AppDirectory $ConfigDir
             nssm set BreadMind Description "BreadMind AI Infrastructure Agent"
             nssm set BreadMind Start SERVICE_AUTO_START
@@ -423,7 +423,7 @@ function Setup-Service {
         Write-Info "Starting BreadMind as background process..."
         $env:PYTHONUNBUFFERED = "1"
         $proc = Start-Process -FilePath $pythonPath `
-            -ArgumentList "-m", "breadmind", "--web", "--config-dir", $ConfigDir `
+            -ArgumentList "-m", "breadmind", "web", "--config-dir", $ConfigDir `
             -WindowStyle Hidden `
             -RedirectStandardOutput $logFile `
             -RedirectStandardError $errFile `
@@ -437,7 +437,7 @@ function Setup-Service {
 
     if (-not $started) {
         Write-Err "Failed to start BreadMind. Run manually:"
-        Write-Err "  $pythonPath -m breadmind --web --config-dir `"$ConfigDir`""
+        Write-Err "  $pythonPath -m breadmind web --config-dir `"$ConfigDir`""
     }
 }
 

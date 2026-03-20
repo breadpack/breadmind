@@ -426,7 +426,7 @@ Wants=docker.service
 Type=simple
 User=$USER
 EnvironmentFile=$CONFIG_DIR/.env
-ExecStart=$PYTHON -m breadmind --web --config-dir $CONFIG_DIR
+ExecStart=$PYTHON -m breadmind web --config-dir $CONFIG_DIR
 Restart=on-failure
 RestartSec=10
 
@@ -459,7 +459,7 @@ setup_service_macos() {
         <string>$python_path</string>
         <string>-m</string>
         <string>breadmind</string>
-        <string>--web</string>
+        <string>web</string>
         <string>--config-dir</string>
         <string>$CONFIG_DIR</string>
     </array>
