@@ -6,7 +6,7 @@
     <title>BreadMind</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
         header { background: #1e293b; padding: 12px 24px; border-bottom: 1px solid #334155; display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
         header h1 { font-size: 20px; color: #f8fafc; }
         header .badge { background: #22c55e; color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 10px; }
@@ -37,7 +37,7 @@
         .tool-item:hover { background: #334155; }
         .tool-item .source { font-size: 10px; color: #64748b; }
         .chat-area { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-        .messages { flex: 1; overflow-y: auto; padding: 20px; }
+        .messages { flex: 1; overflow-y: auto; padding: 20px; min-height: 0; }
         .message { margin-bottom: 14px; max-width: 80%; }
         .message.user { margin-left: auto; }
         .message .bubble { padding: 10px 14px; border-radius: 12px; font-size: 13.5px; line-height: 1.0; white-space: pre-wrap; }
@@ -54,7 +54,7 @@
         .input-row button:disabled { background: #475569; cursor: not-allowed; }
 
         /* Monitoring tab */
-        .monitoring { flex: 1; display: flex; flex-direction: column; padding: 20px; }
+        .monitoring { flex: 1; display: flex; flex-direction: column; padding: 20px; min-height: 0; }
         .monitoring-header { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; }
         .monitoring-header h2 { font-size: 18px; }
         .monitoring-stats { display: flex; gap: 12px; }
@@ -179,13 +179,13 @@
         .store-search button { background:#3b82f6; color:white; border:none; padding:10px 20px; border-radius:8px; cursor:pointer; }
 
         #tab-store { display:none; padding:20px; }
-        #tab-store.active { display:flex; flex-direction:column; height:calc(100vh - 80px); }
+        #tab-store.active { display:flex; flex-direction:column; flex:1; overflow:hidden; }
         #tab-skills { display:none; padding:20px; }
-        #tab-skills.active { display:flex; flex-direction:column; height:calc(100vh - 80px); }
+        #tab-skills.active { display:flex; flex-direction:column; flex:1; overflow:hidden; }
 
-        .store-content { display:flex; gap:16px; flex:1; overflow:hidden; }
-        .store-left { width:45%; overflow-y:auto; }
-        .store-right { width:55%; background:#0f1923; border:1px solid #1e293b; border-radius:12px; padding:16px; display:flex; flex-direction:column; overflow-y:auto; }
+        .store-content { display:flex; gap:16px; flex:1; overflow:hidden; min-height:0; }
+        .store-left { width:45%; overflow-y:auto; min-height:0; }
+        .store-right { width:55%; background:#0f1923; border:1px solid #1e293b; border-radius:12px; padding:16px; display:flex; flex-direction:column; overflow-y:auto; min-height:0; }
 
         .store-toggle { display:flex; gap:4px; margin-bottom:12px; }
         .store-toggle button { background:#1a2332; border:1px solid #2d3748; color:#94a3b8; padding:6px 16px; border-radius:6px; cursor:pointer; }
@@ -617,7 +617,7 @@
         </div>
         <!-- Settings Tab -->
         <div class="tab-content" id="tab-settings">
-            <div class="settings" style="display:flex;flex-direction:column;height:100%;overflow:hidden;">
+            <div class="settings" style="display:flex;flex-direction:column;flex:1;overflow:hidden;">
                 <div style="display:flex;gap:4px;padding:8px 16px;background:#1e293b;border-bottom:1px solid #334155;flex-shrink:0;overflow-x:auto;">
                     <button class="sub-tab active" onclick="switchSettingsTab('general')" id="stab-general">General</button>
                     <button class="sub-tab" onclick="switchSettingsTab('prompts')" id="stab-prompts">Prompts</button>
