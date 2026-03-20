@@ -295,10 +295,12 @@ def setup_system_routes(r: APIRouter, app_state):
 
     @r.post("/api/update/apply")
     async def apply_update():
-        """Apply update. Tries git pull first (dev mode), then pip install."""
+        """Apply update. Tries multiple strategies in order."""
+        import breadmind
+        errors = []
+
+        # Strategy 1: git pull (dev/editable install)
         try:
-            # Strategy 1: git pull (dev/editable install)
-            import breadmind
             pkg_dir = os.path.dirname(os.path.dirname(os.path.abspath(breadmind.__file__)))
             git_dir = os.path.join(os.path.dirname(pkg_dir), ".git")
             if os.path.isdir(git_dir):
@@ -310,53 +312,76 @@ def setup_system_routes(r: APIRouter, app_state):
                     stderr=asyncio.subprocess.PIPE,
                 )
                 stdout, stderr = await proc.communicate()
-                output = stdout.decode("utf-8", errors="replace")
                 if proc.returncode == 0:
                     return {
                         "status": "ok",
                         "message": "Updated via git pull. Restart the service to apply.",
-                        "output": output[-500:],
+                        "output": stdout.decode("utf-8", errors="replace")[-500:],
                         "restart_required": True,
                     }
+                errors.append(f"git pull: {stderr.decode('utf-8', errors='replace')[:200]}")
+        except Exception as e:
+            errors.append(f"git pull: {e}")
 
-            # Strategy 2: pip install --upgrade breadmind (PyPI)
+        # Strategy 2: Download .whl from GitHub Release and pip install
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    "https://api.github.com/repos/breadpack/breadmind/releases/latest",
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        whl_url = None
+                        for asset in data.get("assets", []):
+                            if asset["name"].endswith(".whl"):
+                                whl_url = asset["browser_download_url"]
+                                break
+                        if whl_url:
+                            proc = await asyncio.create_subprocess_exec(
+                                sys.executable, "-m", "pip", "install", "--upgrade", "--force-reinstall", whl_url,
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.PIPE,
+                            )
+                            stdout, stderr = await proc.communicate()
+                            if proc.returncode == 0:
+                                return {
+                                    "status": "ok",
+                                    "message": f"Updated from GitHub Release ({data.get('tag_name', '')}). Restart to apply.",
+                                    "output": stdout.decode("utf-8", errors="replace")[-500:],
+                                    "restart_required": True,
+                                }
+                            errors.append(f"pip install whl: {stderr.decode('utf-8', errors='replace')[:200]}")
+                        else:
+                            errors.append("No .whl asset found in latest release")
+        except Exception as e:
+            errors.append(f"GitHub Release: {e}")
+
+        # Strategy 3: pip install --upgrade breadmind (PyPI)
+        try:
             proc = await asyncio.create_subprocess_exec(
                 sys.executable, "-m", "pip", "install", "--upgrade", "breadmind",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
             stdout, stderr = await proc.communicate()
-            output = stdout.decode("utf-8", errors="replace")
             if proc.returncode == 0:
                 return {
                     "status": "ok",
-                    "message": "Update installed via pip. Restart the service to apply.",
-                    "output": output[-500:],
+                    "message": "Updated via PyPI. Restart to apply.",
+                    "output": stdout.decode("utf-8", errors="replace")[-500:],
                     "restart_required": True,
                 }
-
-            # Strategy 3: pip install from GitHub
-            proc2 = await asyncio.create_subprocess_exec(
-                sys.executable, "-m", "pip", "install", "--upgrade",
-                "git+https://github.com/breadpack/breadmind.git",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout2, stderr2 = await proc2.communicate()
-            if proc2.returncode == 0:
-                return {
-                    "status": "ok",
-                    "message": "Update installed from GitHub. Restart the service to apply.",
-                    "output": stdout2.decode("utf-8", errors="replace")[-500:],
-                    "restart_required": True,
-                }
-            return {
-                "status": "error",
-                "message": "Update failed. Try manually: git pull or pip install --upgrade breadmind",
-                "output": stderr.decode("utf-8", errors="replace")[-500:],
-            }
+            errors.append(f"pip install: {stderr.decode('utf-8', errors='replace')[:200]}")
         except Exception as e:
-            return {"status": "error", "message": str(e)}
+            errors.append(f"pip install: {e}")
+
+        return {
+            "status": "error",
+            "message": "All update strategies failed.",
+            "output": "\n".join(errors),
+        }
 
     @r.post("/api/update/restart")
     async def restart_service():
