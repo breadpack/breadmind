@@ -295,8 +295,31 @@ def setup_system_routes(r: APIRouter, app_state):
 
     @r.post("/api/update/apply")
     async def apply_update():
-        """Apply update by running pip install --upgrade."""
+        """Apply update. Tries git pull first (dev mode), then pip install."""
         try:
+            # Strategy 1: git pull (dev/editable install)
+            import breadmind
+            pkg_dir = os.path.dirname(os.path.dirname(os.path.abspath(breadmind.__file__)))
+            git_dir = os.path.join(os.path.dirname(pkg_dir), ".git")
+            if os.path.isdir(git_dir):
+                repo_dir = os.path.dirname(pkg_dir)
+                proc = await asyncio.create_subprocess_exec(
+                    "git", "pull", "origin", "master",
+                    cwd=repo_dir,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await proc.communicate()
+                output = stdout.decode("utf-8", errors="replace")
+                if proc.returncode == 0:
+                    return {
+                        "status": "ok",
+                        "message": "Updated via git pull. Restart the service to apply.",
+                        "output": output[-500:],
+                        "restart_required": True,
+                    }
+
+            # Strategy 2: pip install --upgrade breadmind (PyPI)
             proc = await asyncio.create_subprocess_exec(
                 sys.executable, "-m", "pip", "install", "--upgrade", "breadmind",
                 stdout=asyncio.subprocess.PIPE,
@@ -307,31 +330,31 @@ def setup_system_routes(r: APIRouter, app_state):
             if proc.returncode == 0:
                 return {
                     "status": "ok",
-                    "message": "Update installed. Restart the service to apply.",
+                    "message": "Update installed via pip. Restart the service to apply.",
                     "output": output[-500:],
                     "restart_required": True,
                 }
-            else:
-                # Try GitHub fallback
-                proc2 = await asyncio.create_subprocess_exec(
-                    sys.executable, "-m", "pip", "install", "--upgrade",
-                    "git+https://github.com/breadpack/breadmind.git",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                stdout2, stderr2 = await proc2.communicate()
-                if proc2.returncode == 0:
-                    return {
-                        "status": "ok",
-                        "message": "Update installed from GitHub. Restart the service to apply.",
-                        "output": stdout2.decode("utf-8", errors="replace")[-500:],
-                        "restart_required": True,
-                    }
+
+            # Strategy 3: pip install from GitHub
+            proc2 = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pip", "install", "--upgrade",
+                "git+https://github.com/breadpack/breadmind.git",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout2, stderr2 = await proc2.communicate()
+            if proc2.returncode == 0:
                 return {
-                    "status": "error",
-                    "message": "Update failed",
-                    "output": stderr.decode("utf-8", errors="replace")[-500:],
+                    "status": "ok",
+                    "message": "Update installed from GitHub. Restart the service to apply.",
+                    "output": stdout2.decode("utf-8", errors="replace")[-500:],
+                    "restart_required": True,
                 }
+            return {
+                "status": "error",
+                "message": "Update failed. Try manually: git pull or pip install --upgrade breadmind",
+                "output": stderr.decode("utf-8", errors="replace")[-500:],
+            }
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
