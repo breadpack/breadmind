@@ -385,19 +385,27 @@ Settings > Messengers에서 플랫폼을 선택하고 자동 가이드를 따릅
 
 ## Docker 배포
 
-### Docker Compose
+### 권장: PostgreSQL만 Docker + BreadMind은 호스트 실행
+
+BreadMind는 인프라 관리 에이전트이므로 호스트의 kubectl, ssh, docker 등 CLI 도구에 직접 접근해야 합니다. **BreadMind 자체를 Docker 컨테이너에서 실행하면 호스트 환경에 접근할 수 없어 대부분의 기능이 제한됩니다.**
 
 ```bash
-# PostgreSQL만 (BreadMind은 호스트에서 실행)
+# 1. PostgreSQL만 Docker로 실행
 docker compose up -d postgres
 
-# 전체 Docker 실행
+# 2. BreadMind은 호스트에서 실행
+breadmind web
+```
+
+### 전체 Docker 실행 (제한적)
+
+호스트 접근이 필요 없는 환경(테스트, 데모 등)에서만 사용:
+
+```bash
 docker compose --profile full up -d
 ```
 
-서비스 구성:
-- **breadmind**: 메인 애플리케이션 (포트 8080)
-- **postgres**: PostgreSQL + pgvector (포트 5432)
+> **주의:** Docker 컨테이너 내에서 BreadMind을 실행하면 shell_exec, kubectl, ssh, router_manage 등 호스트 의존 도구가 작동하지 않습니다.
 
 ### Kubernetes (Helm)
 
@@ -407,6 +415,8 @@ helm install breadmind ./breadmind \
   --set config.llm.defaultProvider=claude \
   --set secrets.anthropicApiKey=$ANTHROPIC_API_KEY
 ```
+
+> Kubernetes 배포 시 BreadMind Pod에 호스트 도구 접근이 필요하면 `hostPID`, `hostNetwork`, 볼륨 마운트 등의 설정이 필요합니다.
 
 ## 분산 에이전트 네트워크
 
