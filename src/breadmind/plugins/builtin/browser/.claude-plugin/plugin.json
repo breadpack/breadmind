@@ -1,0 +1,14 @@
+{
+  "name": "browser",
+  "version": "0.1.0",
+  "description": "Web browser automation tool (Playwright/CDP)",
+  "x-breadmind": {
+    "priority": 20,
+    "enabled_by_default": false,
+    "depends_on": [],
+    "requires": [],
+    "optional_requires": [],
+    "python_module": "plugin",
+    "safety": { "require_approval": [], "blacklist": [] }
+  }
+}

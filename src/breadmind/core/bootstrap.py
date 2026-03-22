@@ -1,39 +1,27 @@
 """Application bootstrap — initializes all components from config.
 
-Bootstrap initialization dependency graph
-==========================================
+Bootstrap initialization (plugin-based architecture)
+=====================================================
 
-Phase 1 (no dependencies):
-  - database (config, config_dir)
-
-Phase 2 (depends on database):
-  - tools          (config, safety_cfg)
-  - apply_db_settings is called inside init_database
-
-Phase 3 (depends on database + tools):
-  - memory         (db, provider, config, registry, mcp_manager, search_engine)
-
-Phase 4 (depends on database + tools + memory):
-  - agent          (config, provider, registry, guard, db, memory_components)
-
-Phase 5 (depends on agent):
-  - messenger      (db, message_router, event_callback)
-
-Dependency edges (A -> B means A must run before B):
-  database  ->  tools
-  database  ->  memory
-  tools     ->  memory
-  memory    ->  agent
-  agent     ->  messenger
+Phase 1: Database + Credential Vault
+Phase 2: Core services (LLM, MCP, Memory, etc.)
+Phase 3: ServiceContainer populated with all services
+Phase 4: PluginManager loads all plugins → tools registered
+Phase 5: Agent initialization
+Phase 6: Messenger (optional)
+Phase 7: Background jobs (optional)
+Phase 8: Personal scheduler (optional)
 """
 from __future__ import annotations
 
 import logging
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from breadmind.core.events import get_event_bus, EventBus
+from breadmind.plugins.container import ServiceContainer
 
 logger = logging.getLogger(__name__)
 
@@ -73,23 +61,20 @@ class AppComponents:
     bg_job_manager: Any = None
     event_bus: EventBus | None = None
     plugin_mgr: Any = None
+    container: ServiceContainer | None = None
 
 
 def _detect_package_managers() -> list[str]:
-    """Quick detection of available package managers via shutil.which()."""
     import shutil
     candidates = ["apt", "apt-get", "dnf", "yum", "apk", "pacman", "zypper",
                    "snap", "flatpak", "brew", "winget", "choco", "scoop"]
     return [pm for pm in candidates if shutil.which(pm)]
 
 
-async def init_database(config, config_dir: str):
-    """Initialize database or fall back to file-based settings.
+# ── Phase 1: Database ───────────────────────────────────────────────────
 
-    Phase: 1
-    Dependencies: none
-    Provides: db (Database | FileSettingsStore)
-    """
+async def init_database(config, config_dir: str):
+    """Initialize database or fall back to file-based settings."""
     db = None
     try:
         from breadmind.storage.database import Database
@@ -110,47 +95,37 @@ async def init_database(config, config_dir: str):
     return db
 
 
-async def init_tools(config, safety_cfg):
-    """Initialize tool registry, MCP client, and meta tools.
+# ── Phase 2: Core services ──────────────────────────────────────────────
 
-    Phase: 2
-    Dependencies: config (from load_config)
-    Provides: registry (ToolRegistry), guard (SafetyGuard),
-              mcp_manager (MCPClientManager), search_engine (RegistrySearchEngine),
-              meta_tools (dict)
-    Returns: (registry, guard, mcp_manager, search_engine, meta_tools)
+async def init_core_services(config, db, provider, safety_cfg, vault=None):
+    """Initialize all core services and return them in a ServiceContainer.
+
+    This replaces the old init_tools + init_memory phases.
+    Services are created here but tools are NOT registered — that happens
+    via PluginManager in Phase 4.
     """
-    from breadmind.tools.registry import ToolRegistry
-    from breadmind.core.safety import SafetyGuard
-    from breadmind.tools.builtin import register_builtin_tools
-    from breadmind.tools.mcp_client import MCPClientManager
-    from breadmind.tools.registry_search import RegistrySearchEngine, RegistryConfig
-    from breadmind.tools.meta import create_meta_tools
+    container = ServiceContainer()
 
+    # ── Basic services ──────────────────────────────────────────
+    container.register("config", config)
+    container.register("db", db)
+    container.register("llm_provider", provider)
+
+    # ── Tool Registry (empty — plugins will populate it) ────────
+    from breadmind.tools.registry import ToolRegistry
     registry = ToolRegistry()
+    container.register("tool_registry", registry)
+
+    # ── Safety Guard ────────────────────────────────────────────
+    from breadmind.core.safety import SafetyGuard
     guard = SafetyGuard(
         blacklist=safety_cfg.get("blacklist", {}),
         require_approval=safety_cfg.get("require_approval", []),
     )
+    container.register("safety_guard", guard)
 
-    # Built-in tools (includes shell_exec, web_search, file_read, file_write,
-    # messenger_connect, swarm_role, delegate_tasks, network_scan, router_manage)
-    register_builtin_tools(registry)
-
-    # Browser tools (optional)
-    try:
-        from breadmind.tools.browser import register_browser_tools
-        register_browser_tools(registry)
-    except Exception:
-        pass
-
-    # Code delegate tool (optional — requires coding sub-package)
-    try:
-        _register_code_delegate(registry, db=None)
-    except Exception as e:
-        logger.warning("Failed to register code_delegate tool: %s", e)
-
-    # MCP
+    # ── MCP Client ──────────────────────────────────────────────
+    from breadmind.tools.mcp_client import MCPClientManager
     mcp_manager = MCPClientManager(
         max_restart_attempts=config.mcp.max_restart_attempts,
         call_timeout=config.llm.tool_call_timeout_seconds,
@@ -179,84 +154,56 @@ async def init_tools(config, safety_cfg):
         except Exception as e:
             print(f"  Failed to connect MCP server '{name}': {e}")
 
-    # Search engine & meta tools
+    container.register("mcp_manager", mcp_manager)
+
+    # ── Registry Search Engine ──────────────────────────────────
+    from breadmind.tools.registry_search import RegistrySearchEngine, RegistryConfig
     search_engine = RegistrySearchEngine([
         RegistryConfig(name=r.name, type=r.type, enabled=r.enabled, url=r.url)
         for r in config.mcp.registries
     ])
-    meta_tools = create_meta_tools(mcp_manager, search_engine)
-    for func in meta_tools.values():
-        registry.register(func)
+    container.register("search_engine", search_engine)
 
-    return registry, guard, mcp_manager, search_engine, meta_tools
-
-
-def _register_code_delegate(registry, db) -> None:
-    """Register the code_delegate tool into the registry.
-
-    The tool handler returned by create_code_delegate_tool() is a plain async
-    function without the @tool decorator, so we attach a synthetic
-    _tool_definition before calling registry.register().
-    """
-    from breadmind.coding.tool import create_code_delegate_tool
-    from breadmind.llm.base import ToolDefinition
-
-    tool_def_dict, handler = create_code_delegate_tool(db=db)
-    handler._tool_definition = ToolDefinition(
-        name=tool_def_dict["name"],
-        description=tool_def_dict["description"],
-        parameters=tool_def_dict["parameters"],
-    )
-    registry.register(handler)
-    logger.info("Registered code_delegate tool")
-
-
-async def init_memory(db, provider, config, registry, mcp_manager, search_engine, vault=None):
-    """Initialize memory layers, SmartRetriever, profiler, and self-expansion components.
-
-    Phase: 3
-    Dependencies: db (Phase 1), registry + mcp_manager + search_engine (Phase 2),
-                  provider (from LLM init)
-    Provides: working_memory, episodic_memory, semantic_memory, embedding_service,
-              smart_retriever, performance_tracker, skill_store, tool_gap_detector,
-              context_builder, profiler, mcp_store
-    Returns: dict of all memory-related components
-    """
-    from breadmind.memory.working import WorkingMemory
-    from breadmind.memory.episodic import EpisodicMemory
-    from breadmind.memory.semantic import SemanticMemory
-    from breadmind.memory.embedding import EmbeddingService
-    from breadmind.core.smart_retriever import SmartRetriever
+    # ── Performance Tracker + Skill Store ───────────────────────
     from breadmind.core.performance import PerformanceTracker
     from breadmind.core.skill_store import SkillStore
-    from breadmind.core.tool_gap import ToolGapDetector
-    from breadmind.tools.meta import create_expansion_tools
 
-    # Self-expansion components
     performance_tracker = PerformanceTracker(db=db)
     await performance_tracker.load_from_db()
+    container.register("performance_tracker", performance_tracker)
 
     skill_store = SkillStore(db=db, tracker=performance_tracker)
     await skill_store.load_from_db()
+    container.register("skill_store", skill_store)
 
-    # Register OS-specific administration skill (tailored to detected package managers)
+    # Register OS-specific skills
     from breadmind.skills.os_skills import register_os_skills
     detected_pkg_managers = _detect_package_managers()
     await register_os_skills(skill_store, package_managers=detected_pkg_managers)
 
+    # ── Tool Gap Detector ───────────────────────────────────────
+    from breadmind.core.tool_gap import ToolGapDetector
     tool_gap_detector = ToolGapDetector(
         tool_registry=registry,
         mcp_manager=mcp_manager,
         search_engine=search_engine,
     )
+    container.register("tool_gap_detector", tool_gap_detector)
 
-    # Memory layers
+    # ── Memory layers ───────────────────────────────────────────
+    from breadmind.memory.working import WorkingMemory
+    from breadmind.memory.episodic import EpisodicMemory
+    from breadmind.memory.semantic import SemanticMemory
+    from breadmind.memory.embedding import EmbeddingService
+
     episodic_memory = EpisodicMemory(db=db)
     semantic_memory = SemanticMemory(db=db)
-    # Initialize embedding service from config
+    container.register("episodic_memory", episodic_memory)
+    container.register("semantic_memory", semantic_memory)
+
+    # Embedding service
     emb_cfg = config.embedding if hasattr(config, 'embedding') else None
     if emb_cfg:
-        # Resolve API key: provider-specific key or generic
         import os as _os
         emb_api_key = ""
         if emb_cfg.provider in ("gemini", "auto"):
@@ -275,10 +222,11 @@ async def init_memory(db, provider, config, registry, mcp_manager, search_engine
     else:
         embedding_service = EmbeddingService()
 
-    # Sync pgvector column dimensions with resolved embedding model
     if embedding_service.is_available() and hasattr(db, 'setup_pgvector'):
         await db.setup_pgvector(embedding_service.dimensions)
 
+    # ── Smart Retriever ─────────────────────────────────────────
+    from breadmind.core.smart_retriever import SmartRetriever
     smart_retriever = SmartRetriever(
         embedding_service=embedding_service,
         episodic_memory=episodic_memory,
@@ -287,36 +235,12 @@ async def init_memory(db, provider, config, registry, mcp_manager, search_engine
         db=db,
     )
     skill_store.set_retriever(smart_retriever)
+    container.register("smart_retriever", smart_retriever)
 
-    # Register expansion meta tools
-    expansion_tools = create_expansion_tools(
-        skill_store=skill_store,
-        tracker=performance_tracker,
-    )
-    for func in expansion_tools.values():
-        registry.register(func)
+    working_memory = WorkingMemory(db=db, provider=provider)
+    container.register("working_memory", working_memory)
 
-    # MCP Store
-    mcp_store = None
-    try:
-        from breadmind.mcp.store import MCPStore
-        from breadmind.mcp.install_assistant import InstallAssistant
-        install_assistant = InstallAssistant(provider=provider)
-        mcp_store = MCPStore(
-            mcp_manager=mcp_manager,
-            registry_search=search_engine,
-            install_assistant=install_assistant,
-            db=db,
-            tool_registry=registry,
-        )
-        await mcp_store.auto_restore_servers()
-        print("  MCP Store: ready")
-    except Exception as e:
-        print(f"  MCP Store: not available ({e})")
-
-    working_memory = WorkingMemory(db=db)
-
-    # Optional: UserProfiler
+    # ── Profiler ────────────────────────────────────────────────
     profiler = None
     try:
         from breadmind.memory.profiler import UserProfiler
@@ -324,8 +248,10 @@ async def init_memory(db, provider, config, registry, mcp_manager, search_engine
         await profiler.load_from_db()
     except (ImportError, Exception):
         pass
+    if profiler:
+        container.register("profiler", profiler)
 
-    # Context builder
+    # ── Context Builder ─────────────────────────────────────────
     context_builder = None
     try:
         from breadmind.memory.context_builder import ContextBuilder
@@ -340,8 +266,10 @@ async def init_memory(db, provider, config, registry, mcp_manager, search_engine
         )
     except (ImportError, Exception):
         pass
+    if context_builder:
+        container.register("context_builder", context_builder)
 
-    # --- Personal assistant adapter registry ---
+    # ── Personal assistant adapters ─────────────────────────────
     adapter_registry = None
     oauth_manager = None
     try:
@@ -355,35 +283,25 @@ async def init_memory(db, provider, config, registry, mcp_manager, search_engine
             adapter_registry.register(BuiltinTaskAdapter(db))
             adapter_registry.register(BuiltinEventAdapter(db))
 
-        # Register personal context provider
         if context_builder:
             context_builder.register_provider(PersonalContextProvider(adapter_registry))
 
-        # Register personal assistant tools
-        from breadmind.personal.tools import register_personal_tools
-        if registry:
-            register_personal_tools(registry, adapter_registry, user_id="default")
+        container.register("adapter_registry", adapter_registry)
 
-        # --- Phase 2: OAuth Manager ---
         from breadmind.personal.oauth import OAuthManager
         oauth_manager = OAuthManager(db, vault=vault)
+        container.register("oauth_manager", oauth_manager)
 
-        # --- Phase 2-3: Google adapters (require OAuth) ---
-        # These are registered but only functional after OAuth authentication
         from breadmind.personal.adapters.google_calendar import GoogleCalendarAdapter
         from breadmind.personal.adapters.google_drive import GoogleDriveAdapter
         from breadmind.personal.adapters.google_contacts import GoogleContactsAdapter
-
         adapter_registry.register(GoogleCalendarAdapter(oauth_manager))
         adapter_registry.register(GoogleDriveAdapter(oauth_manager))
         adapter_registry.register(GoogleContactsAdapter(oauth_manager))
 
-        # --- Phase 3b: Third-party adapters (require API tokens) ---
-        # These are registered but only functional after authenticate() is called
         from breadmind.personal.adapters.notion import NotionAdapter
         from breadmind.personal.adapters.jira import JiraAdapter
         from breadmind.personal.adapters.github_issues import GitHubIssuesAdapter
-
         adapter_registry.register(NotionAdapter())
         adapter_registry.register(JiraAdapter())
         adapter_registry.register(GitHubIssuesAdapter())
@@ -392,94 +310,95 @@ async def init_memory(db, provider, config, registry, mcp_manager, search_engine
     except Exception as e:
         print(f"  Personal assistant: not available ({e})")
 
-    # Phase 4 messenger gateways available:
-    # - teams_gw.TeamsGateway (app_id, app_password)
-    # - line_gw.LINEGateway (channel_token, channel_secret)
-    # - matrix_gw.MatrixGateway (homeserver, access_token, user_id)
-    # These are started by GatewayLifecycleManager when configured via CLI/web.
+    # ── MCP Store ───────────────────────────────────────────────
+    mcp_store = None
+    try:
+        from breadmind.mcp.store import MCPStore
+        from breadmind.mcp.install_assistant import InstallAssistant
+        install_assistant = InstallAssistant(provider=provider)
+        mcp_store = MCPStore(
+            mcp_manager=mcp_manager,
+            registry_search=search_engine,
+            install_assistant=install_assistant,
+            db=db,
+            tool_registry=registry,
+        )
+        await mcp_store.auto_restore_servers()
+        container.register("mcp_store", mcp_store)
+        print("  MCP Store: ready")
+    except Exception as e:
+        print(f"  MCP Store: not available ({e})")
+
+    # ── Credential Vault ────────────────────────────────────────
+    if vault:
+        container.register("credential_vault", vault)
 
     return {
-        "working_memory": working_memory,
-        "episodic_memory": episodic_memory,
-        "semantic_memory": semantic_memory,
-        "embedding_service": embedding_service,
-        "smart_retriever": smart_retriever,
+        "container": container,
+        "registry": registry,
+        "guard": guard,
+        "mcp_manager": mcp_manager,
+        "search_engine": search_engine,
         "performance_tracker": performance_tracker,
         "skill_store": skill_store,
         "tool_gap_detector": tool_gap_detector,
-        "context_builder": context_builder,
+        "working_memory": working_memory,
+        "episodic_memory": episodic_memory,
+        "semantic_memory": semantic_memory,
+        "smart_retriever": smart_retriever,
         "profiler": profiler,
+        "context_builder": context_builder,
         "mcp_store": mcp_store,
         "adapter_registry": adapter_registry,
         "oauth_manager": oauth_manager,
     }
 
 
-async def discover_and_install_skills(skill_store, search_engine):
-    """Auto-discover skills from marketplace based on detected environment.
+# ── Phase 4: Plugin loading ─────────────────────────────────────────────
 
-    Searches marketplace first, falls back to builtin domain skills.
-    Designed to run as a background task after startup.
-    """
-    from breadmind.skills.auto_discovery import auto_discover_skills, apply_fallback_skills
-    from breadmind.skills.domain_skills import detect_domains
+async def init_plugins(container: ServiceContainer):
+    """Load all builtin and user plugins. Returns PluginManager."""
+    from breadmind.plugins.manager import PluginManager
 
-    detected = detect_domains()
-    detected_tool_names = []
-    for d in detected:
-        detected_tool_names.extend(d.detected_tools)
+    config = container.get("config")
+    registry = container.get("tool_registry")
 
-    if not detected_tool_names:
-        return
+    # User plugins directory
+    if os.name == 'nt':
+        plugins_base = Path(os.environ.get("APPDATA", Path.home())) / "breadmind" / "plugins" / "installed"
+    else:
+        plugins_base = Path.home() / ".breadmind" / "plugins" / "installed"
 
-    # Try marketplace first
-    result = await auto_discover_skills(
-        detected_tools=detected_tool_names,
-        search_engine=search_engine,
-        skill_store=skill_store,
-        max_per_domain=1,
-        timeout=30,
+    plugin_mgr = PluginManager(
+        plugins_dir=plugins_base,
+        tool_registry=registry,
+        container=container,
     )
 
-    if result.installed > 0:
-        logger.info(
-            "Skill auto-discovery: %d searched, %d installed, %d failed",
-            result.searched, result.installed, result.failed,
-        )
+    # Load builtin plugins first (sorted by priority)
+    builtin_dir = Path(__file__).resolve().parent.parent / "plugins" / "builtin"
+    builtin_count = await plugin_mgr.load_builtin(builtin_dir)
+    print(f"  Builtin plugins: {builtin_count} loaded")
 
-    # Apply builtin fallbacks for domains without marketplace skills
-    await apply_fallback_skills(detected_tool_names, skill_store)
+    # Load user-installed plugins
+    await plugin_mgr.load_all()
+    user_count = len(plugin_mgr.loaded_plugins) - builtin_count
+    if user_count > 0:
+        print(f"  User plugins: {user_count} loaded")
 
-    # Persist to DB
-    try:
-        await skill_store.flush_to_db()
-    except Exception:
-        pass
+    total_tools = plugin_mgr.get_all_tool_count()
+    print(f"  Total tools registered: {total_tools}")
 
+    return plugin_mgr
+
+
+# ── Phase 5: Agent ───────────────────────────────────────────────────────
 
 async def init_agent(config, provider, registry, guard, db, memory_components):
-    """Initialize CoreAgent with BehaviorTracker.
-
-    Phase: 4
-    Dependencies: db (Phase 1), registry + guard (Phase 2),
-                  memory_components (Phase 3), provider + config
-    Provides: agent (CoreAgent), behavior_tracker (BehaviorTracker),
-              audit_logger (AuditLogger | None), metrics_collector (MetricsCollector | None)
-    Returns: (agent, behavior_tracker, audit_logger, metrics_collector)
-    """
+    """Initialize CoreAgent with BehaviorTracker."""
     from breadmind.core.agent import CoreAgent
     from breadmind.config import DEFAULT_PERSONA
     from breadmind.core.behavior_tracker import BehaviorTracker
-    from breadmind.tools.meta import create_memory_tools
-
-    # Register memory tools (after profiler init)
-    mem_tools = create_memory_tools(
-        episodic_memory=memory_components["episodic_memory"],
-        profiler=memory_components.get("profiler"),
-        smart_retriever=memory_components["smart_retriever"],
-    )
-    for func in mem_tools.values():
-        registry.register(func)
 
     # Optional components
     audit_logger = None
@@ -496,7 +415,6 @@ async def init_agent(config, provider, registry, guard, db, memory_components):
     except (ImportError, Exception):
         pass
 
-    # Wire metrics_collector to registry if supported
     if metrics_collector is not None and hasattr(registry, 'set_metrics_collector'):
         registry.set_metrics_collector(metrics_collector)
 
@@ -516,7 +434,6 @@ async def init_agent(config, provider, registry, guard, db, memory_components):
 
     # Initialize PromptBuilder
     from breadmind.prompts.builder import PromptBuilder, PromptContext
-    from pathlib import Path
     import platform as _plat
     from datetime import datetime, timezone
 
@@ -539,7 +456,6 @@ async def init_agent(config, provider, registry, guard, db, memory_components):
 
     provider_name = config.llm.default_provider
 
-    # Build initial system prompt via PromptBuilder
     system_prompt = prompt_builder.build(
         provider=provider_name,
         persona=DEFAULT_PERSONA.get("preset", "professional"),
@@ -564,12 +480,10 @@ async def init_agent(config, provider, registry, guard, db, memory_components):
 
     agent = CoreAgent(**agent_kwargs)
 
-    # Set PromptBuilder-related attributes
     agent._provider_name = provider_name
     agent._prompt_context = prompt_context
     agent._persona = DEFAULT_PERSONA.get("preset", "professional")
 
-    # Wire BehaviorTracker
     behavior_tracker = BehaviorTracker(
         provider=provider,
         get_behavior_prompt=agent.get_behavior_prompt,
@@ -579,7 +493,7 @@ async def init_agent(config, provider, registry, guard, db, memory_components):
     )
     agent.set_behavior_tracker(behavior_tracker)
 
-    # Environment scan — runs on first startup or if no scan exists
+    # Environment scan
     try:
         last_scan = await db.get_setting("last_env_scan") if db else None
         if last_scan is None:
@@ -600,15 +514,10 @@ async def init_agent(config, provider, registry, guard, db, memory_components):
     return agent, behavior_tracker, audit_logger, metrics_collector
 
 
-async def init_messenger(db, message_router, event_callback=None, vault=None):
-    """Initialize messenger auto-connect, lifecycle, and security components.
+# ── Phase 6: Messenger ──────────────────────────────────────────────────
 
-    Phase: 5
-    Dependencies: db (Phase 1), message_router (from agent/Phase 4)
-    Provides: security (MessengerSecurityManager), lifecycle (GatewayLifecycleManager),
-              orchestrator (ConnectionOrchestrator)
-    Returns: dict with security, lifecycle, orchestrator
-    """
+async def init_messenger(db, message_router, event_callback=None, vault=None):
+    """Initialize messenger auto-connect, lifecycle, and security components."""
     from breadmind.messenger.security import MessengerSecurityManager
     from breadmind.messenger.lifecycle import GatewayLifecycleManager
     from breadmind.messenger.auto_connect.orchestrator import ConnectionOrchestrator
@@ -628,7 +537,6 @@ async def init_messenger(db, message_router, event_callback=None, vault=None):
         db=db,
     )
 
-    # 설정된 게이트웨이 자동 시작
     results = await lifecycle.auto_start_all()
     started = [p for p, ok in results.items() if ok]
     if started:
@@ -641,6 +549,45 @@ async def init_messenger(db, message_router, event_callback=None, vault=None):
     }
 
 
+# ── Skill auto-discovery (background) ───────────────────────────────────
+
+async def discover_and_install_skills(skill_store, search_engine):
+    """Auto-discover skills from marketplace based on detected environment."""
+    from breadmind.skills.auto_discovery import auto_discover_skills, apply_fallback_skills
+    from breadmind.skills.domain_skills import detect_domains
+
+    detected = detect_domains()
+    detected_tool_names = []
+    for d in detected:
+        detected_tool_names.extend(d.detected_tools)
+
+    if not detected_tool_names:
+        return
+
+    result = await auto_discover_skills(
+        detected_tools=detected_tool_names,
+        search_engine=search_engine,
+        skill_store=skill_store,
+        max_per_domain=1,
+        timeout=30,
+    )
+
+    if result.installed > 0:
+        logger.info(
+            "Skill auto-discovery: %d searched, %d installed, %d failed",
+            result.searched, result.installed, result.failed,
+        )
+
+    await apply_fallback_skills(detected_tool_names, skill_store)
+
+    try:
+        await skill_store.flush_to_db()
+    except Exception:
+        pass
+
+
+# ── Main entry point ─────────────────────────────────────────────────────
+
 async def bootstrap_all(
     config,
     config_dir: str,
@@ -651,27 +598,14 @@ async def bootstrap_all(
 ) -> AppComponents:
     """Run all initialization phases in dependency order.
 
-    This is a convenience entry point that calls each init_* function
-    following the DAG order declared at the top of this module.
-    Phases that fail are logged and degraded gracefully where possible.
-
-    Phase execution order:
-      1. database   (no deps)
-      2. tools      (needs config)
-      3. memory     (needs db, tools, provider)
-      4. agent      (needs db, tools, memory, provider)
-      5. messenger  (needs db, agent/message_router)  [optional]
-
-    Args:
-        config: Loaded application config object.
-        config_dir: Path to the configuration directory.
-        safety_cfg: Safety guard configuration dict.
-        provider: LLM provider instance.
-        message_router: Optional message router for messenger phase.
-        event_callback: Optional event callback for messenger phase.
-
-    Returns:
-        AppComponents with all initialized (or None for failed) components.
+    Phase 1: Database + Credential Vault
+    Phase 2: Core services → ServiceContainer
+    Phase 3: (merged into Phase 2)
+    Phase 4: PluginManager loads all plugins → tools registered
+    Phase 5: Agent
+    Phase 6: Messenger (optional)
+    Phase 7: Background jobs
+    Phase 8: Personal scheduler
     """
     components = AppComponents(config=config, safety_cfg=safety_cfg)
     components.event_bus = get_event_bus()
@@ -690,54 +624,50 @@ async def bootstrap_all(
         from breadmind.storage.credential_vault import CredentialVault
         components.credential_vault = CredentialVault(components.db)
         await components.credential_vault.migrate_plaintext_credentials()
-        # Inject vault into router manager singleton
-        from breadmind.core.router_manager import get_router_manager
-        get_router_manager().set_vault(components.credential_vault)
         logger.info("Phase 1.5 complete: credential vault initialized")
     except Exception as e:
         logger.warning("Credential vault init failed (non-critical): %s", e)
 
-    # ── Phase 2: Tools ───────────────────────────────────────────────
+    # ── Phase 2: Core services → ServiceContainer ────────────────────
     try:
-        (
-            components.registry,
-            components.guard,
-            components.mcp_manager,
-            components.search_engine,
-            components.meta_tools,
-        ) = await init_tools(config, safety_cfg)
-        logger.info("Phase 2 complete: tools initialized")
-    except Exception as e:
-        logger.error("Phase 2 failed (tools): %s", e)
-
-    # ── Phase 3: Memory ──────────────────────────────────────────────
-    try:
-        mem = await init_memory(
-            components.db,
-            provider,
-            config,
-            components.registry,
-            components.mcp_manager,
-            components.search_engine,
+        services = await init_core_services(
+            config, components.db, provider, safety_cfg,
             vault=components.credential_vault,
         )
-        components.working_memory = mem["working_memory"]
-        components.episodic_memory = mem["episodic_memory"]
-        components.semantic_memory = mem["semantic_memory"]
-        components.smart_retriever = mem["smart_retriever"]
-        components.performance_tracker = mem["performance_tracker"]
-        components.skill_store = mem["skill_store"]
-        components.tool_gap_detector = mem["tool_gap_detector"]
-        components.context_builder = mem.get("context_builder")
-        components.profiler = mem.get("profiler")
-        components.mcp_store = mem.get("mcp_store")
-        components.adapter_registry = mem.get("adapter_registry")
-        components.oauth_manager = mem.get("oauth_manager")
-        logger.info("Phase 3 complete: memory initialized")
+        container = services["container"]
+        components.container = container
+        components.registry = services["registry"]
+        components.guard = services["guard"]
+        components.mcp_manager = services["mcp_manager"]
+        components.search_engine = services["search_engine"]
+        components.performance_tracker = services["performance_tracker"]
+        components.skill_store = services["skill_store"]
+        components.tool_gap_detector = services["tool_gap_detector"]
+        components.working_memory = services["working_memory"]
+        components.episodic_memory = services["episodic_memory"]
+        components.semantic_memory = services["semantic_memory"]
+        components.smart_retriever = services["smart_retriever"]
+        components.profiler = services.get("profiler")
+        components.context_builder = services.get("context_builder")
+        components.mcp_store = services.get("mcp_store")
+        components.adapter_registry = services.get("adapter_registry")
+        components.oauth_manager = services.get("oauth_manager")
+        logger.info("Phase 2 complete: core services initialized")
     except Exception as e:
-        logger.error("Phase 3 failed (memory): %s", e)
+        logger.error("Phase 2 failed (core services): %s", e)
 
-    # ── Phase 4: Agent ───────────────────────────────────────────────
+    # ── Phase 4: Plugin loading ──────────────────────────────────────
+    if components.container is not None:
+        try:
+            components.plugin_mgr = await init_plugins(components.container)
+            logger.info(
+                "Phase 4 complete: plugins loaded (%d)",
+                len(components.plugin_mgr.loaded_plugins),
+            )
+        except Exception as e:
+            logger.error("Phase 4 failed (plugins): %s", e)
+
+    # ── Phase 5: Agent ───────────────────────────────────────────────
     try:
         (
             components.agent,
@@ -760,30 +690,29 @@ async def bootstrap_all(
                 "profiler": components.profiler,
             },
         )
-        logger.info("Phase 4 complete: agent initialized")
+        logger.info("Phase 5 complete: agent initialized")
     except Exception as e:
-        logger.error("Phase 4 failed (agent): %s", e)
+        logger.error("Phase 5 failed (agent): %s", e)
 
-    # ── Phase 5: Messenger (optional) ────────────────────────────────
+    # ── Phase 6: Messenger (optional) ────────────────────────────────
     if message_router is not None:
         try:
-            await init_messenger(
+            messenger_result = await init_messenger(
                 components.db, message_router, event_callback,
                 vault=components.credential_vault,
             )
-            # Messenger components are not stored on AppComponents by default;
-            # callers can extend AppComponents or use the returned dict.
-            logger.info("Phase 5 complete: messenger initialized")
+            # Register orchestrator in container for messenger plugin
+            if components.container and messenger_result.get("orchestrator"):
+                components.container.register("orchestrator", messenger_result["orchestrator"])
+            logger.info("Phase 6 complete: messenger initialized")
         except Exception as e:
-            logger.error("Phase 5 failed (messenger): %s", e)
+            logger.error("Phase 6 failed (messenger): %s", e)
 
-    # ── Phase 6: Background Jobs (requires DB + Redis) ─────────────
+    # ── Phase 7: Background Jobs ─────────────────────────────────────
     try:
         from breadmind.storage.bg_jobs_store import BgJobsStore
         from breadmind.tasks.manager import BackgroundJobManager
-        from breadmind.tools.builtin import set_bg_job_manager
 
-        # Only enable with real DB (not FileSettingsStore)
         if hasattr(components.db, "acquire"):
             store = BgJobsStore(components.db)
             task_cfg = getattr(config, "task", None)
@@ -796,15 +725,18 @@ async def bootstrap_all(
             retention = task_cfg.completed_retention_days if task_cfg else 30
             await mgr.cleanup_old_jobs(retention)
 
-            set_bg_job_manager(mgr)
-            components.bg_job_manager = mgr
-            logger.info("Phase 6 complete: background jobs initialized")
-        else:
-            logger.info("Phase 6 skipped: background jobs require PostgreSQL")
-    except Exception as e:
-        logger.warning("Phase 6 failed (background jobs): %s", e)
+            # Register in container for background-jobs plugin
+            if components.container:
+                components.container.register("bg_job_manager", mgr)
 
-    # ── Personal Scheduler (after messenger) ───────────────────────
+            components.bg_job_manager = mgr
+            logger.info("Phase 7 complete: background jobs initialized")
+        else:
+            logger.info("Phase 7 skipped: background jobs require PostgreSQL")
+    except Exception as e:
+        logger.warning("Phase 7 failed (background jobs): %s", e)
+
+    # ── Phase 8: Personal Scheduler ──────────────────────────────────
     if components.adapter_registry is not None and message_router is not None:
         try:
             from breadmind.personal.proactive import PersonalScheduler
@@ -817,33 +749,280 @@ async def bootstrap_all(
         except Exception as e:
             logger.warning("PersonalScheduler not started: %s", e)
 
-    # ── Phase 7: Plugin System ────────────────────────────────────────
-    try:
-        from breadmind.plugins.manager import PluginManager
-        from pathlib import Path as _Path
-        import os as _os
-
-        # User plugins directory
-        if _os.name == 'nt':
-            plugins_base = _Path(_os.environ.get("APPDATA", _Path.home())) / "breadmind" / "plugins" / "installed"
-        else:
-            plugins_base = _Path.home() / ".breadmind" / "plugins" / "installed"
-
-        plugin_mgr = PluginManager(plugins_dir=plugins_base, tool_registry=components.registry)
-
-        # Load builtin plugins first
-        builtin_dir = _Path(__file__).resolve().parent.parent / "plugins" / "builtin"
-        if builtin_dir.exists():
-            for p in builtin_dir.iterdir():
-                if p.is_dir() and (p / ".claude-plugin" / "plugin.json").exists():
-                    await plugin_mgr.load_from_directory(p)
-
-        # Load user-installed plugins
-        await plugin_mgr.load_all()
-
-        components.plugin_mgr = plugin_mgr
-        logger.info(f"Phase 7 complete: plugins loaded ({len(plugin_mgr.loaded_plugins)})")
-    except Exception as e:
-        logger.warning(f"Phase 7 failed (plugin system): {e}")
-
     return components
+
+
+# ── Legacy compatibility wrappers ────────────────────────────────────────
+# main.py still calls init_tools / init_memory individually.
+# These wrappers delegate to the new init_core_services + init_plugins flow
+# while preserving the old return signatures.
+
+
+async def init_tools(config, safety_cfg):
+    """Legacy wrapper — returns (registry, guard, mcp_manager, search_engine, meta_tools).
+
+    .. deprecated:: Use init_core_services() + init_plugins() instead.
+    """
+    from breadmind.tools.registry import ToolRegistry
+    from breadmind.core.safety import SafetyGuard
+    from breadmind.tools.mcp_client import MCPClientManager
+    from breadmind.tools.registry_search import RegistrySearchEngine, RegistryConfig
+
+    registry = ToolRegistry()
+    guard = SafetyGuard(
+        blacklist=safety_cfg.get("blacklist", {}),
+        require_approval=safety_cfg.get("require_approval", []),
+    )
+
+    # Register builtin tools (legacy path)
+    from breadmind.tools.builtin import register_builtin_tools
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        register_builtin_tools(registry)
+
+    # Browser tools (optional)
+    try:
+        from breadmind.tools.browser import register_browser_tools
+        register_browser_tools(registry)
+    except Exception:
+        pass
+
+    # Code delegate tool (optional)
+    try:
+        _register_code_delegate(registry, db=None)
+    except Exception as e:
+        logger.warning("Failed to register code_delegate tool: %s", e)
+
+    # MCP
+    mcp_manager = MCPClientManager(
+        max_restart_attempts=config.mcp.max_restart_attempts,
+        call_timeout=config.llm.tool_call_timeout_seconds,
+    )
+
+    async def mcp_execute(server_name, tool_name, arguments):
+        return await mcp_manager.call_tool(server_name, tool_name, arguments)
+    registry._mcp_callback = mcp_execute
+
+    for name, srv_cfg in config.mcp.servers.items():
+        try:
+            transport = srv_cfg.get("transport", "stdio")
+            if transport == "sse":
+                defs = await mcp_manager.connect_sse_server(
+                    name, srv_cfg["url"], headers=srv_cfg.get("headers"),
+                )
+            else:
+                defs = await mcp_manager.start_stdio_server(
+                    name, srv_cfg["command"], srv_cfg.get("args", []),
+                    env=srv_cfg.get("env"),
+                )
+            for d in defs:
+                registry.register_mcp_tool(d, server_name=name, execute_callback=mcp_execute)
+            print(f"  Connected MCP server: {name} ({len(defs)} tools)")
+        except Exception as e:
+            print(f"  Failed to connect MCP server '{name}': {e}")
+
+    search_engine = RegistrySearchEngine([
+        RegistryConfig(name=r.name, type=r.type, enabled=r.enabled, url=r.url)
+        for r in config.mcp.registries
+    ])
+
+    from breadmind.tools.meta import create_meta_tools
+    meta_tools = create_meta_tools(mcp_manager, search_engine)
+    for func in meta_tools.values():
+        registry.register(func)
+
+    return registry, guard, mcp_manager, search_engine, meta_tools
+
+
+def _register_code_delegate(registry, db) -> None:
+    """Register the code_delegate tool into the registry (legacy)."""
+    from breadmind.coding.tool import create_code_delegate_tool
+    from breadmind.llm.base import ToolDefinition
+
+    tool_def_dict, handler = create_code_delegate_tool(db=db)
+    handler._tool_definition = ToolDefinition(
+        name=tool_def_dict["name"],
+        description=tool_def_dict["description"],
+        parameters=tool_def_dict["parameters"],
+    )
+    registry.register(handler)
+
+
+async def init_memory(db, provider, config, registry, mcp_manager, search_engine, vault=None):
+    """Legacy wrapper — returns dict of memory components.
+
+    .. deprecated:: Use init_core_services() instead.
+    """
+    from breadmind.memory.working import WorkingMemory
+    from breadmind.memory.episodic import EpisodicMemory
+    from breadmind.memory.semantic import SemanticMemory
+    from breadmind.memory.embedding import EmbeddingService
+    from breadmind.core.smart_retriever import SmartRetriever
+    from breadmind.core.performance import PerformanceTracker
+    from breadmind.core.skill_store import SkillStore
+    from breadmind.core.tool_gap import ToolGapDetector
+    from breadmind.tools.meta import create_expansion_tools, create_memory_tools
+
+    performance_tracker = PerformanceTracker(db=db)
+    await performance_tracker.load_from_db()
+
+    skill_store = SkillStore(db=db, tracker=performance_tracker)
+    await skill_store.load_from_db()
+
+    from breadmind.skills.os_skills import register_os_skills
+    detected_pkg_managers = _detect_package_managers()
+    await register_os_skills(skill_store, package_managers=detected_pkg_managers)
+
+    tool_gap_detector = ToolGapDetector(
+        tool_registry=registry,
+        mcp_manager=mcp_manager,
+        search_engine=search_engine,
+    )
+
+    episodic_memory = EpisodicMemory(db=db)
+    semantic_memory = SemanticMemory(db=db)
+
+    emb_cfg = config.embedding if hasattr(config, 'embedding') else None
+    if emb_cfg:
+        import os as _os
+        emb_api_key = ""
+        if emb_cfg.provider in ("gemini", "auto"):
+            emb_api_key = _os.environ.get("GEMINI_API_KEY", "")
+        if not emb_api_key and emb_cfg.provider in ("openai", "auto"):
+            emb_api_key = _os.environ.get("OPENAI_API_KEY", "")
+        if not emb_api_key:
+            emb_api_key = _os.environ.get("GEMINI_API_KEY", "") or _os.environ.get("OPENAI_API_KEY", "")
+        embedding_service = EmbeddingService(
+            provider=emb_cfg.provider,
+            api_key=emb_api_key,
+            model_name=emb_cfg.model_name,
+            ollama_base_url=emb_cfg.ollama_base_url,
+        )
+        embedding_service._max_cache = emb_cfg.cache_size
+    else:
+        embedding_service = EmbeddingService()
+
+    if embedding_service.is_available() and hasattr(db, 'setup_pgvector'):
+        await db.setup_pgvector(embedding_service.dimensions)
+
+    smart_retriever = SmartRetriever(
+        embedding_service=embedding_service,
+        episodic_memory=episodic_memory,
+        semantic_memory=semantic_memory,
+        skill_store=skill_store,
+        db=db,
+    )
+    skill_store.set_retriever(smart_retriever)
+
+    expansion_tools = create_expansion_tools(
+        skill_store=skill_store,
+        tracker=performance_tracker,
+    )
+    for func in expansion_tools.values():
+        registry.register(func)
+
+    mcp_store = None
+    try:
+        from breadmind.mcp.store import MCPStore
+        from breadmind.mcp.install_assistant import InstallAssistant
+        install_assistant = InstallAssistant(provider=provider)
+        mcp_store = MCPStore(
+            mcp_manager=mcp_manager,
+            registry_search=search_engine,
+            install_assistant=install_assistant,
+            db=db,
+            tool_registry=registry,
+        )
+        await mcp_store.auto_restore_servers()
+    except Exception:
+        pass
+
+    working_memory = WorkingMemory(db=db, provider=provider)
+
+    profiler = None
+    try:
+        from breadmind.memory.profiler import UserProfiler
+        profiler = UserProfiler(db=db)
+        await profiler.load_from_db()
+    except (ImportError, Exception):
+        pass
+
+    context_builder = None
+    try:
+        from breadmind.memory.context_builder import ContextBuilder
+        context_builder = ContextBuilder(
+            working_memory=working_memory,
+            episodic_memory=episodic_memory,
+            semantic_memory=semantic_memory,
+            profiler=profiler,
+            max_context_tokens=4000,
+            skill_store=skill_store,
+            smart_retriever=smart_retriever,
+        )
+    except (ImportError, Exception):
+        pass
+
+    adapter_registry = None
+    oauth_manager = None
+    try:
+        from breadmind.personal.adapters.base import AdapterRegistry
+        from breadmind.personal.adapters.builtin_task import BuiltinTaskAdapter
+        from breadmind.personal.adapters.builtin_event import BuiltinEventAdapter
+        from breadmind.personal.context_provider import PersonalContextProvider
+
+        adapter_registry = AdapterRegistry()
+        if db:
+            adapter_registry.register(BuiltinTaskAdapter(db))
+            adapter_registry.register(BuiltinEventAdapter(db))
+
+        if context_builder:
+            context_builder.register_provider(PersonalContextProvider(adapter_registry))
+
+        from breadmind.personal.tools import register_personal_tools
+        if registry:
+            register_personal_tools(registry, adapter_registry, user_id="default")
+
+        from breadmind.personal.oauth import OAuthManager
+        oauth_manager = OAuthManager(db, vault=vault)
+
+        from breadmind.personal.adapters.google_calendar import GoogleCalendarAdapter
+        from breadmind.personal.adapters.google_drive import GoogleDriveAdapter
+        from breadmind.personal.adapters.google_contacts import GoogleContactsAdapter
+        adapter_registry.register(GoogleCalendarAdapter(oauth_manager))
+        adapter_registry.register(GoogleDriveAdapter(oauth_manager))
+        adapter_registry.register(GoogleContactsAdapter(oauth_manager))
+
+        from breadmind.personal.adapters.notion import NotionAdapter
+        from breadmind.personal.adapters.jira import JiraAdapter
+        from breadmind.personal.adapters.github_issues import GitHubIssuesAdapter
+        adapter_registry.register(NotionAdapter())
+        adapter_registry.register(JiraAdapter())
+        adapter_registry.register(GitHubIssuesAdapter())
+    except Exception:
+        pass
+
+    # Register memory tools (legacy path — agent init also does this)
+    mem_tools = create_memory_tools(
+        episodic_memory=episodic_memory,
+        profiler=profiler,
+        smart_retriever=smart_retriever,
+    )
+    for func in mem_tools.values():
+        registry.register(func)
+
+    return {
+        "working_memory": working_memory,
+        "episodic_memory": episodic_memory,
+        "semantic_memory": semantic_memory,
+        "embedding_service": embedding_service,
+        "smart_retriever": smart_retriever,
+        "performance_tracker": performance_tracker,
+        "skill_store": skill_store,
+        "tool_gap_detector": tool_gap_detector,
+        "context_builder": context_builder,
+        "profiler": profiler,
+        "mcp_store": mcp_store,
+        "adapter_registry": adapter_registry,
+        "oauth_manager": oauth_manager,
+    }

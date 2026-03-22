@@ -1,0 +1,9 @@
+{
+  "name": "breadmind-channel",
+  "version": "0.1.0",
+  "description": "BreadMind Channel MCP server for Claude Code supervision",
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0"
+  }
+}

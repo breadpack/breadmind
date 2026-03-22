@@ -1,0 +1,16 @@
+{
+  "name": "core-tools",
+  "version": "0.1.0",
+  "description": "Core system tools: shell execution, web search, file I/O",
+  "x-breadmind": {
+    "priority": 0,
+    "depends_on": [],
+    "requires": [],
+    "optional_requires": [],
+    "python_module": "plugin",
+    "safety": {
+      "require_approval": [],
+      "blacklist": []
+    }
+  }
+}

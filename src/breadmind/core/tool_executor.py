@@ -213,27 +213,30 @@ class ToolExecutor:
         """Execute a single tool call with timeout and error handling."""
         t_start = time.monotonic()
         try:
-            # Special handling for delegate_tasks: inject provider and registry
-            # directly to bypass schema-based type coercion
+            # Determine timeout
+            timeout = self._tool_timeout
+            no_timeout = False
+
             if tc.name == "delegate_tasks":
-                from breadmind.tools.builtin import delegate_tasks as _delegate_fn
-                _delegate_timeout = self._tool_timeout * 3  # Allow more time for parallel subtasks
-                raw_result = await asyncio.wait_for(
-                    _delegate_fn(
-                        tasks=tc.arguments.get("tasks", "[]"),
-                        _agent=None,
-                        _provider=ctx._injected_provider,
-                        _registry=self._tools,
-                    ),
-                    timeout=_delegate_timeout,
-                )
-                from breadmind.tools.registry import ToolResult as _TR, _truncate_output
-                output_str = _truncate_output(str(raw_result))
-                result = _TR(success=True, output=output_str)
+                timeout = self._tool_timeout * 3
+            elif tc.name == "code_delegate":
+                is_long = tc.arguments.get("long_running", False)
+                if isinstance(is_long, str):
+                    is_long = is_long.lower() in ("true", "1", "yes")
+                if is_long:
+                    no_timeout = True
+                else:
+                    timeout = max(self._tool_timeout, 600)
+
+            # Execute: no timeout for long-running, otherwise use asyncio.wait_for
+            if no_timeout:
+                logger.info("Executing %s with NO timeout (long_running)", tc.name)
+                result = await self._tools.execute(tc.name, tc.arguments)
             else:
+                logger.info("Executing %s with timeout=%ds", tc.name, timeout)
                 result = await asyncio.wait_for(
                     self._tools.execute(tc.name, tc.arguments),
-                    timeout=self._tool_timeout,
+                    timeout=timeout,
                 )
             # Check for tool gap
             if result.not_found and ctx.tool_gap_detector:
@@ -250,7 +253,7 @@ class ToolExecutor:
             return tc, f"{prefix} {result.output}", elapsed
         except asyncio.TimeoutError:
             elapsed = (time.monotonic() - t_start) * 1000
-            return tc, f"[success=False] Tool execution timed out after {self._tool_timeout}s.", elapsed
+            return tc, f"[success=False] Tool execution timed out after {timeout}s.", elapsed
         except Exception as e:
             elapsed = (time.monotonic() - t_start) * 1000
             logger.exception(f"Tool execution error: {tc.name}")

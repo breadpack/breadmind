@@ -1,0 +1,16 @@
+{
+  "name": "skills",
+  "version": "0.1.0",
+  "description": "AI skill management tools: manage, install, uninstall skills",
+  "x-breadmind": {
+    "priority": 30,
+    "depends_on": [],
+    "requires": ["skill_store"],
+    "optional_requires": ["performance_tracker"],
+    "python_module": "plugin",
+    "safety": {
+      "require_approval": [],
+      "blacklist": []
+    }
+  }
+}

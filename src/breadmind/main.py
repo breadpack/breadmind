@@ -478,6 +478,14 @@ async def run():
             except Exception as e:
                 logger.warning("Messenger init failed: %s", e)
 
+            # Start coding job notifier for messenger alerts
+            try:
+                from breadmind.coding.job_notifier import JobNotifier
+                _job_notifier = JobNotifier(message_router=message_router)
+                _job_notifier.start()
+            except Exception as e:
+                logger.debug("JobNotifier not started: %s", e)
+
             # Wire orchestrator into builtin tool
             if messenger_components:
                 from breadmind.tools.builtin import set_orchestrator
@@ -564,6 +572,7 @@ async def run():
             plugin_mgr = None
             try:
                 from breadmind.plugins.manager import PluginManager
+                from breadmind.plugins.container import ServiceContainer
                 from pathlib import Path as _PluginPath
                 import os as _os
 
@@ -572,18 +581,51 @@ async def run():
                 else:
                     _plugins_base = _PluginPath.home() / ".breadmind" / "plugins" / "installed"
 
-                plugin_mgr = PluginManager(plugins_dir=_plugins_base, tool_registry=registry)
+                # Build ServiceContainer with all available services
+                _container = ServiceContainer()
+                _container.register("config", config)
+                _container.register("db", db)
+                _container.register("llm_provider", provider)
+                _container.register("tool_registry", registry)
+                _container.register("safety_guard", guard)
+                _container.register("mcp_manager", mcp_manager)
+                _container.register("search_engine", search_engine)
+                _container.register("working_memory", working_memory)
+                _container.register("episodic_memory", memory_components.get("episodic_memory"))
+                _container.register("semantic_memory", memory_components.get("semantic_memory"))
+                _container.register("smart_retriever", smart_retriever)
+                _container.register("skill_store", skill_store)
+                _container.register("performance_tracker", performance_tracker)
+                _container.register("swarm_manager", swarm_manager)
+                _container.register("swarm_db", db)
+                if profiler:
+                    _container.register("profiler", profiler)
+                if context_builder:
+                    _container.register("context_builder", context_builder)
+                if memory_components.get("adapter_registry"):
+                    _container.register("adapter_registry", memory_components["adapter_registry"])
+                if memory_components.get("oauth_manager"):
+                    _container.register("oauth_manager", memory_components["oauth_manager"])
+                if credential_vault:
+                    _container.register("credential_vault", credential_vault)
+                if messenger_components:
+                    _container.register("orchestrator", messenger_components["orchestrator"])
+                if bg_job_manager:
+                    _container.register("bg_job_manager", bg_job_manager)
 
-                # Load builtin plugins first
+                plugin_mgr = PluginManager(
+                    plugins_dir=_plugins_base,
+                    tool_registry=registry,
+                    container=_container,
+                )
+
+                # Load builtin plugins (sorted by priority)
                 _builtin_dir = _PluginPath(__file__).resolve().parent / "plugins" / "builtin"
-                if _builtin_dir.exists():
-                    for _p in _builtin_dir.iterdir():
-                        if _p.is_dir() and (_p / ".claude-plugin" / "plugin.json").exists():
-                            await plugin_mgr.load_from_directory(_p)
+                builtin_count = await plugin_mgr.load_builtin(_builtin_dir)
 
                 # Load user-installed plugins
                 await plugin_mgr.load_all()
-                logger.info(f"Plugins loaded: {len(plugin_mgr.loaded_plugins)}")
+                logger.info(f"Plugins loaded: {len(plugin_mgr.loaded_plugins)} ({builtin_count} builtin)")
             except Exception as e:
                 logger.warning(f"Plugin system initialization failed: {e}")
 

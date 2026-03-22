@@ -18,13 +18,20 @@ class WorkingMemory:
     def __init__(
         self,
         max_messages_per_session: int = 50,
+        compress_threshold: int = 30,
+        keep_recent: int = 10,
         session_timeout_minutes: int = 30,
         db=None,
+        provider=None,
     ):
         self._sessions: dict[str, ConversationSession] = {}
         self._max_messages = max_messages_per_session
+        self._compress_threshold = compress_threshold
+        self._keep_recent = keep_recent
         self._session_timeout_minutes = session_timeout_minutes
         self._db = db
+        self._provider = provider  # LLM provider for compression
+        self._compressing: set[str] = set()  # sessions currently being compressed
 
     def get_or_create_session(self, session_id: str, user: str = "", channel: str = "") -> ConversationSession:
         session = self._sessions.get(session_id)
@@ -50,8 +57,26 @@ class WorkingMemory:
         if session:
             session.messages.append(message)
             session.last_active = datetime.now(timezone.utc)
-            if len(session.messages) > self._max_messages:
-                session.messages = session.messages[-self._max_messages:]
+
+            # Trigger compression instead of simple truncation
+            if (
+                len(session.messages) >= self._compress_threshold
+                and self._provider is not None
+                and session_id not in self._compressing
+            ):
+                self._compressing.add(session_id)
+                try:
+                    import asyncio
+                    asyncio.create_task(self._compress_session(session_id))
+                except RuntimeError:
+                    self._compressing.discard(session_id)
+            elif len(session.messages) > self._max_messages:
+                # Fallback: truncate tool results then trim
+                from breadmind.memory.compressor import truncate_tool_results
+                session.messages = truncate_tool_results(session.messages)
+                if len(session.messages) > self._max_messages:
+                    session.messages = session.messages[-self._max_messages:]
+
             if self._db and hasattr(self._db, 'save_conversation'):
                 try:
                     import asyncio
@@ -141,6 +166,35 @@ class WorkingMemory:
             for m in session.messages
             if m.role in ("user", "assistant") and (m.content and m.content.strip())
         ]
+
+    def set_provider(self, provider):
+        """Set the LLM provider for compression (can be set after init)."""
+        self._provider = provider
+
+    async def _compress_session(self, session_id: str):
+        """Compress old messages in a session using LLM summarization."""
+        try:
+            session = self._sessions.get(session_id)
+            if not session or len(session.messages) < self._compress_threshold:
+                return
+
+            from breadmind.memory.compressor import compress_history
+            compressed = await compress_history(
+                session.messages,
+                self._provider,
+                keep_recent=self._keep_recent,
+            )
+            session.messages = compressed
+            import logging
+            logging.getLogger(__name__).info(
+                "Session %s compressed: %d → %d messages",
+                session_id, len(session.messages), len(compressed),
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("Compression failed for %s: %s", session_id, e)
+        finally:
+            self._compressing.discard(session_id)
 
     async def _persist_session(self, session):
         """Save session to DB."""

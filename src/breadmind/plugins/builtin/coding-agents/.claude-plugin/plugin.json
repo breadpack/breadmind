@@ -4,10 +4,11 @@
   "description": "Built-in coding agent adapters (Claude Code, Codex, Gemini CLI)",
   "author": "breadmind",
   "x-breadmind": {
+    "enabled_by_default": false,
     "coding_agents": [
-      {"name": "claude", "cli_command": "claude", "prompt_flag": "-p", "cwd_flag": "--cwd", "output_format": "json", "config_filename": "CLAUDE.md", "session_flag": "--resume"},
-      {"name": "codex", "cli_command": "codex", "prompt_flag": "--prompt", "cwd_flag": "--cwd", "output_format": "text", "config_filename": "AGENTS.md", "session_flag": "--session"},
-      {"name": "gemini", "cli_command": "gemini", "prompt_flag": "-p", "cwd_flag": "--cwd", "output_format": "json", "config_filename": "GEMINI.md", "session_flag": "--session"}
+      {"name": "claude", "cli_command": "claude", "prompt_flag": "-p", "cwd_flag": "", "output_format": "json", "config_filename": "CLAUDE.md", "session_flag": "--resume", "extra_flags": ["--permission-mode", "bypassPermissions"]},
+      {"name": "codex", "cli_command": "codex", "prompt_flag": "--prompt", "cwd_flag": "", "output_format": "text", "config_filename": "AGENTS.md", "session_flag": "--session"},
+      {"name": "gemini", "cli_command": "gemini", "prompt_flag": "-p", "cwd_flag": "", "output_format": "json", "config_filename": "GEMINI.md", "session_flag": "--session"}
     ]
   }
 }

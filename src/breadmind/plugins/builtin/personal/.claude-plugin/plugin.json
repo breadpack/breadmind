@@ -1,0 +1,16 @@
+{
+  "name": "personal",
+  "version": "0.1.0",
+  "description": "Personal assistant tools: tasks, calendar, reminders, contacts, files",
+  "x-breadmind": {
+    "priority": 40,
+    "depends_on": [],
+    "requires": ["adapter_registry"],
+    "optional_requires": [],
+    "python_module": "plugin",
+    "safety": {
+      "require_approval": [],
+      "blacklist": []
+    }
+  }
+}

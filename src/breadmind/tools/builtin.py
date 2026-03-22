@@ -785,7 +785,19 @@ async def run_background(title: str, job_type: str = "single", steps: str = "", 
 
 
 def register_builtin_tools(registry) -> None:
-    """Register all built-in tools into the given ToolRegistry."""
+    """Register all built-in tools into the given ToolRegistry.
+
+    .. deprecated::
+        Use the plugin system instead. Tools are now registered via
+        builtin plugins in ``src/breadmind/plugins/builtin/``.
+    """
+    import warnings
+    warnings.warn(
+        "register_builtin_tools() is deprecated. "
+        "Tools are now loaded via the plugin system.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     for t in [shell_exec, web_search, file_read, file_write, messenger_connect,
               swarm_role, delegate_tasks, network_scan, router_manage, run_background]:
         registry.register(t)

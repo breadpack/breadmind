@@ -82,6 +82,40 @@
         .severity-badge.info { background: #1e3a5f; color: #93c5fd; }
         .no-events { text-align: center; color: #64748b; padding: 40px; font-size: 14px; }
 
+        /* Coding Jobs section */
+        .coding-jobs { margin-bottom: 24px; }
+        .coding-jobs h3 { font-size: 15px; color: #e2e8f0; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+        .coding-jobs h3 .badge { font-size: 11px; padding: 2px 8px; border-radius: 8px; }
+        .coding-jobs h3 .badge.active { background: #22c55e; color: #fff; }
+        .coding-jobs h3 .badge.none { background: #334155; color: #64748b; }
+        .job-card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 14px 16px; margin-bottom: 10px; }
+        .job-card .job-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .job-card .job-title { font-size: 13px; font-weight: 600; color: #e2e8f0; }
+        .job-card .job-status { font-size: 11px; padding: 2px 10px; border-radius: 10px; font-weight: 600; }
+        .job-status.running { background: #1e3a5f; color: #93c5fd; }
+        .job-status.completed { background: #14532d; color: #86efac; }
+        .job-status.failed { background: #7f1d1d; color: #fca5a5; }
+        .job-status.decomposing { background: #713f12; color: #fde68a; }
+        .job-status.pending { background: #334155; color: #94a3b8; }
+        .job-card .job-meta { font-size: 11px; color: #64748b; margin-bottom: 10px; }
+        .job-progress { margin-bottom: 8px; }
+        .job-progress-bar { height: 6px; background: #334155; border-radius: 3px; overflow: hidden; }
+        .job-progress-bar .fill { height: 100%; border-radius: 3px; transition: width 0.5s ease; }
+        .job-progress-bar .fill.running { background: linear-gradient(90deg, #3b82f6, #60a5fa); }
+        .job-progress-bar .fill.completed { background: #22c55e; }
+        .job-progress-bar .fill.failed { background: #ef4444; }
+        .job-progress-text { font-size: 11px; color: #94a3b8; margin-top: 4px; }
+        .job-phases { margin-top: 8px; }
+        .phase-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12px; }
+        .phase-icon { width: 16px; text-align: center; }
+        .phase-item.completed .phase-icon { color: #22c55e; }
+        .phase-item.failed .phase-icon { color: #ef4444; }
+        .phase-item.running .phase-icon { color: #3b82f6; }
+        .phase-item.pending .phase-icon { color: #64748b; }
+        .phase-title { color: #cbd5e1; }
+        .phase-duration { color: #64748b; font-size: 11px; margin-left: auto; }
+        .no-jobs { text-align: center; color: #64748b; padding: 20px; font-size: 13px; }
+
         /* Settings tab */
         .settings { flex: 1; overflow-y: auto; padding: 20px; }
         .sub-tab { background: transparent; border: 1px solid #334155; color: #94a3b8; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; white-space: nowrap; }
@@ -516,6 +550,14 @@
         <!-- Monitoring Tab -->
         <div class="tab-content" id="tab-monitoring">
             <div class="monitoring">
+                <!-- Coding Jobs Section -->
+                <div class="coding-jobs" id="coding-jobs-section">
+                    <h3>🔨 Coding Jobs <span class="badge none" id="activeJobsBadge">0 active</span></h3>
+                    <div id="coding-jobs-list">
+                        <div class="no-jobs">진행 중인 코딩 작업이 없습니다.</div>
+                    </div>
+                </div>
+
                 <div class="monitoring-header">
                     <h2>Monitoring Events</h2>
                     <div class="monitoring-stats">
@@ -704,6 +746,7 @@
                     }
                     addMonitoringEvent(data.event);
                 }
+                else if (data.type && data.type.startsWith('coding_job_')) { handleCodingJobEvent(data); }
                 else if (data.type === 'update_available') { showUpdateBanner(data.event.current, data.event.latest, ''); }
                 else if (data.type === 'messenger_connected') {
                     addMessage((data.event && data.event.platform || 'Messenger') + ' connected!', 'bot');
@@ -1050,6 +1093,80 @@
         function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
         input.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
         if (typeof initQuickActions === 'function') initQuickActions(input);
+
+        // ── Coding Jobs ──────────────────────────────────────────
+        let _codingJobs = {};
+
+        function fetchCodingJobs() {
+            fetch('/api/coding-jobs').then(r => r.json()).then(jobs => {
+                _codingJobs = {};
+                jobs.forEach(j => _codingJobs[j.job_id] = j);
+                renderCodingJobs();
+            }).catch(() => {});
+        }
+
+        function handleCodingJobEvent(data) {
+            if (data && data.data) {
+                _codingJobs[data.data.job_id] = data.data;
+                renderCodingJobs();
+            }
+        }
+
+        function renderCodingJobs() {
+            const container = document.getElementById('coding-jobs-list');
+            const badge = document.getElementById('activeJobsBadge');
+            const jobs = Object.values(_codingJobs).sort((a, b) => b.started_at - a.started_at);
+            const active = jobs.filter(j => ['pending','decomposing','running'].includes(j.status));
+
+            badge.textContent = active.length > 0 ? `${active.length} active` : '0 active';
+            badge.className = active.length > 0 ? 'badge active' : 'badge none';
+
+            // Update monitoring tab badge
+            const countEl = document.getElementById('eventCount');
+            if (active.length > 0) {
+                countEl.textContent = (allEvents.length || 0) + ` | ${active.length} jobs`;
+            }
+
+            if (jobs.length === 0) {
+                container.innerHTML = '<div class="no-jobs">진행 중인 코딩 작업이 없습니다.</div>';
+                return;
+            }
+
+            container.innerHTML = jobs.slice(0, 10).map(j => {
+                const statusClass = j.status;
+                const statusLabel = {pending:'대기',decomposing:'분해 중',running:'실행 중',completed:'완료',failed:'실패',cancelled:'취소'}[j.status] || j.status;
+                const pct = j.progress_pct || 0;
+                const fillClass = j.status === 'completed' ? 'completed' : j.status === 'failed' ? 'failed' : 'running';
+                const duration = j.duration_seconds > 0 ? `${Math.round(j.duration_seconds)}초` : j.status === 'running' ? `${Math.round((Date.now()/1000) - j.started_at)}초 경과` : '';
+                const project = j.project.split(/[/\\]/).pop();
+
+                let phasesHtml = '';
+                if (j.phases && j.phases.length > 0) {
+                    phasesHtml = '<div class="job-phases">' + j.phases.map(p => {
+                        const icon = p.status === 'completed' ? '✓' : p.status === 'failed' ? '✗' : p.status === 'running' ? '⟳' : '○';
+                        const dur = p.duration_seconds > 0 ? `${Math.round(p.duration_seconds)}s` : '';
+                        return `<div class="phase-item ${p.status}"><span class="phase-icon">${icon}</span><span class="phase-title">${p.title}</span><span class="phase-duration">${dur}</span></div>`;
+                    }).join('') + '</div>';
+                }
+
+                return `<div class="job-card">
+                    <div class="job-header">
+                        <span class="job-title">📁 ${project}</span>
+                        <span class="job-status ${statusClass}">${statusLabel}</span>
+                    </div>
+                    <div class="job-meta">${j.agent} · ${j.completed_phases}/${j.total_phases} phases · ${duration}</div>
+                    <div class="job-progress">
+                        <div class="job-progress-bar"><div class="fill ${fillClass}" style="width:${pct}%"></div></div>
+                        <div class="job-progress-text">${pct}% (${j.completed_phases}/${j.total_phases})</div>
+                    </div>
+                    ${phasesHtml}
+                </div>`;
+            }).join('');
+        }
+
+        // Poll coding jobs every 5 seconds
+        setInterval(fetchCodingJobs, 5000);
+        fetchCodingJobs();
 
         // Monitoring
         function addMonitoringEvent(event) {

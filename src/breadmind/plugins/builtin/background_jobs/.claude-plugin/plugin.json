@@ -1,0 +1,14 @@
+{
+  "name": "background-jobs",
+  "version": "0.1.0",
+  "description": "Long-running background job management",
+  "x-breadmind": {
+    "priority": 50,
+    "enabled_by_default": false,
+    "depends_on": [],
+    "requires": [],
+    "optional_requires": ["bg_job_manager"],
+    "python_module": "plugin",
+    "safety": { "require_approval": [], "blacklist": [] }
+  }
+}

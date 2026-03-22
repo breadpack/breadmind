@@ -1,0 +1,17 @@
+{
+  "name": "network",
+  "version": "0.1.0",
+  "description": "Network management tools: scanning and router management",
+  "x-breadmind": {
+    "priority": 20,
+    "enabled_by_default": false,
+    "depends_on": ["core-tools"],
+    "requires": [],
+    "optional_requires": ["credential_vault"],
+    "python_module": "plugin",
+    "safety": {
+      "require_approval": ["router_manage"],
+      "blacklist": []
+    }
+  }
+}

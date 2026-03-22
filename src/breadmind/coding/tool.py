@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
+import shutil
 import time
+import uuid
 from pathlib import Path
 
 from breadmind.tools.registry import ToolResult
@@ -14,7 +18,21 @@ from breadmind.coding.project_config import ProjectConfigManager
 logger = logging.getLogger("breadmind.coding")
 
 
-def create_code_delegate_tool(db=None, session_store=None):
+def _channel_available() -> bool:
+    """Check if a JS runtime (Bun, tsx, or Node) is available for channel supervision."""
+    return any(shutil.which(rt) for rt in ("bun", "tsx", "node"))
+
+
+def _detect_available_agents() -> list[str]:
+    """Detect which coding agent CLIs are installed."""
+    agents = []
+    for name, cmd in [("claude", "claude"), ("codex", "codex"), ("gemini", "gemini")]:
+        if shutil.which(cmd):
+            agents.append(name)
+    return agents or ["claude"]  # fallback
+
+
+def create_code_delegate_tool(db=None, session_store=None, provider=None):
     if session_store is None:
         session_store = CodingSessionStore(db=db)
     config_mgr = ProjectConfigManager()
@@ -27,7 +45,16 @@ def create_code_delegate_tool(db=None, session_store=None):
         session_id: str = "",
         remote: dict | None = None,
         timeout: int = 300,
+        supervise: bool = True,
+        long_running: bool = False,
     ) -> ToolResult:
+        # ── Long-running mode: decompose → phased execution ──────
+        if long_running and provider and remote is None:
+            return await _execute_long_running(
+                agent=agent, project=project, prompt=prompt,
+                model=model, timeout=timeout, provider=provider, db=db,
+            )
+
         try:
             adapter = get_adapter(agent)
         except ValueError as exc:
@@ -51,7 +78,6 @@ def create_code_delegate_tool(db=None, session_store=None):
             options["model"] = model
         if session_id:
             options["session_id"] = session_id
-        # Do NOT auto-resume — only resume when session_id explicitly provided
 
         command = adapter.build_command(project, prompt, options or None)
 
@@ -65,12 +91,95 @@ def create_code_delegate_tool(db=None, session_store=None):
         else:
             executor = LocalExecutor()
 
-        # Execute
+        # ── Channel supervision (local Claude agent only) ────────────
+        use_channel = (
+            supervise
+            and agent == "claude"
+            and remote is None
+            and _channel_available()
+        )
+
+        supervisor = None
+        if use_channel:
+            try:
+                from breadmind.coding.channel_supervisor import ChannelSupervisor
+
+                sup_session_id = session_id or str(uuid.uuid4())[:8]
+                supervisor = ChannelSupervisor(
+                    provider=provider,
+                    max_auto_retries=3,
+                )
+                sup_port, ch_port = await supervisor.start(
+                    session_id=sup_session_id,
+                    project=project,
+                    prompt=prompt,
+                )
+
+                # Write temporary .mcp.json for channel server registration
+                mcp_config = supervisor.get_mcp_config_entry()
+                mcp_json_path = Path(project) / ".mcp.json"
+                mcp_json_existed = mcp_json_path.exists()
+                mcp_json_backup = None
+
+                if mcp_json_existed:
+                    existing = json.loads(mcp_json_path.read_text(encoding="utf-8"))
+                    mcp_json_backup = json.dumps(existing, indent=2)
+                    servers = existing.get("mcpServers", {})
+                    servers["breadmind-channel"] = mcp_config
+                    existing["mcpServers"] = servers
+                    mcp_json_path.write_text(
+                        json.dumps(existing, indent=2), encoding="utf-8",
+                    )
+                else:
+                    mcp_json_path.write_text(
+                        json.dumps({"mcpServers": {"breadmind-channel": mcp_config}}, indent=2),
+                        encoding="utf-8",
+                    )
+
+                # Add channel flags to command
+                command += [
+                    "--channels", "server:breadmind-channel",
+                    "--dangerously-load-development-channels", "server:breadmind-channel",
+                ]
+
+                logger.info(
+                    "Channel supervision enabled: sup_port=%d ch_port=%d",
+                    sup_port, ch_port,
+                )
+            except Exception as e:
+                logger.warning("Channel supervision setup failed, continuing without: %s", e)
+                supervisor = None
+                use_channel = False
+
+        # ── Execute ──────────────────────────────────────────────────
         t0 = time.monotonic()
-        exec_result = await executor.run(command, cwd=project, timeout=timeout)
+
+        try:
+            exec_result = await executor.run(command, cwd=project, timeout=timeout)
+        finally:
+            # Cleanup .mcp.json
+            if use_channel:
+                try:
+                    mcp_json_path = Path(project) / ".mcp.json"
+                    if mcp_json_backup is not None:
+                        mcp_json_path.write_text(mcp_json_backup, encoding="utf-8")
+                    elif not mcp_json_existed:
+                        mcp_json_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
         elapsed = time.monotonic() - t0
 
-        # Parse result
+        # ── Stop supervisor and get report ───────────────────────────
+        report_output = ""
+        if supervisor:
+            try:
+                report = await supervisor.stop()
+                report_output = report.summary
+            except Exception as e:
+                logger.warning("Supervisor stop failed: %s", e)
+
+        # ── Parse result ─────────────────────────────────────────────
         coding_result = adapter.parse_result(
             exec_result.stdout, exec_result.stderr, exec_result.returncode
         )
@@ -83,7 +192,7 @@ def create_code_delegate_tool(db=None, session_store=None):
                 project, agent, coding_result.session_id, prompt[:100]
             )
 
-        # Format output
+        # ── Format output ────────────────────────────────────────────
         output_parts: list[str] = []
         if coding_result.success:
             output_parts.append(f"[{agent}] Task completed in {elapsed:.1f}s")
@@ -91,7 +200,13 @@ def create_code_delegate_tool(db=None, session_store=None):
             output_parts.append(
                 f"[{agent}] Task failed (exit code: {exec_result.returncode})"
             )
-        output_parts.append(coding_result.output)
+
+        # Prefer supervisor report if available
+        if report_output:
+            output_parts.append(report_output)
+        else:
+            output_parts.append(coding_result.output)
+
         if coding_result.files_changed:
             output_parts.append(f"Files changed: {', '.join(coding_result.files_changed)}")
         if coding_result.session_id:
@@ -109,15 +224,21 @@ def create_code_delegate_tool(db=None, session_store=None):
             "Supports Claude Code, Codex, and Gemini CLI. "
             "Use when the user asks to write code, implement features, fix bugs, "
             "refactor, write tests, or any software development task. "
-            "Keywords: 코드, 구현, 개발, 리팩토링, 버그, 테스트, code, implement, refactor, fix, develop."
+            "CRITICAL: The 'prompt' parameter must contain the FULL, DETAILED specification "
+            "including all context from the conversation — language (C#, Python, etc.), "
+            "frameworks, architecture decisions, specific APIs to use, file structure, "
+            "and implementation requirements. The coding agent has NO access to this conversation, "
+            "so every detail must be in the prompt. A vague prompt like 'create a project' "
+            "will produce poor results. Write the prompt as if briefing a new developer "
+            "who knows nothing about the prior discussion."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "agent": {
                     "type": "string",
-                    "enum": ["claude", "codex", "gemini"],
-                    "description": "Which coding agent to use",
+                    "enum": _detect_available_agents(),
+                    "description": "Which coding agent to use. Only installed agents are listed.",
                 },
                 "project": {
                     "type": "string",
@@ -125,7 +246,12 @@ def create_code_delegate_tool(db=None, session_store=None):
                 },
                 "prompt": {
                     "type": "string",
-                    "description": "The coding task description to delegate",
+                    "description": (
+                        "DETAILED coding task description to delegate. Must include ALL context: "
+                        "programming language, project type, architecture, specific APIs/libraries, "
+                        "file structure, and implementation requirements. The coding agent cannot "
+                        "see conversation history — include everything it needs to know."
+                    ),
                 },
                 "model": {
                     "type": "string",
@@ -148,9 +274,120 @@ def create_code_delegate_tool(db=None, session_store=None):
                     "type": "integer",
                     "description": "Timeout in seconds (default: 300)",
                 },
+                "long_running": {
+                    "type": "boolean",
+                    "description": (
+                        "Set to true for large projects that need multiple phases. "
+                        "The task will be automatically decomposed into phases and "
+                        "executed sequentially with session resumption. Use when "
+                        "the project involves creating multiple files, complex "
+                        "architecture, or estimated work time > 5 minutes."
+                    ),
+                },
             },
             "required": ["agent", "project", "prompt"],
         },
     }
 
     return tool_def, code_delegate
+
+
+async def _execute_long_running(
+    agent: str,
+    project: str,
+    prompt: str,
+    model: str,
+    timeout: int,
+    provider: Any,
+    db: Any,
+) -> ToolResult:
+    """Launch a long-running coding task in the background.
+
+    Returns immediately with a job_id. The actual work runs as an
+    asyncio background task, independent of the user's session.
+    Progress is tracked via JobTracker and visible in the Monitoring tab.
+    """
+    import asyncio
+    from breadmind.coding.job_tracker import JobTracker
+
+    job_id = str(uuid.uuid4())[:8]
+    tracker = JobTracker.get_instance()
+
+    # Ensure project directory exists
+    project_path = Path(project)
+    project_path.mkdir(parents=True, exist_ok=True)
+
+    # Launch background task
+    asyncio.create_task(
+        _run_long_running_background(
+            job_id=job_id,
+            agent=agent,
+            project=project,
+            prompt=prompt,
+            model=model,
+            provider=provider,
+            db=db,
+        )
+    )
+
+    return ToolResult(
+        success=True,
+        output=(
+            f"[{agent}] 장기 작업이 백그라운드에서 시작되었습니다.\n"
+            f"Job ID: {job_id}\n"
+            f"프로젝트: {project}\n"
+            f"진행 상황은 Monitoring 탭 또는 GET /api/coding-jobs/{job_id} 에서 확인하세요.\n"
+            f"작업은 세션을 닫아도 계속 실행됩니다."
+        ),
+    )
+
+
+async def _run_long_running_background(
+    job_id: str,
+    agent: str,
+    project: str,
+    prompt: str,
+    model: str,
+    provider: Any,
+    db: Any,
+) -> None:
+    """Background coroutine that runs the actual phased execution."""
+    from breadmind.coding.task_decomposer import TaskDecomposer
+    from breadmind.coding.job_executor import CodingJobExecutor
+
+    try:
+        # Phase 1: Decompose
+        decomposer = TaskDecomposer(provider)
+        plan = await decomposer.decompose(
+            project=project, prompt=prompt, agent=agent, model=model,
+        )
+
+        if not plan.phases:
+            from breadmind.coding.job_tracker import JobTracker
+            tracker = JobTracker.get_instance()
+            tracker.create_job(job_id, project, agent, prompt)
+            tracker.complete_job(job_id, False, error="Task decomposition produced no phases")
+            return
+
+        # Phase 2: Execute
+        executor = CodingJobExecutor(provider=provider, db=db)
+        plan_data = {
+            "project": project,
+            "agent": agent,
+            "model": model,
+            "original_prompt": prompt,
+            "phases": [
+                {"step": p.step, "title": p.title, "prompt": p.prompt, "timeout": p.timeout}
+                for p in plan.phases
+            ],
+        }
+
+        await executor.execute_plan(plan_data, job_id=job_id)
+
+    except Exception as e:
+        logger.error("Background long_running job %s failed: %s", job_id, e)
+        from breadmind.coding.job_tracker import JobTracker
+        tracker = JobTracker.get_instance()
+        if not tracker.get_job(job_id):
+            tracker.create_job(job_id, project, agent, prompt)
+        tracker.complete_job(job_id, False, error=str(e))

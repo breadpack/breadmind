@@ -24,6 +24,8 @@ def tool(description: str):
         properties = {}
         required = []
         for name, param in sig.parameters.items():
+            if name == "self":
+                continue
             prop = {"type": "string"}
             annotation = param.annotation
             if annotation is int:
@@ -171,6 +173,12 @@ class ToolRegistry:
             raise ValueError(f"{func.__name__} is not decorated with @tool")
         self._tools[defn.name] = func
         self._definitions[defn.name] = defn
+
+    def unregister(self, name: str) -> bool:
+        """Remove a builtin tool by name. Returns True if found."""
+        removed = self._tools.pop(name, None) is not None
+        self._definitions.pop(name, None)
+        return removed
 
     def register_mcp_tool(
         self,

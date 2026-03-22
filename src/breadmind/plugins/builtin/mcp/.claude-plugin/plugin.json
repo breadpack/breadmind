@@ -1,0 +1,16 @@
+{
+  "name": "mcp",
+  "version": "0.1.0",
+  "description": "MCP server management tools: search, install, start/stop",
+  "x-breadmind": {
+    "priority": 10,
+    "depends_on": [],
+    "requires": ["mcp_manager", "search_engine"],
+    "optional_requires": [],
+    "python_module": "plugin",
+    "safety": {
+      "require_approval": ["mcp_install", "mcp_uninstall"],
+      "blacklist": []
+    }
+  }
+}

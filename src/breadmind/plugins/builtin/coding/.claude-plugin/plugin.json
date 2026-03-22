@@ -1,0 +1,14 @@
+{
+  "name": "coding",
+  "version": "0.1.0",
+  "description": "Code delegation tool for external coding agents",
+  "x-breadmind": {
+    "priority": 20,
+    "enabled_by_default": false,
+    "depends_on": [],
+    "requires": [],
+    "optional_requires": ["db"],
+    "python_module": "plugin",
+    "safety": { "require_approval": ["code_delegate"], "blacklist": [] }
+  }
+}

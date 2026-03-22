@@ -1,0 +1,16 @@
+{
+  "name": "agent-tools",
+  "version": "0.1.0",
+  "description": "Agent orchestration tools: task delegation and swarm role management",
+  "x-breadmind": {
+    "priority": 10,
+    "depends_on": ["core-tools"],
+    "requires": [],
+    "optional_requires": ["llm_provider", "tool_registry", "swarm_manager"],
+    "python_module": "plugin",
+    "safety": {
+      "require_approval": [],
+      "blacklist": []
+    }
+  }
+}

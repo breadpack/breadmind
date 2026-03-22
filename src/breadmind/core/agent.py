@@ -216,10 +216,25 @@ class CoreAgent:
 
         t0 = time.monotonic()
         try:
-            result = await asyncio.wait_for(
-                self._tools.execute(tool_name, arguments),
-                timeout=self._tool_timeout,
+            # Check if this is a long-running task (no timeout)
+            is_long = (
+                tool_name == "code_delegate"
+                and arguments.get("long_running", False)
             )
+            if isinstance(is_long, str):
+                is_long = is_long.lower() in ("true", "1", "yes")
+
+            if is_long:
+                logger.info("Executing approved %s with NO timeout (long_running)", tool_name)
+                result = await self._tools.execute(tool_name, arguments)
+            else:
+                timeout = self._tool_timeout
+                if tool_name == "code_delegate":
+                    timeout = max(timeout, 600)
+                result = await asyncio.wait_for(
+                    self._tools.execute(tool_name, arguments),
+                    timeout=timeout,
+                )
         except asyncio.TimeoutError:
             result = ToolResult(success=False, output=f"Tool execution timed out after {self._tool_timeout}s.")
         except Exception as e:

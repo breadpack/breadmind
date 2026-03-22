@@ -12,7 +12,11 @@ class ClaudeCodeAdapter(CodingAgentAdapter):
 
     def build_command(self, project: str, prompt: str, options: dict | None = None) -> list[str]:
         opts = options or {}
-        cmd = [self.cli_command, "-p", prompt, "--cwd", project, "--output-format", "json"]
+        cmd = [
+            self.cli_command, "-p", prompt,
+            "--output-format", "json",
+            "--permission-mode", "bypassPermissions",
+        ]
         if opts.get("session_id"):
             cmd += ["--resume", opts["session_id"]]
         if opts.get("model"):

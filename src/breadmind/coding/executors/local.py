@@ -10,9 +10,15 @@ class LocalExecutor(Executor):
     async def run(self, command: list[str], cwd: str, timeout: int = 300) -> ExecutionResult:
         proc = None
         try:
+            # Build env: inherit parent but remove ANTHROPIC_API_KEY
+            # so Claude Code CLI uses its own local OAuth authentication
+            import os
+            env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+
             proc = await asyncio.create_subprocess_exec(
                 *command,
                 cwd=cwd,
+                env=env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )

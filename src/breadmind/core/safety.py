@@ -76,6 +76,23 @@ class SafetyGuard:
             "admin_users": self._admin_users,
         }
 
+    def merge_plugin_safety(self, plugin_name: str, safety_decl: dict) -> None:
+        """Merge safety declarations from a plugin manifest.
+
+        Plugin declarations are defaults; the central safety.yaml overrides.
+        Tools not declared anywhere default to deny (deny-by-default for
+        unknown plugins is enforced at the PluginManager level).
+        """
+        # Merge require_approval
+        for tool_name in safety_decl.get("require_approval", []):
+            self._require_approval.add(tool_name)
+        # Merge blacklist
+        bl_tools = safety_decl.get("blacklist", [])
+        if bl_tools:
+            existing = self._blacklist.get(plugin_name, [])
+            self._blacklist[plugin_name] = list(set(existing) | set(bl_tools))
+            self._flat_blacklist.update(bl_tools)
+
     def set_agent_policies(self, agent_id: str, policies: dict) -> None:
         if not hasattr(self, '_agent_policies'):
             self._agent_policies = {}
