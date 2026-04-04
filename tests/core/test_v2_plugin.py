@@ -1,5 +1,5 @@
 import pytest
-from breadmind.core.v2_plugin import PluginLoader, PluginManifest
+from breadmind.core.plugin import PluginLoader, PluginManifest
 from breadmind.core.v2_container import Container
 from breadmind.core.v2_events import EventBus
 

@@ -1,5 +1,5 @@
 import pytest
-from breadmind.core.v2_events import EventBus
+from breadmind.core.events import EventBus
 
 @pytest.fixture
 def bus():

@@ -192,7 +192,7 @@ async def shell_exec(command: str, host: str = "localhost", timeout: int = 30,
     # Container isolation mode
     if container and host == "localhost":
         try:
-            from breadmind.core.container import ContainerExecutor
+            from breadmind.core.sandbox import ContainerExecutor
             executor = ContainerExecutor()
             result = await executor.run_command(command, image=image, timeout=timeout)
             if result.error:

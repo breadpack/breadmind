@@ -1,7 +1,7 @@
 """인프라 도메인 플러그인."""
 from __future__ import annotations
 from typing import Any
-from breadmind.core.v2_plugin import PluginManifest
+from breadmind.core.plugin import PluginManifest
 from breadmind.plugins.v2_builtin.domains.infra.tools import ALL_INFRA_TOOLS
 from breadmind.plugins.v2_builtin.domains.infra.roles import INFRA_ROLES
 
