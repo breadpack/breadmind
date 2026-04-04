@@ -23,7 +23,7 @@ class MessengerPlugin(BaseToolPlugin):
         self._tools: list[Callable] = []
 
     async def setup(self, container: Any) -> None:
-        self._orchestrator = container.get_optional("orchestrator")
+        self._orchestrator = container.get_optional("connection_orchestrator")
         self._tools = self._build_tools()
 
     def _build_tools(self) -> list[Callable]:
