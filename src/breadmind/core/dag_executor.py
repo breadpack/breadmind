@@ -6,7 +6,7 @@ import logging
 from typing import Callable, Awaitable
 
 from breadmind.core.planner import TaskDAG, TaskNode
-from breadmind.core.result_evaluator import ResultEvaluator, EvalResult
+from breadmind.core.result_evaluator import ResultEvaluator
 from breadmind.core.subagent import SubAgentResult
 from breadmind.core.events import get_event_bus, Event, EventType
 

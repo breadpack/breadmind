@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Callable, Awaitable
+from typing import Callable
 
 from breadmind.llm.base import LLMProvider, LLMMessage
 from breadmind.core.planner import Planner, TaskDAG, TaskNode

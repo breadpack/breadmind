@@ -97,12 +97,15 @@ class TestShellExecContainerMode:
 
 
 class TestSubAgentContainerIsolation:
-    def test_task_has_container_field(self):
-        from breadmind.core.subagent import SubAgentTask
-        task = SubAgentTask(id="t1", parent_id=None, task="test", container_isolated=True)
-        assert task.container_isolated is True
+    def test_subagent_result_fields(self):
+        from breadmind.core.subagent import SubAgentResult
+        result = SubAgentResult(task_id="t1", success=True, output="done")
+        assert result.task_id == "t1"
+        assert result.success is True
+        assert result.output == "done"
 
-    def test_task_default_no_container(self):
-        from breadmind.core.subagent import SubAgentTask
-        task = SubAgentTask(id="t1", parent_id=None, task="test")
-        assert task.container_isolated is False
+    def test_subagent_result_defaults(self):
+        from breadmind.core.subagent import SubAgentResult
+        result = SubAgentResult(task_id="t1", success=False, output="error")
+        assert result.turns_used == 0
+        assert result.error == ""
