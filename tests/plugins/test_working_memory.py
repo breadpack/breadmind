@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock
 from breadmind.core.protocols import Message
-from breadmind.plugins.v2_builtin.memory.working_memory import WorkingMemory
+from breadmind.plugins.builtin.memory.working_memory import WorkingMemory
 
 
 @pytest.mark.asyncio

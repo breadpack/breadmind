@@ -5,8 +5,8 @@ from breadmind.core.protocols import (
     PromptBlock, PromptContext, ToolCallRequest, ToolCall, ToolResult,
     ExecutionContext,
 )
-from breadmind.plugins.v2_builtin.agent_loop.message_loop import MessageLoopAgent
-from breadmind.plugins.v2_builtin.safety.guard import SafetyVerdict
+from breadmind.plugins.builtin.agent_loop.message_loop import MessageLoopAgent
+from breadmind.plugins.builtin.safety.guard import SafetyVerdict
 
 @pytest.fixture
 def mock_provider():

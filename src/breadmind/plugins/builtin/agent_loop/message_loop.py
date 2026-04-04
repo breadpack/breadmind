@@ -6,7 +6,7 @@ from breadmind.core.protocols import (
     LLMResponse, Message, PromptContext, ProviderProtocol,
     ToolCall,
 )
-from breadmind.plugins.v2_builtin.safety.guard import SafetyGuard
+from breadmind.plugins.builtin.safety.guard import SafetyGuard
 
 
 class MessageLoopAgent:

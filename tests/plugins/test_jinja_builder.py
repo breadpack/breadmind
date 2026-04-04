@@ -1,7 +1,7 @@
 import pytest
 from pathlib import Path
 from breadmind.core.protocols import PromptBlock, PromptContext
-from breadmind.plugins.v2_builtin.prompt_builder.jinja_builder import JinjaPromptBuilder
+from breadmind.plugins.builtin.prompt_builder.jinja_builder import JinjaPromptBuilder
 
 @pytest.fixture
 def builder():

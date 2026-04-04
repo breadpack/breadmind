@@ -1,7 +1,7 @@
 import pytest
 from breadmind.core.protocols import Episode, KGTriple
-from breadmind.plugins.v2_builtin.memory.episodic_memory import EpisodicMemory
-from breadmind.plugins.v2_builtin.memory.semantic_memory import SemanticMemory
+from breadmind.plugins.builtin.memory.episodic_memory import EpisodicMemory
+from breadmind.plugins.builtin.memory.semantic_memory import SemanticMemory
 
 
 # --- Episodic ---

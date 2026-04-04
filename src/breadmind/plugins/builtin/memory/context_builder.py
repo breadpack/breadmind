@@ -2,7 +2,7 @@
 from __future__ import annotations
 from typing import Any
 from breadmind.core.protocols import PromptBlock
-from breadmind.plugins.v2_builtin.memory.smart_retriever import SmartRetriever
+from breadmind.plugins.builtin.memory.smart_retriever import SmartRetriever
 
 
 class ContextBuilder:

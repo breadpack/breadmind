@@ -1,6 +1,6 @@
 import pytest
 from breadmind.core.protocols import ToolDefinition, ToolFilter
-from breadmind.plugins.v2_builtin.tools.registry import HybridToolRegistry
+from breadmind.plugins.builtin.tools.registry import HybridToolRegistry
 
 @pytest.fixture
 def registry():

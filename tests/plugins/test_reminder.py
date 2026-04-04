@@ -1,6 +1,6 @@
 """Tests for ReminderInjector."""
 from unittest.mock import MagicMock
-from breadmind.plugins.v2_builtin.prompt_builder.reminder import ReminderInjector
+from breadmind.plugins.builtin.prompt_builder.reminder import ReminderInjector
 
 
 def test_inject_claude_style():

@@ -1,8 +1,8 @@
 import pytest
 from unittest.mock import AsyncMock
 from breadmind.core.protocols import Episode, KGTriple, PromptBlock
-from breadmind.plugins.v2_builtin.memory.smart_retriever import SmartRetriever
-from breadmind.plugins.v2_builtin.memory.context_builder import ContextBuilder
+from breadmind.plugins.builtin.memory.smart_retriever import SmartRetriever
+from breadmind.plugins.builtin.memory.context_builder import ContextBuilder
 
 
 @pytest.fixture

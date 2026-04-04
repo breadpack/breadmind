@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock, MagicMock
 from breadmind.core.protocols import (
     Message, LLMResponse, TokenUsage, AgentContext, PromptBlock, PromptContext,
 )
-from breadmind.plugins.v2_builtin.agent_loop.message_loop import MessageLoopAgent
-from breadmind.plugins.v2_builtin.safety.guard import SafetyGuard, SafetyVerdict
+from breadmind.plugins.builtin.agent_loop.message_loop import MessageLoopAgent
+from breadmind.plugins.builtin.safety.guard import SafetyGuard, SafetyVerdict
 
 
 @pytest.mark.asyncio

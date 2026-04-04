@@ -70,7 +70,7 @@ class Agent:
         if self._initialized:
             return
 
-        from breadmind.plugins.v2_builtin.safety.guard import SafetyGuard
+        from breadmind.plugins.builtin.safety.guard import SafetyGuard
 
         # Safety
         self._safety = SafetyGuard(
@@ -82,7 +82,7 @@ class Agent:
         # Memory
         self._working_memory = None
         if self.memory_config.working:
-            from breadmind.plugins.v2_builtin.memory.working_memory import WorkingMemory
+            from breadmind.plugins.builtin.memory.working_memory import WorkingMemory
             self._working_memory = WorkingMemory(
                 max_messages=self.memory_config.max_messages,
                 compress_threshold=self.memory_config.compress_threshold,
@@ -124,10 +124,10 @@ class Agent:
             prompt_builder = MinimalPromptBuilder()
 
         if tool_registry is None:
-            from breadmind.plugins.v2_builtin.tools.registry import HybridToolRegistry
+            from breadmind.plugins.builtin.tools.registry import HybridToolRegistry
             tool_registry = HybridToolRegistry()
 
-        from breadmind.plugins.v2_builtin.agent_loop.message_loop import MessageLoopAgent
+        from breadmind.plugins.builtin.agent_loop.message_loop import MessageLoopAgent
         agent = MessageLoopAgent(
             provider=provider,
             prompt_builder=prompt_builder,
@@ -145,11 +145,11 @@ class Agent:
         """런타임 실행. CLI 또는 서버 모드."""
         self._build()
         if runtime == "cli":
-            from breadmind.plugins.v2_builtin.runtimes.cli_runtime import CLIRuntime
+            from breadmind.plugins.builtin.runtimes.cli_runtime import CLIRuntime
             rt = CLIRuntime(agent=self)
             await rt.start(container=None)
         elif runtime == "server":
-            from breadmind.plugins.v2_builtin.runtimes.server_runtime import ServerRuntime
+            from breadmind.plugins.builtin.runtimes.server_runtime import ServerRuntime
             rt = ServerRuntime(agent=self, **kwargs)
             await rt.start(container=None)
         else:

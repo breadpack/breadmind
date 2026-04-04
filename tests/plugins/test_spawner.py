@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from breadmind.core.protocols import AgentContext, AgentResponse
-from breadmind.plugins.v2_builtin.agent_loop.spawner import Spawner, SwarmPlan, SwarmTask, SpawnResult
+from breadmind.plugins.builtin.agent_loop.spawner import Spawner, SwarmPlan, SwarmTask, SpawnResult
 
 
 def _make_agent(response_text="Done"):

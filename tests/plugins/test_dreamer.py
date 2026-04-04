@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock
 from breadmind.core.protocols import Message, Episode
-from breadmind.plugins.v2_builtin.memory.dreamer import Dreamer, DreamResult
+from breadmind.plugins.builtin.memory.dreamer import Dreamer, DreamResult
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
-from breadmind.plugins.v2_builtin.runtimes.server_runtime import ServerRuntime
+from breadmind.plugins.builtin.runtimes.server_runtime import ServerRuntime
 
 
 @pytest.fixture

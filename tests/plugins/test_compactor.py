@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock
 from breadmind.core.protocols import Message, LLMResponse, TokenUsage
-from breadmind.plugins.v2_builtin.prompt_builder.compactor import LLMCompactor
+from breadmind.plugins.builtin.prompt_builder.compactor import LLMCompactor
 
 
 @pytest.fixture

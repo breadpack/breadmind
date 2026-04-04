@@ -1,5 +1,5 @@
 import pytest
-from breadmind.plugins.v2_builtin.safety.guard import SafetyGuard
+from breadmind.plugins.builtin.safety.guard import SafetyGuard
 
 @pytest.fixture
 def guard_auto():

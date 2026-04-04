@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import MagicMock
 from breadmind.core.protocols import Message, PromptBlock
-from breadmind.plugins.v2_builtin.providers.claude_adapter import ClaudeAdapter
+from breadmind.plugins.builtin.providers.claude_adapter import ClaudeAdapter
 
 @pytest.fixture
 def adapter():

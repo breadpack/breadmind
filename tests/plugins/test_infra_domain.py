@@ -1,6 +1,6 @@
-from breadmind.plugins.v2_builtin.domains.infra.tools import K8S_TOOLS, PROXMOX_TOOLS, OPENWRT_TOOLS, ALL_INFRA_TOOLS
-from breadmind.plugins.v2_builtin.domains.infra.roles import INFRA_ROLES
-from breadmind.plugins.v2_builtin.domains.infra.plugin import InfraPlugin
+from breadmind.plugins.builtin.domains.infra.tools import K8S_TOOLS, PROXMOX_TOOLS, OPENWRT_TOOLS, ALL_INFRA_TOOLS
+from breadmind.plugins.builtin.domains.infra.roles import INFRA_ROLES
+from breadmind.plugins.builtin.domains.infra.plugin import InfraPlugin
 
 
 def test_k8s_tools_defined():

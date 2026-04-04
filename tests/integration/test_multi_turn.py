@@ -5,8 +5,8 @@ from breadmind.core.protocols import (
     Message, LLMResponse, TokenUsage, AgentContext, PromptBlock,
     ToolCallRequest, ToolResult, ToolDefinition, ToolSchema,
 )
-from breadmind.plugins.v2_builtin.agent_loop.message_loop import MessageLoopAgent
-from breadmind.plugins.v2_builtin.safety.guard import SafetyGuard
+from breadmind.plugins.builtin.agent_loop.message_loop import MessageLoopAgent
+from breadmind.plugins.builtin.safety.guard import SafetyGuard
 
 
 @pytest.mark.asyncio
