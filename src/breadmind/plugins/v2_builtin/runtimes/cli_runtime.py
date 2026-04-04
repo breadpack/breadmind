@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 from typing import Any
 
 from breadmind.core.protocols import UserInput, AgentOutput, Progress

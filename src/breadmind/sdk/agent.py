@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from breadmind.core.protocols import AgentContext, AgentResponse, PromptContext
+from breadmind.core.protocols import AgentContext, PromptContext
 
 
 @dataclass
@@ -110,8 +110,8 @@ class Agent:
 
         if provider is None:
             raise ValueError(
-                f"Provider not configured. Pass provider via plugins={{'provider': your_provider}} "
-                f"or set config.api_key for auto-configuration."
+                "Provider not configured. Pass provider via plugins={'provider': your_provider} "
+                "or set config.api_key for auto-configuration."
             )
 
         if prompt_builder is None:

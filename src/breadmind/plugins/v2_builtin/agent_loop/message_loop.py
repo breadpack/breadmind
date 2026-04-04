@@ -3,8 +3,8 @@ import uuid
 from typing import Any
 from breadmind.core.protocols import (
     AgentContext, AgentProtocol, AgentResponse, ExecutionContext,
-    LLMResponse, Message, PromptBlock, PromptContext, ProviderProtocol,
-    ToolCall, ToolCallRequest,
+    LLMResponse, Message, PromptContext, ProviderProtocol,
+    ToolCall,
 )
 from breadmind.plugins.v2_builtin.safety.guard import SafetyGuard
 

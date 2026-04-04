@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from breadmind.core.protocols import AgentContext, AgentResponse, Message
+from breadmind.core.protocols import AgentContext
 
 logger = logging.getLogger("breadmind.spawner")
 
