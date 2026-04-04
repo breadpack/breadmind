@@ -1,6 +1,6 @@
 import pytest
 from typing import Protocol, runtime_checkable
-from breadmind.core.v2_container import Container
+from breadmind.core.container import Container
 
 
 @runtime_checkable

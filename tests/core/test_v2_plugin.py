@@ -1,7 +1,7 @@
 import pytest
 from breadmind.core.plugin import PluginLoader, PluginManifest
-from breadmind.core.v2_container import Container
-from breadmind.core.v2_events import EventBus
+from breadmind.core.container import Container
+from breadmind.core.events import EventBus
 
 
 @pytest.fixture

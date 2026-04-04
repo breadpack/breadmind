@@ -4,8 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from breadmind.core.v2_container import Container
-from breadmind.core.v2_events import EventBus
+from breadmind.core.container import Container
+from breadmind.core.events import EventBus
 
 
 @dataclass
