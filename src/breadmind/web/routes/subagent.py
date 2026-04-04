@@ -1,47 +1,47 @@
-"""Sub-agent routes: spawn and manage sub-agent tasks."""
+"""Orchestrator API routes."""
 from __future__ import annotations
 
 import logging
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
-
-from breadmind.web.dependencies import get_subagent_manager
 
 logger = logging.getLogger(__name__)
 
+router = APIRouter()
 
-def setup_subagent_routes(r: APIRouter, app_state):
-    """Register sub-agent management routes."""
 
-    @r.post("/api/subagent/spawn")
-    async def spawn_subagent(request: Request, mgr=Depends(get_subagent_manager)):
-        if not mgr:
-            return JSONResponse(status_code=503, content={"error": "Sub-agent manager not configured"})
-        data = await request.json()
-        task = await mgr.spawn(
-            task=data.get("task", ""),
-            parent_id=data.get("parent_id"),
-            model=data.get("model"),
-        )
-        return {"status": "ok", "task_id": task.id}
+@router.get("/api/orchestrator/status")
+async def orchestrator_status(request: Request):
+    """Return orchestrator availability status."""
+    app_state = getattr(request.app.state, "app_state", None)
+    if not app_state:
+        return JSONResponse({"available": False})
+    orchestrator = getattr(app_state, "_orchestrator", None)
+    return JSONResponse({"available": orchestrator is not None})
 
-    @r.get("/api/subagent/tasks")
-    async def list_subagent_tasks(mgr=Depends(get_subagent_manager)):
-        if not mgr:
-            return {"tasks": []}
-        return {"tasks": mgr.list_tasks()}
 
-    @r.get("/api/subagent/tasks/{task_id}")
-    async def get_subagent_task(task_id: str, mgr=Depends(get_subagent_manager)):
-        if not mgr:
-            return JSONResponse(status_code=503, content={"error": "Sub-agent manager not configured"})
-        task = mgr.get_task(task_id)
-        if not task:
-            return JSONResponse(status_code=404, content={"error": "Task not found"})
-        return {"task": task}
+@router.get("/api/orchestrator/roles")
+async def list_roles(request: Request):
+    """List all available subagent roles."""
+    app_state = getattr(request.app.state, "app_state", None)
+    if not app_state:
+        return JSONResponse({"roles": []})
+    role_registry = getattr(app_state, "_role_registry", None)
+    if role_registry is None:
+        return JSONResponse({"roles": []})
+    roles = [
+        {
+            "name": r.name,
+            "domain": r.domain,
+            "task_type": r.task_type,
+            "description": r.description,
+            "dedicated_tools": r.dedicated_tools,
+        }
+        for r in role_registry.list_roles()
+    ]
+    return JSONResponse({"roles": roles})
 
-    @r.get("/api/subagent/status")
-    async def subagent_status(mgr=Depends(get_subagent_manager)):
-        if not mgr:
-            return {"status": {"total": 0, "pending": 0, "running": 0, "completed": 0, "failed": 0}}
-        return {"status": mgr.get_status()}
+
+def setup_subagent_routes(app, app_state):
+    """Register sub-agent routes."""
+    app.include_router(router)
