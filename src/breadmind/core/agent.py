@@ -654,7 +654,7 @@ class CoreAgent:
             "skill_manage", "memory_save", "memory_search",
             "swarm_role", "messenger_connect", "network_scan", "router_manage",
             "task_create", "task_list", "event_create", "event_list",
-            "reminder_set", "delegate_tasks",
+            "reminder_set",
         }
 
         if len(tools) <= max_tools:

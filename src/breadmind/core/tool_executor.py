@@ -35,7 +35,7 @@ class ToolExecutionContext:
     pending_approvals: dict[str, dict] = field(default_factory=dict)
     notify_progress: object | None = None  # async callback(status, detail)
     on_new_tool_detected: object | None = None  # async callback(cmd, output)
-    _injected_provider: object | None = None  # LLMProvider for delegate_tasks
+    _injected_provider: object | None = None  # LLMProvider for subagent tools
 
 
 class ToolExecutor:
@@ -217,9 +217,7 @@ class ToolExecutor:
             timeout = self._tool_timeout
             no_timeout = False
 
-            if tc.name == "delegate_tasks":
-                timeout = self._tool_timeout * 3
-            elif tc.name == "code_delegate":
+            if tc.name == "code_delegate":
                 is_long = tc.arguments.get("long_running", False)
                 if isinstance(is_long, str):
                     is_long = is_long.lower() in ("true", "1", "yes")

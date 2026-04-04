@@ -447,23 +447,6 @@ async def run():
             import uvicorn
             from breadmind.web.app import WebApp
 
-            # Initialize SwarmManager
-            from breadmind.core.swarm import SwarmManager
-            swarm_manager = SwarmManager(message_handler=agent.handle_message)
-
-            # Wire swarm_role tool
-            from breadmind.tools.builtin import set_swarm_manager
-            set_swarm_manager(swarm_manager, db)
-
-            # Wire self-expansion components into swarm manager
-            swarm_manager.set_tracker(performance_tracker)
-            swarm_manager.set_skill_store(skill_store)
-            from breadmind.core.team_builder import TeamBuilder
-            team_builder = TeamBuilder(swarm_manager, performance_tracker, skill_store, agent.handle_message)
-            swarm_manager.set_team_builder(team_builder)
-            team_builder.set_retriever(smart_retriever)
-            swarm_manager.set_retriever(smart_retriever)
-
             # Token manager for worker provisioning
             from breadmind.network.token_manager import TokenManager
             token_manager = TokenManager(db=db)

@@ -512,7 +512,6 @@ def setup_config_routes(r: APIRouter, app_state):
     @r.get("/api/config/prompts")
     async def get_prompts(agent=Depends(get_agent), db=Depends(get_db)):
         """Get all configurable prompts."""
-        from breadmind.core.swarm import DEFAULT_ROLES
         from breadmind.mcp.install_assistant import INSTALL_SYSTEM_PROMPT, ANALYZE_PROMPT, TROUBLESHOOT_PROMPT
 
         # Load custom overrides from DB
@@ -526,12 +525,6 @@ def setup_config_routes(r: APIRouter, app_state):
                 pass
 
         roles = {}
-        for name, member in DEFAULT_ROLES.items():
-            roles[name] = {
-                "description": member.description,
-                "system_prompt": custom.get(f"swarm_role:{name}", member.system_prompt),
-                "is_custom": f"swarm_role:{name}" in custom,
-            }
 
         # Behavior prompt (from dedicated DB key, not custom_prompts)
         behavior_prompt = ""
