@@ -32,6 +32,7 @@ class Intent:
     entities: list[str] = field(default_factory=list)  # IPs, hostnames, service names
     tool_hints: set[str] = field(default_factory=set)   # suggested tools
     urgency: str = "normal"  # "low" | "normal" | "high" | "critical"
+    complexity: str = "simple"  # "simple" | "complex"
 
 
 # Pattern definitions: (compiled_regex, category, confidence_boost)
@@ -118,6 +119,45 @@ def _detect_urgency(message: str) -> str:
     return "normal"
 
 
+_DOMAIN_KEYWORDS = {
+    "k8s": re.compile(r"(k8s|kubernetes|pod|deploy|node|kubectl|namespace|ingress)", re.I),
+    "proxmox": re.compile(r"(proxmox|vm|lxc|qemu|hypervisor|pve)", re.I),
+    "openwrt": re.compile(r"(openwrt|router|firewall|dhcp|wan|lan|vlan)", re.I),
+    "db": re.compile(r"(database|db|postgres|mysql|redis|mongo)", re.I),
+    "network": re.compile(r"(network|dns|ssl|cert|tls|port|ip)", re.I),
+}
+
+_MULTI_STEP_PATTERN = re.compile(
+    r"(하고|한\s*다음|후에|그리고|and\s+then|then|after\s+that|also|"
+    r"찾아서|확인하고|진단하고|분석하고|고쳐|수정해|올려|변경해|"
+    r"fix\s+it|update\s+it|change\s+it|restart\s+it)",
+    re.I,
+)
+
+_DIAGNOSE_AND_ACT = re.compile(
+    r"(왜.*(?:고쳐|수정|해결|fix|resolve|repair)|"
+    r"(?:찾아|확인|진단|분석).*(?:고쳐|수정|올려|변경|적용|restart|deploy|scale)|"
+    r"(?:diagnose|find|check|analyze).*(?:fix|update|change|apply|restart|deploy|scale))",
+    re.I,
+)
+
+
+def _detect_complexity(message: str, intent: "Intent") -> str:
+    """Detect whether a message represents a simple or complex task.
+
+    Complex tasks involve multiple domains, multi-step operations,
+    or diagnose-and-act patterns requiring orchestration.
+    """
+    matched_domains = sum(1 for p in _DOMAIN_KEYWORDS.values() if p.search(message))
+    if matched_domains >= 2:
+        return "complex"
+    if _MULTI_STEP_PATTERN.search(message) and len(intent.entities) >= 1:
+        return "complex"
+    if _DIAGNOSE_AND_ACT.search(message):
+        return "complex"
+    return "simple"
+
+
 _CATEGORY_PRIORITY: dict[IntentCategory, int] = {
     IntentCategory.SCHEDULE: 0,
     IntentCategory.TASK: 1,
@@ -184,7 +224,7 @@ def classify(message: str) -> Intent:
 
     urgency = _detect_urgency(message)
 
-    return Intent(
+    intent = Intent(
         category=best_category,
         confidence=confidence,
         keywords=keywords,
@@ -192,6 +232,8 @@ def classify(message: str) -> Intent:
         tool_hints=tool_hints,
         urgency=urgency,
     )
+    intent.complexity = _detect_complexity(message, intent)
+    return intent
 
 
 # Think budget by intent category (tokens).
