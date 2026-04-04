@@ -37,9 +37,9 @@ async def test_tool_call_and_response():
     tool_registry.get_schemas.return_value = [
         ToolSchema(name="shell_exec", deferred=False, definition=tool_def),
     ]
-    tool_registry.execute = AsyncMock(return_value=ToolResult(
-        success=True, output="config.yaml\nmain.py",
-    ))
+    tool_result = ToolResult(success=True, output="config.yaml\nmain.py")
+    tool_registry.execute = AsyncMock(return_value=tool_result)
+    tool_registry.execute_batch = AsyncMock(return_value=[tool_result])
 
     agent = MessageLoopAgent(
         provider=provider, prompt_builder=prompt_builder,
@@ -54,7 +54,7 @@ async def test_tool_call_and_response():
     assert "config.yaml" in resp.content
     assert resp.tool_calls_count == 1
     assert provider.chat.call_count == 2
-    tool_registry.execute.assert_called_once()
+    tool_registry.execute_batch.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -122,7 +122,9 @@ async def test_multi_tool_calls():
 
     tool_registry = MagicMock()
     tool_registry.get_schemas.return_value = []
-    tool_registry.execute = AsyncMock(return_value=ToolResult(success=True, output="OK"))
+    tool_result = ToolResult(success=True, output="OK")
+    tool_registry.execute = AsyncMock(return_value=tool_result)
+    tool_registry.execute_batch = AsyncMock(return_value=[tool_result, tool_result])
 
     agent = MessageLoopAgent(
         provider=provider, prompt_builder=prompt_builder,
@@ -134,4 +136,4 @@ async def test_multi_tool_calls():
     resp = await agent.handle_message("check system", ctx)
 
     assert resp.tool_calls_count == 2
-    assert tool_registry.execute.call_count == 2
+    assert tool_registry.execute_batch.call_count == 1

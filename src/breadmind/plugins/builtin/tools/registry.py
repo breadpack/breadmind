@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 from breadmind.core.protocols import ToolCall, ToolDefinition, ToolFilter, ToolResult, ToolSchema, ExecutionContext
 
 
@@ -8,6 +9,15 @@ class HybridToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, ToolDefinition] = {}
         self._executors: dict[str, callable] = {}
+
+    def register_tool_search(self) -> None:
+        """ToolSearchExecutor를 자동 등록한다. tool_search는 항상 always_include에 포함."""
+        from breadmind.plugins.builtin.tools.tool_search import (
+            TOOL_SEARCH_DEFINITION,
+            ToolSearchExecutor,
+        )
+        executor = ToolSearchExecutor(self)
+        self.register(TOOL_SEARCH_DEFINITION, executor.execute)
 
     def register(self, tool: ToolDefinition, executor: callable | None = None) -> None:
         self._tools[tool.name] = tool
@@ -42,6 +52,53 @@ class HybridToolRegistry:
             return ToolResult(success=True, output=str(output))
         except Exception as e:
             return ToolResult(success=False, output="", error=str(e))
+
+    async def execute_batch(self, calls: list[ToolCall], ctx: ExecutionContext) -> list[ToolResult]:
+        """연속된 readonly 도구는 병렬, 쓰기 도구는 직렬로 실행."""
+        if not calls:
+            return []
+
+        results: dict[int, ToolResult] = {}
+
+        # 연속된 readonly 도구를 배치로 묶고, 쓰기 도구는 개별 처리
+        batches: list[list[tuple[int, ToolCall]]] = []
+        current_batch: list[tuple[int, ToolCall]] = []
+        current_is_readonly: bool | None = None
+
+        for i, call in enumerate(calls):
+            tool_def = self._tools.get(call.name)
+            is_readonly = tool_def.readonly if tool_def else False
+
+            if is_readonly:
+                if current_is_readonly is True:
+                    current_batch.append((i, call))
+                else:
+                    if current_batch:
+                        batches.append(current_batch)
+                    current_batch = [(i, call)]
+                    current_is_readonly = True
+            else:
+                if current_batch:
+                    batches.append(current_batch)
+                current_batch = [(i, call)]
+                current_is_readonly = False
+
+        if current_batch:
+            batches.append(current_batch)
+
+        for batch in batches:
+            if len(batch) == 1 or not self._tools.get(batch[0][1].name, ToolDefinition("", "", {})).readonly:
+                # 직렬 실행 (쓰기 도구 또는 단일 도구)
+                for idx, call in batch:
+                    results[idx] = await self.execute(call, ctx)
+            else:
+                # 병렬 실행 (readonly 배치)
+                coros = [self.execute(call, ctx) for _, call in batch]
+                batch_results = await asyncio.gather(*coros)
+                for (idx, _), result in zip(batch, batch_results):
+                    results[idx] = result
+
+        return [results[i] for i in range(len(calls))]
 
     def _get_deferred_schemas(self, filter: ToolFilter) -> list[ToolSchema]:
         always = set(filter.always_include)

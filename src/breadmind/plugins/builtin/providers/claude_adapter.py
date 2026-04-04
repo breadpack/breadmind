@@ -17,6 +17,25 @@ class ClaudeAdapter:
         self._fallback = fallback_provider
         self._max_tokens = max_tokens
         self._client: Any = None
+        self._system_blocks: list[PromptBlock] = []
+
+    def set_system_blocks(self, blocks: list[PromptBlock]) -> None:
+        """system prompt 블록을 설정하여 prompt caching에 활용."""
+        self._system_blocks = blocks
+
+    @staticmethod
+    def _sort_blocks_for_cache(blocks: list[PromptBlock]) -> list[PromptBlock]:
+        """cacheable 블록을 앞에, priority 오름차순으로 정렬."""
+        return sorted(blocks, key=lambda b: (not b.cacheable, b.priority))
+
+    @staticmethod
+    def _apply_tool_cache_control(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """마지막 tool에 cache_control을 추가."""
+        if not tools:
+            return tools
+        result = [dict(t) for t in tools]
+        result[-1]["cache_control"] = {"type": "ephemeral"}
+        return result
 
     def _get_client(self) -> Any:
         if self._client is None:
@@ -32,9 +51,14 @@ class ClaudeAdapter:
         chat_msgs = [m for m in api_messages if m["role"] != "system"]
         kwargs: dict[str, Any] = {"model": self._model, "max_tokens": self._max_tokens, "messages": chat_msgs}
         if system_msgs:
-            kwargs["system"] = "\n\n".join(m["content"] for m in system_msgs)
+            # system prompt를 content block 배열로 전달 (prompt caching 지원)
+            if self._system_blocks:
+                sorted_blocks = self._sort_blocks_for_cache(self._system_blocks)
+                kwargs["system"] = self.transform_system_prompt(sorted_blocks)
+            else:
+                kwargs["system"] = "\n\n".join(m["content"] for m in system_msgs)
         if tools:
-            kwargs["tools"] = tools
+            kwargs["tools"] = self._apply_tool_cache_control(tools)
         if think_budget:
             kwargs["thinking"] = {"type": "enabled", "budget_tokens": think_budget}
         try:
@@ -50,8 +74,14 @@ class ClaudeAdapter:
                 content = block.text
             elif block.type == "tool_use":
                 tool_calls.append(ToolCallRequest(id=block.id, name=block.name, arguments=block.input))
+        usage = response.usage
         return LLMResponse(content=content, tool_calls=tool_calls,
-                          usage=TokenUsage(input_tokens=response.usage.input_tokens, output_tokens=response.usage.output_tokens),
+                          usage=TokenUsage(
+                              input_tokens=usage.input_tokens,
+                              output_tokens=usage.output_tokens,
+                              cache_creation_input_tokens=getattr(usage, "cache_creation_input_tokens", 0) or 0,
+                              cache_read_input_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
+                          ),
                           stop_reason=response.stop_reason)
 
     def get_cache_strategy(self) -> CacheStrategy:
@@ -74,7 +104,25 @@ class ClaudeAdapter:
     def transform_messages(self, messages: list[Message]) -> list[dict[str, Any]]:
         result = []
         for msg in messages:
-            entry: dict[str, Any] = {"role": msg.role, "content": msg.content or ""}
+            entry: dict[str, Any] = {"role": msg.role}
+            # 이미지 첨부가 있는 메시지: content block 배열로 변환
+            if msg.attachments:
+                content_blocks: list[dict[str, Any]] = []
+                for att in msg.attachments:
+                    if att.type == "image" and att.data and att.media_type:
+                        content_blocks.append({
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": att.media_type,
+                                "data": att.data,
+                            },
+                        })
+                if msg.content:
+                    content_blocks.append({"type": "text", "text": msg.content})
+                entry["content"] = content_blocks
+            else:
+                entry["content"] = msg.content or ""
             if msg.tool_calls:
                 entry["tool_calls"] = [{"id": tc.id, "name": tc.name, "arguments": tc.arguments} for tc in msg.tool_calls]
             if msg.tool_call_id:

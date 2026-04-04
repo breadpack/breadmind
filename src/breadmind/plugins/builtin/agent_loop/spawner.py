@@ -4,9 +4,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
-from breadmind.core.protocols import AgentContext
+from breadmind.core.protocols import AgentContext, AgentResponse
+
+if TYPE_CHECKING:
+    from breadmind.plugins.builtin.agent_loop.message_loop import MessageLoopAgent
 
 logger = logging.getLogger("breadmind.spawner")
 
@@ -45,6 +48,7 @@ class Spawner:
         self._max_depth = max_depth
         self._max_concurrent = max_concurrent
         self._semaphore = asyncio.Semaphore(max_concurrent)
+        self._children: dict[str, MessageLoopAgent] = {}
 
     async def spawn(
         self,
@@ -85,6 +89,42 @@ class Spawner:
             except Exception as e:
                 logger.error("Spawn failed: %s", e)
                 return SpawnResult(agent_id="", response=str(e), success=False)
+
+    async def spawn_child(
+        self,
+        parent: MessageLoopAgent,
+        prompt: str,
+        tools: list[str] | None = None,
+    ) -> MessageLoopAgent:
+        """parent의 컴포넌트를 공유하여 child MessageLoopAgent를 생성하고 추적."""
+        from breadmind.plugins.builtin.agent_loop.message_loop import MessageLoopAgent
+
+        if self._factory is not None:
+            child = self._factory(tools=tools)
+        else:
+            child = MessageLoopAgent(
+                provider=parent._provider,
+                prompt_builder=parent._prompt_builder,
+                tool_registry=parent._tool_registry,
+                safety_guard=parent._safety,
+                max_turns=parent._max_turns,
+                spawner_factory=parent._spawner_factory,
+            )
+        self._children[child.agent_id] = child
+        return child
+
+    async def send_to(self, target_id: str, message: str) -> str:
+        """agent_id로 자식 에이전트를 찾아 메시지를 전송."""
+        child = self._children.get(target_id)
+        if child is None:
+            raise KeyError(f"No child agent with id '{target_id}'")
+        ctx = AgentContext(
+            user="system",
+            channel="internal",
+            session_id=f"msg_{target_id}",
+        )
+        response: AgentResponse = await child.handle_message(message, ctx)
+        return response.content
 
     async def execute_swarm(self, plan: SwarmPlan, ctx: AgentContext) -> dict[str, SpawnResult]:
         """SwarmPlan의 task를 의존성 순서로 실행."""

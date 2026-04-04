@@ -46,6 +46,35 @@ def _parse_args() -> argparse.Namespace:
     # breadmind version
     sub.add_parser("version", help="Show current version")
 
+    # breadmind doctor
+    sub.add_parser("doctor", help="Check system health and configuration")
+
+    # breadmind chat
+    chat_parser = sub.add_parser("chat", help="Start interactive CLI chat")
+    chat_parser.add_argument("--model", default=None, help="Model override (e.g., claude-sonnet-4-6)")
+    chat_parser.add_argument("--stream", action="store_true", default=True, help="Enable streaming (default)")
+    chat_parser.add_argument("--no-stream", action="store_true", help="Disable streaming")
+    chat_parser.add_argument("--continue", dest="continue_session", default=None,
+                             help="Continue a previous session by ID")
+    chat_parser.add_argument("--config-dir", default=None, help="Config directory path")
+    chat_parser.add_argument("--log-level", default=None,
+                             choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
+
+    # breadmind daemon <start|stop|status>
+    daemon_parser = sub.add_parser("daemon", help="Run as background daemon")
+    daemon_sub = daemon_parser.add_subparsers(dest="daemon_action")
+
+    start_p = daemon_sub.add_parser("start", help="Start daemon")
+    start_p.add_argument("--host", default="0.0.0.0")
+    start_p.add_argument("--port", type=int, default=8080)
+    start_p.add_argument("--config-dir", default=None)
+
+    daemon_sub.add_parser("stop", help="Stop daemon")
+    daemon_sub.add_parser("status", help="Check daemon status")
+
+    # breadmind setup
+    sub.add_parser("setup", help="Interactive setup wizard")
+
     # breadmind plugin <action>
     plugin_parser = sub.add_parser("plugin", help="Plugin management")
     plugin_sub = plugin_parser.add_subparsers(dest="plugin_action")
@@ -250,8 +279,34 @@ async def run():
         await _run_update()
         return
 
+    if args.command == "doctor":
+        from breadmind.cli.doctor import run_doctor
+        await run_doctor(args)
+        return
+
     if args.command == "plugin":
         await _run_plugin_command(args)
+        return
+
+    if args.command == "chat":
+        from breadmind.cli.chat import run_chat
+        await run_chat(args)
+        return
+
+    if args.command == "daemon":
+        from breadmind.cli.daemon import run_daemon, stop_daemon, daemon_status
+        action = getattr(args, "daemon_action", "start")
+        if action == "stop":
+            await stop_daemon(args)
+        elif action == "status":
+            await daemon_status(args)
+        else:
+            await run_daemon(args)
+        return
+
+    if args.command == "setup":
+        from breadmind.cli.setup import run_setup
+        await run_setup(args)
         return
 
     config_dir = args.config_dir or get_default_config_dir()

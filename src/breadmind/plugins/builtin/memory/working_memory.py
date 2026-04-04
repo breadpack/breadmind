@@ -1,11 +1,15 @@
 """v2 WorkingMemory: 세션별 대화 히스토리 관리."""
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from breadmind.core.protocols import Message
+
+if TYPE_CHECKING:
+    from breadmind.plugins.builtin.memory.pg_backend import PgMemoryBackend
 
 
 @dataclass
@@ -26,6 +30,7 @@ class WorkingMemory:
         keep_recent: int = 10,
         session_timeout_minutes: int = 30,
         compressor: Any = None,
+        backend: PgMemoryBackend | None = None,
     ) -> None:
         self._sessions: dict[str, Session] = {}
         self._max_messages = max_messages
@@ -33,14 +38,44 @@ class WorkingMemory:
         self._keep_recent = keep_recent
         self._timeout_minutes = session_timeout_minutes
         self._compressor = compressor
+        self._backend = backend
 
     async def working_get(self, session_id: str) -> list[Message]:
+        if self._backend is not None:
+            raw = await self._backend.working_get(session_id, "messages")
+            if raw is None:
+                return []
+            return [Message(**m) if isinstance(m, dict) else m for m in raw]
         session = self._get_session(session_id)
         if session is None:
             return []
         return list(session.messages)
 
     async def working_put(self, session_id: str, messages: list[Message]) -> None:
+        if self._backend is not None:
+            serialized = [
+                {"role": m.role, "content": m.content}
+                for m in messages
+            ]
+            # Apply compression / truncation before persisting
+            if len(messages) >= self._compress_threshold and self._compressor:
+                try:
+                    old_messages = messages[:-self._keep_recent]
+                    recent = messages[-self._keep_recent:]
+                    summary = await self._compressor.summarize(old_messages)
+                    messages = [
+                        Message(role="system", content=f"[Previous conversation summary]: {summary}"),
+                        *recent,
+                    ]
+                    serialized = [{"role": m.role, "content": m.content} for m in messages]
+                except Exception:
+                    pass
+            elif len(messages) > self._max_messages:
+                messages = messages[-self._max_messages:]
+                serialized = [{"role": m.role, "content": m.content} for m in messages]
+            await self._backend.working_put(session_id, "messages", serialized)
+            return
+
         session = self._get_or_create(session_id)
         session.messages = list(messages)
         session.last_active = datetime.now(timezone.utc)
@@ -51,6 +86,30 @@ class WorkingMemory:
             session.messages = session.messages[-self._max_messages:]
 
     async def working_compress(self, session_id: str, budget: int) -> None:
+        if self._backend is not None:
+            messages = await self.working_get(session_id)
+            if len(messages) <= budget:
+                return
+            if self._compressor:
+                try:
+                    old_messages = messages[:-self._keep_recent]
+                    recent = messages[-self._keep_recent:]
+                    summary = await self._compressor.summarize(old_messages)
+                    messages = [
+                        Message(role="system", content=f"[Previous conversation summary]: {summary}"),
+                        *recent,
+                    ]
+                    serialized = [{"role": m.role, "content": m.content} for m in messages]
+                    await self._backend.working_put(session_id, "messages", serialized)
+                    return
+                except Exception:
+                    pass
+            # Fallback: truncation
+            truncated = messages[-budget:]
+            serialized = [{"role": m.role, "content": m.content} for m in truncated]
+            await self._backend.working_put(session_id, "messages", serialized)
+            return
+
         session = self._get_session(session_id)
         if session is None or len(session.messages) <= budget:
             return
@@ -75,6 +134,14 @@ class WorkingMemory:
         return list(self._sessions.keys())
 
     def clear_session(self, session_id: str) -> None:
+        if self._backend is not None:
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._backend.working_clear_session(session_id))
+            except RuntimeError:
+                asyncio.run(self._backend.working_clear_session(session_id))
+            return
         self._sessions.pop(session_id, None)
 
     def cleanup_expired(self) -> int:

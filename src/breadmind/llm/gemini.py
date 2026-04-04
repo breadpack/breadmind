@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from collections.abc import AsyncGenerator
 
 import json
 import aiohttp
@@ -100,6 +101,77 @@ class GeminiProvider(LLMProvider):
 
         raise last_error  # type: ignore[misc]
 
+    async def chat_stream(
+        self,
+        messages: list[LLMMessage],
+        tools: list[ToolDefinition] | None = None,
+        model: str | None = None,
+    ) -> AsyncGenerator[str, None]:
+        """스트리밍 방식으로 응답을 반환한다. Gemini streamGenerateContent API 사용."""
+        model_name = model or self._default_model
+        url = (
+            f"{_API_BASE}/models/{model_name}:streamGenerateContent"
+            f"?alt=sse&key={self._api_key}"
+        )
+
+        system_prompt, contents = self._convert_messages(messages)
+
+        body: dict = {"contents": contents}
+
+        if system_prompt:
+            body["systemInstruction"] = {"parts": [{"text": system_prompt}]}
+
+        # 스트리밍에서 tool_use가 오면 폴백 불가이므로 tools 없이 요청
+        # (tool call turn은 handle_message_stream에서 비스트리밍 chat()으로 처리)
+
+        body["generationConfig"] = {
+            "maxOutputTokens": 8192,
+            "responseModalities": ["TEXT"],
+        }
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    url,
+                    json=body,
+                    headers={"Content-Type": "application/json"},
+                    timeout=aiohttp.ClientTimeout(total=120),
+                ) as resp:
+                    if resp.status != 200:
+                        error_text = await resp.text()
+                        raise Exception(
+                            f"Gemini streaming API error: HTTP {resp.status} - {error_text[:500]}"
+                        )
+
+                    # SSE 스트림 파싱: 각 라인은 "data: {json}" 형식
+                    buffer = ""
+                    async for chunk in resp.content.iter_any():
+                        buffer += chunk.decode("utf-8", errors="replace")
+                        while "\n" in buffer:
+                            line, buffer = buffer.split("\n", 1)
+                            line = line.strip()
+                            if not line or not line.startswith("data: "):
+                                continue
+                            json_str = line[6:]  # "data: " 이후
+                            if json_str == "[DONE]":
+                                return
+                            try:
+                                data = json.loads(json_str)
+                            except json.JSONDecodeError:
+                                continue
+                            # 각 candidate의 text parts를 yield
+                            for candidate in data.get("candidates", []):
+                                for part in candidate.get("content", {}).get("parts", []):
+                                    text = part.get("text")
+                                    if text:
+                                        yield text
+        except aiohttp.ClientError as e:
+            logger.error("Gemini streaming error: %s", e)
+            # 스트리밍 실패 시 일반 chat()으로 폴백
+            response = await self.chat(messages, tools, model)
+            if response.content:
+                yield response.content
+
     async def health_check(self) -> bool:
         try:
             return bool(self._api_key)
@@ -154,6 +226,21 @@ class GeminiProvider(LLMProvider):
                             fc_part["thought_signature"] = ts
                         parts.append(fc_part)
                 contents.append({"role": "model", "parts": parts})
+            elif msg.attachments:
+                # 이미지 첨부가 있는 메시지: inline_data parts로 변환
+                role = "model" if msg.role == "assistant" else "user"
+                parts: list[dict] = []
+                for att in msg.attachments:
+                    if att.type == "image" and att.data and att.media_type:
+                        parts.append({
+                            "inline_data": {
+                                "mime_type": att.media_type,
+                                "data": att.data,
+                            },
+                        })
+                if msg.content:
+                    parts.append({"text": msg.content})
+                contents.append({"role": role, "parts": parts})
             else:
                 role = "model" if msg.role == "assistant" else "user"
                 contents.append({

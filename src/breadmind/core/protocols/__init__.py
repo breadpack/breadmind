@@ -1,6 +1,6 @@
 """프로토콜 정의 (계약만, 구현 없음)."""
 from breadmind.core.protocols.provider import (
-    Message, LLMResponse, TokenUsage, ToolCallRequest, CacheStrategy, ProviderProtocol,
+    Attachment, Message, LLMResponse, TokenUsage, ToolCallRequest, CacheStrategy, ProviderProtocol,
 )
 from breadmind.core.protocols.prompt import (
     PromptBlock, PromptContext, CompactResult, PromptProtocol,
@@ -19,7 +19,7 @@ from breadmind.core.protocols.runtime import (
 )
 
 __all__ = [
-    "Message", "LLMResponse", "TokenUsage", "ToolCallRequest", "CacheStrategy", "ProviderProtocol",
+    "Attachment", "Message", "LLMResponse", "TokenUsage", "ToolCallRequest", "CacheStrategy", "ProviderProtocol",
     "PromptBlock", "PromptContext", "CompactResult", "PromptProtocol",
     "ToolDefinition", "ToolSchema", "ToolCall", "ToolResult", "ToolFilter", "ExecutionContext", "ToolProtocol",
     "Episode", "KGTriple", "MemoryProtocol",

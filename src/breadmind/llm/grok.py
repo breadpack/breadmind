@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncGenerator
 
 import openai
 from .base import (
@@ -77,6 +78,34 @@ class GrokProvider(LLMProvider):
                 raise
 
         raise last_error  # type: ignore[misc]
+
+    async def chat_stream(
+        self,
+        messages: list[LLMMessage],
+        tools: list[ToolDefinition] | None = None,
+        model: str | None = None,
+    ) -> AsyncGenerator[str, None]:
+        """OpenAI 호환 스트리밍 API로 응답을 반환한다."""
+        api_messages = self._convert_messages(messages)
+        kwargs: dict = {
+            "model": model or self._default_model,
+            "max_tokens": 4096,
+            "messages": api_messages,
+            "stream": True,
+        }
+        # 스트리밍에서는 tools 없이 텍스트만 (tool call turn은 비스트리밍으로 처리)
+
+        try:
+            stream = await self._client.chat.completions.create(**kwargs)
+            async for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+        except openai.APIError as e:
+            logger.error("Grok streaming error: %s", e)
+            # 스트리밍 실패 시 일반 chat()으로 폴백
+            response = await self.chat(messages, tools, model)
+            if response.content:
+                yield response.content
 
     async def health_check(self) -> bool:
         try:

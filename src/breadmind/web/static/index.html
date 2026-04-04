@@ -422,6 +422,7 @@
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/css/personal.css">
     <link rel="stylesheet" href="/static/css/glass-theme.css">
+    <link rel="stylesheet" href="/static/css/chat.css">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
     <script>
@@ -544,6 +545,9 @@
                         <input type="text" id="messageInput" placeholder="Type a message..." autocomplete="off">
                         <button id="sendBtn" onclick="sendMessage()">Send</button>
                     </div></div>
+                    <div class="status-bar" id="statusBar">
+                        <span class="status-item"><span class="label">Session:</span> <span class="value">default</span></span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -676,147 +680,15 @@
     </div>
     <div class="toast" id="toast"></div>
     <script>
-        let ws;
+        // Chat functions (connect, ws, sendMessage, addMessage, sessions, etc.)
+        // are now in /static/js/chat.js — loaded at the bottom of the page.
         let allEvents = [];
         let currentFilter = 'all';
+        // Legacy references — chat.js provides these as globals
         let currentSessionId = 'default';
-        const messagesDiv = document.getElementById('messages');
-        const input = document.getElementById('messageInput');
-        const sendBtn = document.getElementById('sendBtn');
+        let messagesDiv, input, sendBtn;
 
-        function connect() {
-            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            ws = new WebSocket(`${protocol}//${location.host}/ws/chat`);
-            ws.onopen = () => {
-                document.getElementById('statusDot').className = 'dot connected';
-                document.getElementById('statusText').textContent = 'Connected';
-                // Restore session on reconnect
-                if (currentSessionId && currentSessionId !== 'default') {
-                    ws.send(JSON.stringify({ type: 'switch_session', session_id: currentSessionId }));
-                }
-            };
-            ws.onclose = () => { document.getElementById('statusDot').className = 'dot disconnected'; document.getElementById('statusText').textContent = 'Disconnected'; setTimeout(connect, 3000); };
-            ws.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                if (data.type === 'progress') {
-                    if (data.status === 'approval_request') {
-                        removeThinking();
-                        try {
-                            const info = JSON.parse(data.detail);
-                            showApprovalCard(info.approval_id, info.tool, info.args);
-                        } catch(e) { console.error('Failed to parse approval_request:', e); }
-                    } else {
-                        showThinking(data.status, data.detail);
-                    }
-                }
-                else if (data.type === 'response') {
-                    removeThinking();
-                    addMessage(data.message, 'bot');
-                    sendBtn.disabled = false; sendBtn.textContent = 'Send';
-                    loadSessions(); // Refresh session list (title may have been set)
-                    // Auto-refresh personal tab if response mentions task/event operations
-                    const respContent = data.message || '';
-                    const isPersonalAction = /할 일 (생성|업데이트|삭제|완료)|일정 (생성|수정|삭제)|리마인더 설정|Task (created|updated|deleted|completed)|Event (created|updated|deleted)/i.test(respContent);
-                    if (isPersonalAction && typeof refreshPersonalTab === 'function') {
-                        setTimeout(() => refreshPersonalTab(), 500);
-                    }
-                }
-                else if (data.type === 'session_history') {
-                    // Replace chat with session history
-                    messagesDiv.innerHTML = '';
-                    if (data.messages && data.messages.length > 0) {
-                        data.messages.forEach(m => addMessage(m.content, m.role === 'user' ? 'user' : 'bot'));
-                    } else {
-                        addMessage('Start a new conversation!', 'bot');
-                    }
-                }
-                else if (data.type === 'session_created') {
-                    currentSessionId = data.session_id;
-                    localStorage.setItem('breadmind_session', data.session_id);
-                    messagesDiv.innerHTML = '';
-                    addMessage('New session started.', 'bot');
-                    loadSessions();
-                }
-                else if (data.type === 'notification') addMessage(data.message, 'bot');
-                else if (data.type === 'monitoring_event') {
-                    if (data.event && data.event.type === 'behavior_prompt_updated') {
-                        const el = document.getElementById('prompt-behavior');
-                        if (el) { el.value = data.event.prompt; }
-                        showToast('Behavior prompt auto-improved: ' + (data.event.reason || ''), 'info');
-                    }
-                    addMonitoringEvent(data.event);
-                }
-                else if (data.type && data.type.startsWith('coding_job_')) { handleCodingJobEvent(data); }
-                else if (data.type === 'update_available') { showUpdateBanner(data.event.current, data.event.latest, ''); }
-                else if (data.type === 'messenger_connected') {
-                    addMessage((data.event && data.event.platform || 'Messenger') + ' connected!', 'bot');
-                    showToast((data.event && data.event.platform || 'Messenger') + ' connected!', 'success');
-                }
-            };
-        }
-
-        // ── Session management ──
-        async function loadSessions() {
-            try {
-                const resp = await fetch('/api/sessions');
-                const data = await resp.json();
-                const list = document.getElementById('sessionList');
-                if (!data.sessions || data.sessions.length === 0) {
-                    list.innerHTML = '<div class="tool-item" style="color:#64748b;font-size:11px;">No sessions yet</div>';
-                    return;
-                }
-                list.innerHTML = data.sessions.map(s => {
-                    const sid = s.session_id.replace('web:', '');
-                    const isActive = sid === currentSessionId;
-                    const title = s.title || 'Untitled';
-                    const time = new Date(s.last_active).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-                    return `<div class="tool-item" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;${isActive ? 'background:#334155;border-radius:4px;' : ''}" onclick="switchSession('${sid}')">
-                        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;${isActive ? 'color:#60a5fa;' : ''}">${escapeHtml(title)}</span>
-                        <span style="font-size:10px;color:#64748b;margin-left:4px;flex-shrink:0;">${time}</span>
-                        <span class="session-delete" onclick="event.stopPropagation();deleteSession('${sid}')" title="삭제" style="margin-left:4px;color:#64748b;font-size:12px;cursor:pointer;opacity:0.5;flex-shrink:0;">✕</span>
-                    </div>`;
-                }).join('');
-            } catch(e) {}
-        }
-
-        function switchSession(sessionId) {
-            currentSessionId = sessionId;
-            localStorage.setItem('breadmind_session', sessionId);
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'switch_session', session_id: sessionId }));
-            }
-            loadSessions();
-        }
-
-        async function deleteSession(sessionId) {
-            try {
-                await fetch('/api/sessions/' + sessionId, { method: 'DELETE' });
-                if (currentSessionId === sessionId) {
-                    newSession();
-                }
-                loadSessions();
-            } catch(e) {}
-        }
-
-        async function clearAllSessions() {
-            if (!confirm('모든 세션을 삭제하시겠습니까?')) return;
-            try {
-                const resp = await fetch('/api/sessions');
-                const data = await resp.json();
-                for (const s of (data.sessions || [])) {
-                    const sid = s.session_id.replace('web:', '');
-                    await fetch('/api/sessions/' + sid, { method: 'DELETE' });
-                }
-                newSession();
-                loadSessions();
-            } catch(e) {}
-        }
-
-        function newSession() {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'new_session' }));
-            }
-        }
+        // Session management functions are now in chat.js
 
         function switchTab(name) {
             document.querySelectorAll('.tab').forEach((t, i) => { t.classList.toggle('active', ['chat','monitoring','store','skills','plugins','personal','settings'][i] === name); });
@@ -834,178 +706,8 @@
             if (name === 'chat') { if (typeof loadSidebarAssistant === 'function') loadSidebarAssistant(); }
         }
 
-        function sendMessage() {
-            let text = input.value.trim();
-            if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
-            const processed = processQuickAction(text);
-            if (processed) text = processed;
-            addMessage(text, 'user');
-            ws.send(JSON.stringify({ message: text, session_id: currentSessionId }));
-            input.value = '';
-            sendBtn.disabled = true; sendBtn.textContent = '...';
-        }
-
-        function showThinking(status, detail) {
-            let label = '생각하는 중...';
-            if (status === 'tool_call' && detail) {
-                label = '🔧 ' + detail;
-            } else if (status === 'thinking') {
-                label = '💭 생각하는 중...';
-            }
-            const el = document.getElementById('thinking-msg');
-            if (el) {
-                el.querySelector('.label').textContent = label;
-            } else {
-                const div = document.createElement('div');
-                div.className = 'message bot';
-                div.id = 'thinking-msg';
-                div.innerHTML = '<div class="thinking-indicator"><div class="dots"><span></span><span></span><span></span></div><span class="label">' + escapeHtml(label) + '</span></div>';
-                messagesDiv.appendChild(div);
-            }
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-        }
-
-        function removeThinking() {
-            const el = document.getElementById('thinking-msg');
-            if (el) el.remove();
-        }
-
-        function showApprovalCard(approvalId, toolName, args) {
-            const div = document.createElement('div');
-            div.className = 'message bot';
-            const time = new Date().toLocaleTimeString();
-            const argsStr = Object.entries(args || {}).map(([k,v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`).join(', ');
-            div.innerHTML = `<div class="bubble"><div class="chat-approval" id="approval-${escapeHtml(approvalId)}">
-                <div class="approval-tool-name">\uD83D\uDD12 ${escapeHtml(toolName)} 실행 승인 필요</div>
-                <div style="color:#94a3b8;font-size:12px;margin:4px 0;">${escapeHtml(argsStr)}</div>
-                <div class="approval-btns">
-                    <button class="btn-approve" onclick="chatApproval('${approvalId}','approve')">\u2705 승인</button>
-                    <button class="btn-deny" onclick="chatApproval('${approvalId}','deny')">\u274C 거부</button>
-                </div>
-            </div></div><div class="meta">BreadMind \u00B7 ${time}</div>`;
-            messagesDiv.appendChild(div);
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-        }
-
-        function addMessage(text, type) {
-            if (!text || !text.trim()) return;
-            const div = document.createElement('div');
-            div.className = `message ${type}`;
-            const time = new Date().toLocaleTimeString();
-            let displayText = text;
-            // Render markdown for assistant messages, escape for user messages
-            let html;
-            if (type === 'user') {
-                const escaped = escapeHtml(displayText);
-                html = escaped.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" style="color:#60a5fa;">$1</a>');
-            } else {
-                // Protect [REQUEST_INPUT] blocks from Markdown parsing
-                const inputBlocks = [];
-                let safeText = displayText.replace(/\[REQUEST_INPUT\]([\s\S]*?)\[\/REQUEST_INPUT\]/g, function(match) {
-                    const idx = inputBlocks.length;
-                    inputBlocks.push(match);
-                    return '\x00REQINPUT' + idx + '\x00';
-                });
-                try {
-                    html = marked.parse(safeText);
-                } catch(e) {
-                    html = escapeHtml(safeText);
-                }
-                // Restore [REQUEST_INPUT] blocks after Markdown rendering
-                inputBlocks.forEach(function(block, idx) {
-                    html = html.replace('\x00REQINPUT' + idx + '\x00', block);
-                });
-            }
-            // Convert [OPEN_URL] tags to clickable action buttons
-            if (type === 'bot') {
-                html = html.replace(/\[OPEN_URL\](.*?)\[\/OPEN_URL\]/g, function(match, url) {
-                    return '<a href="' + url + '" target="_blank" class="chat-action-btn" onclick="window.open(this.href, \'_blank\', \'width=600,height=700\'); return false;">\uD83D\uDD17 연결하기</a>';
-                });
-            }
-            // Convert [REQUEST_INPUT] tags to dynamic inline forms
-            if (type === 'bot') {
-                html = html.replace(/\[REQUEST_INPUT\]([\s\S]*?)\[\/REQUEST_INPUT\]/g, function(match, jsonStr) {
-                    try {
-                        const config = JSON.parse(jsonStr.trim());
-                        const formId = (config.id || 'form') + '-' + Math.random().toString(36).slice(2, 6);
-
-                        let fieldsHtml = '';
-                        (config.fields || []).forEach(f => {
-                            const inputType = f.type || 'text';
-                            const required = f.required ? 'required' : '';
-                            const value = f.value || '';
-                            fieldsHtml += '<div class="dynform-field">' +
-                                '<label class="dynform-label">' + (f.label || f.name) + '</label>' +
-                                '<input type="' + inputType + '" name="' + f.name + '" value="' + value + '"' +
-                                ' placeholder="' + (f.placeholder || '') + '" class="dynform-input"' +
-                                ' ' + required + ' data-form-id="' + formId + '">' +
-                                '</div>';
-                        });
-
-                        // Store submit_message in a global map to avoid HTML escaping issues
-                        window._dynformTemplates = window._dynformTemplates || {};
-                        window._dynformTemplates[formId] = config.submit_message || '';
-
-                        return '<div class="dynform" id="' + formId + '">' +
-                            '<div class="dynform-header">' + (config.title || '입력 요청') + '</div>' +
-                            (config.description ? '<div class="dynform-desc">' + config.description + '</div>' : '') +
-                            '<div class="dynform-fields">' + fieldsHtml + '</div>' +
-                            '<div class="dynform-actions">' +
-                            '<button class="btn-secondary" onclick="this.closest(\'.dynform\').style.display=\'none\'">취소</button>' +
-                            '<button class="btn-primary" data-form-id="' + formId + '" onclick="submitDynForm(this.dataset.formId)">확인</button>' +
-                            '</div></div>';
-                    } catch (e) {
-                        return '<div class="error">입력 폼 파싱 실패</div>';
-                    }
-                });
-                // Clean up empty <p> tags around forms to prevent extra whitespace
-                html = html.replace(/<p>\s*(<div class="dynform")/g, '$1');
-                html = html.replace(/(<\/div>)\s*<\/p>/g, '$1');
-                html = html.replace(/<p>\s*<\/p>/g, '');
-            }
-            // Detect approval request and render inline buttons (fallback for non-WebSocket paths)
-            if (type === 'bot') {
-                const approvalMatch = displayText.match(/(?:승인|[Aa]pproval)\s*ID[:\s]*([a-f0-9-]+)/);
-                if (approvalMatch) {
-                    const approvalId = approvalMatch[1];
-                    // Skip if already rendered via WebSocket progress event
-                    if (!document.getElementById('approval-' + approvalId)) {
-                        const toolMatch = displayText.match(/(?:도구|[Tt]ool)\s*['"]?(\w+)['"]?/);
-                        const toolName = toolMatch ? toolMatch[1] : 'unknown';
-                        const cleanText = displayText.replace(/\(승인 ID:.*?\)/g, '').trim();
-                        try { html = marked.parse(cleanText); } catch(e) { html = escapeHtml(cleanText); }
-                        html += `<div class="chat-approval" id="approval-${approvalId}">
-                            <div class="approval-tool-name">\uD83D\uDD12 ${escapeHtml(toolName)} 실행 승인 필요</div>
-                            <div class="approval-btns">
-                                <button class="btn-approve" onclick="chatApproval('${approvalId}','approve')">\u2705 승인</button>
-                                <button class="btn-deny" onclick="chatApproval('${approvalId}','deny')">\u274C 거부</button>
-                            </div>
-                        </div>`;
-                    }
-                }
-            }
-            div.innerHTML = `<div class="bubble">${html}</div><div class="meta">${type === 'user' ? 'You' : 'BreadMind'} · ${time}</div>`;
-            // Enhance code blocks: add language label + copy button
-            div.querySelectorAll('pre code').forEach(block => {
-                const pre = block.closest('pre');
-                const lang = (block.className.match(/language-(\w+)/) || [])[1] || '';
-                if (lang) pre.setAttribute('data-lang', lang);
-                const btn = document.createElement('button');
-                btn.className = 'copy-btn'; btn.textContent = 'Copy';
-                btn.onclick = () => { navigator.clipboard.writeText(block.textContent); btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy', 1500); };
-                pre.appendChild(btn);
-            });
-            // Render mermaid diagrams if present
-            div.querySelectorAll('pre code.language-mermaid').forEach(block => {
-                const container = document.createElement('div');
-                container.className = 'mermaid';
-                container.textContent = block.textContent;
-                block.closest('pre').replaceWith(container);
-            });
-            try { mermaid.run({nodes: div.querySelectorAll('.mermaid')}); } catch(e) {}
-            messagesDiv.appendChild(div);
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-        }
+        // sendMessage, showThinking, removeThinking, showApprovalCard, addMessage
+        // are now provided by chat.js as global functions
 
         function submitDynForm(formId) {
             const form = document.getElementById(formId);
@@ -1090,9 +792,7 @@
             }
         }
 
-        function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
-        input.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
-        if (typeof initQuickActions === 'function') initQuickActions(input);
+        // escapeHtml, input event listener, and quick actions init are now in chat.js
 
         // ── Coding Jobs ──────────────────────────────────────────
         let _codingJobs = {};
@@ -3123,29 +2823,7 @@
             if (skillInput) skillInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') searchSkills(); });
         });
 
-        async function chatApproval(id, action) {
-            const card = document.getElementById('approval-' + id);
-            if (!card) return;
-            const btns = card.querySelector('.approval-btns');
-            btns.innerHTML = '<span class="approval-done">' + (action === 'approve' ? '⏳ 실행 중...' : '❌ 거부됨') + '</span>';
-            try {
-                const resp = await fetch('/api/approvals/' + id + '/' + action, { method: 'POST' });
-                const data = await resp.json();
-                if (action === 'approve') {
-                    btns.innerHTML = '<span class="approval-done">✅ 승인됨</span>';
-                    if (data.followup) {
-                        // LLM summarized the result
-                        addMessage(data.followup, 'bot');
-                    } else if (data.result && data.result.output) {
-                        // Fallback: show raw tool output
-                        addMessage(data.result.output, 'bot');
-                    }
-                }
-            } catch(err) {
-                console.error('Approval failed:', err);
-                btns.innerHTML = '<span class="approval-done" style="color:#fca5a5;">⚠️ 오류 발생</span>';
-            }
-        }
+        // chatApproval is now in chat.js
 
         function row(label, value, isEnabled) {
             let cls = 'setting-value';
@@ -3675,20 +3353,13 @@
             list.innerHTML = data.servers.map(s => `<div class="tool-item">${s.name} <span style="font-size:10px;padding:1px 4px;border-radius:3px;background:${s.status==='running'?'#166534':'#7f1d1d'};color:${s.status==='running'?'#86efac':'#fca5a5'}">${s.status}</span></div>`).join('');
         }).catch(() => {});
 
-        connect();
-        loadSessions();
+        // connect() and loadSessions() are now handled by chat.js init()
         if (typeof loadSidebarAssistant === 'function') loadSidebarAssistant();
 
         // Restore tab from URL hash
         const hashTab = location.hash.replace('#', '');
         if (hashTab && ['chat','monitoring','store','skills','personal','settings'].includes(hashTab)) {
             switchTab(hashTab);
-        }
-
-        // Restore session from localStorage
-        const savedSession = localStorage.getItem('breadmind_session');
-        if (savedSession) {
-            currentSessionId = savedSession;
         }
 
         // Show onboarding tour for first-time visitors
@@ -3700,5 +3371,6 @@
     <script src="/static/js/integrations.js"></script>
     <script src="/static/js/plugins.js?v=7"></script>
     <script src="/static/js/quick-actions.js"></script>
+    <script src="/static/js/chat.js"></script>
 </body>
 </html>

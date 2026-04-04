@@ -49,12 +49,18 @@ class ServerRuntime:
                     msg = json.loads(data)
                     message = msg.get("message", "")
                     user = msg.get("user", "ws_user")
+                    stream = msg.get("stream", False)
                     try:
-                        response = await self._agent.run(message, user=user, channel="websocket")
-                        await websocket.send_text(json.dumps({
-                            "type": "response",
-                            "message": response,
-                        }))
+                        if stream:
+                            await self._handle_ws_stream(websocket, message, user)
+                        else:
+                            response = await self._agent.run(
+                                message, user=user, channel="websocket",
+                            )
+                            await websocket.send_text(json.dumps({
+                                "type": "response",
+                                "message": response,
+                            }))
                     except Exception as e:
                         await websocket.send_text(json.dumps({
                             "type": "error",
@@ -65,6 +71,64 @@ class ServerRuntime:
 
         self._app = app
         return app
+
+    async def _handle_ws_stream(self, websocket: Any, message: str, user: str) -> None:
+        """WebSocket 스트리밍: StreamEvent를 JSON으로 직렬화하여 전송."""
+        from breadmind.core.protocols import AgentContext
+        from breadmind.plugins.builtin.agent_loop.message_loop import (
+            MessageLoopAgent,
+        )
+
+        # Agent 빌드 (SDK Agent의 내부 MessageLoopAgent에 접근)
+        agent = self._agent
+        agent._build()
+
+        provider = agent.plugins.get("provider")
+        prompt_builder = agent.plugins.get("prompt_builder")
+        tool_registry = agent.plugins.get("tool_registry")
+
+        if provider is None:
+            await websocket.send_text(json.dumps({
+                "type": "error",
+                "data": "Provider not configured",
+            }))
+            return
+
+        if prompt_builder is None:
+            from breadmind.core.protocols import PromptBlock
+
+            class MinimalPromptBuilder:
+                def build(self, ctx):
+                    return [PromptBlock(
+                        section="identity",
+                        content=f"You are {ctx.persona_name}.",
+                        cacheable=True, priority=1,
+                    )]
+            prompt_builder = MinimalPromptBuilder()
+
+        if tool_registry is None:
+            from breadmind.plugins.builtin.tools.registry import HybridToolRegistry
+            tool_registry = HybridToolRegistry()
+
+        loop_agent = MessageLoopAgent(
+            provider=provider,
+            prompt_builder=prompt_builder,
+            tool_registry=tool_registry,
+            safety_guard=agent._safety,
+            max_turns=agent.config.max_turns,
+            prompt_context=agent._prompt_context,
+        )
+
+        ctx = AgentContext(
+            user=user, channel="websocket",
+            session_id=f"{user}:websocket",
+        )
+
+        async for event in loop_agent.handle_message_stream(message, ctx):
+            await websocket.send_text(json.dumps({
+                "type": event.type,
+                "data": event.data,
+            }))
 
     async def start(self, container: Any) -> None:
         import uvicorn

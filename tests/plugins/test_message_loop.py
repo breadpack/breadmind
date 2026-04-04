@@ -31,6 +31,7 @@ def mock_tool_registry():
     registry = MagicMock()
     registry.get_schemas.return_value = []
     registry.execute = AsyncMock(return_value=ToolResult(success=True, output="done"))
+    registry.execute_batch = AsyncMock(return_value=[ToolResult(success=True, output="done")])
     return registry
 
 @pytest.fixture
@@ -72,7 +73,7 @@ async def test_tool_call_then_response(agent, mock_provider, mock_tool_registry)
     resp = await agent.handle_message("list files", ctx)
     assert resp.content == "Files listed."
     assert resp.tool_calls_count == 1
-    mock_tool_registry.execute.assert_called_once()
+    mock_tool_registry.execute_batch.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_max_turns_limit(agent, mock_provider):

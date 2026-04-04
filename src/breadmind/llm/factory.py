@@ -80,12 +80,20 @@ def create_provider(config: Any) -> LLMProvider:
         return OllamaProvider()
 
     if info.env_key:
-        api_key = os.environ.get(info.env_key, "")
-        if not api_key:
+        raw_key = os.environ.get(info.env_key, "")
+        if not raw_key:
             from breadmind.llm.ollama import OllamaProvider
             print(f"Warning: {info.env_key} not set, falling back to ollama")
             return OllamaProvider()
-        return info.cls(api_key=api_key, default_model=config.llm.default_model)
+
+        keys = [k.strip() for k in raw_key.split(",") if k.strip()]
+        if len(keys) > 1:
+            return info.cls(
+                api_key=keys[0],
+                default_model=config.llm.default_model,
+                api_keys=keys,
+            )
+        return info.cls(api_key=keys[0], default_model=config.llm.default_model)
 
     return info.cls()
 

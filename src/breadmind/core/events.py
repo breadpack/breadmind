@@ -105,6 +105,12 @@ class EventType(str, Enum):
     MONITORING_ALERT = "monitoring_alert"
     MEMORY_SAVED = "memory_saved"
     MEMORY_PROMOTED = "memory_promoted"
+    MCP_SERVER_ADDED = "mcp_server_added"
+    MCP_SERVER_REMOVED = "mcp_server_removed"
+    MCP_SERVER_ERROR = "mcp_server_error"
+    MCP_TOOLS_UPDATED = "mcp_tools_updated"
+    APPROVAL_REQUESTED = "approval_requested"
+    APPROVAL_RESOLVED = "approval_resolved"
 
 
 @dataclass

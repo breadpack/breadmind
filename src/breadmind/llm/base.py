@@ -72,6 +72,7 @@ class LLMMessage:
     tool_calls: list[ToolCall] = field(default_factory=list)
     tool_call_id: str | None = None
     name: str | None = None
+    attachments: list = field(default_factory=list)  # list[Attachment]
 
 
 @dataclass

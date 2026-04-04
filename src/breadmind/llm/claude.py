@@ -13,6 +13,7 @@ from .base import (
     TokenUsage,
     ToolDefinition,
 )
+from .key_rotation import KeyRotator
 from .rate_limiter import RateLimiter
 from .token_counter import TokenCounter
 
@@ -27,10 +28,14 @@ class ClaudeProvider(LLMProvider):
         api_key: str,
         default_model: str = "claude-sonnet-4-6",
         rate_limiter: RateLimiter | None = None,
+        api_keys: list[str] | None = None,
     ):
         self._client = anthropic.AsyncAnthropic(api_key=api_key)
         self._default_model = default_model
         self._rate_limiter = rate_limiter
+        self._key_rotator: KeyRotator | None = (
+            KeyRotator(api_keys) if api_keys and len(api_keys) > 1 else None
+        )
 
     async def chat(
         self,
@@ -93,6 +98,20 @@ class ClaudeProvider(LLMProvider):
                 return result
             except anthropic.RateLimitError as e:
                 last_error = e
+
+                # Key rotation: 다른 key로 전환하여 즉시 재시도
+                if self._key_rotator:
+                    current = self._key_rotator.current_key
+                    await self._key_rotator.mark_exhausted(current)
+                    new_key = await self._key_rotator.rotate()
+                    logger.warning(
+                        "Rate limited (attempt %d/%d), rotating API key",
+                        attempt + 1,
+                        _MAX_RETRIES,
+                    )
+                    self._client = anthropic.AsyncAnthropic(api_key=new_key)
+                    continue
+
                 backoff = 2**attempt
                 logger.warning(
                     "Rate limited (attempt %d/%d), retrying in %ds",
@@ -188,6 +207,22 @@ class ClaudeProvider(LLMProvider):
                         for tc in msg.tool_calls
                     ],
                 })
+            elif msg.attachments:
+                # 이미지 첨부가 있는 메시지: content block 배열로 변환
+                content_blocks: list[dict] = []
+                for att in msg.attachments:
+                    if att.type == "image" and att.data and att.media_type:
+                        content_blocks.append({
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": att.media_type,
+                                "data": att.data,
+                            },
+                        })
+                if msg.content:
+                    content_blocks.append({"type": "text", "text": msg.content})
+                result.append({"role": msg.role, "content": content_blocks})
             else:
                 result.append({"role": msg.role, "content": msg.content or ""})
 

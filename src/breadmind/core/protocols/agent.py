@@ -13,6 +13,7 @@ class AgentContext:
     depth: int = 0
     max_depth: int = 5
     isolation: str | None = None
+    resume: bool = False
 
 
 @dataclass
@@ -21,6 +22,7 @@ class AgentResponse:
     content: str
     tool_calls_count: int = 0
     tokens_used: int = 0
+    cost_usd: float = 0.0
 
 
 @runtime_checkable
