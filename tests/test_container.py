@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import MagicMock, patch
-from breadmind.core.container import ContainerExecutor, ContainerResult
+from breadmind.core.sandbox import ContainerExecutor, ContainerResult
 
 
 class TestContainerResult:
