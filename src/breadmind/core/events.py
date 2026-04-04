@@ -23,6 +23,16 @@ class EventType(str, Enum):
     TOOL_APPROVED = "tool_approved"
     TOOL_DENIED = "tool_denied"
 
+    # Orchestrator events
+    ORCHESTRATOR_START = "orchestrator_start"
+    ORCHESTRATOR_REPLAN = "orchestrator_replan"
+    ORCHESTRATOR_END = "orchestrator_end"
+    SUBAGENT_START = "subagent_start"
+    SUBAGENT_END = "subagent_end"
+    SUBAGENT_FAILED = "subagent_failed"
+    DAG_BATCH_START = "dag_batch_start"
+    DAG_BATCH_END = "dag_batch_end"
+
     # Messenger
     MESSENGER_CONNECTED = "messenger_connected"
     MESSENGER_DISCONNECTED = "messenger_disconnected"

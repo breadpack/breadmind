@@ -1,134 +1,113 @@
-import asyncio
-import logging
-import uuid
-from datetime import datetime, timezone
-from dataclasses import dataclass, field
+"""SubAgent: individual task execution unit with its own LLM loop."""
+from __future__ import annotations
 
-logger = logging.getLogger(__name__)
+import logging
+from dataclasses import dataclass
+from typing import Callable, Awaitable
+
+from breadmind.llm.base import LLMProvider, LLMMessage, ToolCall
+
+logger = logging.getLogger("breadmind.subagent")
 
 
 @dataclass
-class SubAgentTask:
-    id: str
-    parent_id: str | None  # parent agent session
-    task: str  # message/instruction
-    status: str = "pending"  # pending, running, completed, failed
-    result: str = ""
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    completed_at: datetime | None = None
-    model: str | None = None
-    container_isolated: bool = False
+class SubAgentResult:
+    task_id: str
+    success: bool
+    output: str
+    turns_used: int = 0
+    error: str = ""
 
 
-class SubAgentManager:
-    """Manage sub-agent spawning for task delegation."""
+class SubAgent:
+    """Executes a single task with a dedicated LLM loop and role-specific tools."""
 
-    _MAX_TASKS = 500
+    def __init__(
+        self,
+        task_id: str,
+        description: str,
+        role: str,
+        provider: LLMProvider,
+        tools: list[dict],
+        system_prompt: str,
+        max_turns: int = 5,
+        tool_executor: Callable[..., Awaitable] | None = None,
+    ) -> None:
+        self._task_id = task_id
+        self._description = description
+        self._role = role
+        self._provider = provider
+        self._tools = tools
+        self._system_prompt = system_prompt
+        self._max_turns = max_turns
+        self._tool_executor = tool_executor
 
-    def __init__(self, agent_factory=None):
-        """agent_factory: callable that creates a new agent instance for isolated execution."""
-        self._agent_factory = agent_factory
-        self._tasks: dict[str, SubAgentTask] = {}
-        self._lock = asyncio.Lock()
-        self._message_handler = None  # Set externally
-        self._bg_tasks: set[asyncio.Task] = set()
+    async def run(self, context: dict[str, str] | None = None) -> SubAgentResult:
+        """Execute the task and return the result."""
+        messages = self._build_messages(context or {})
 
-    def set_message_handler(self, handler):
-        """Set the message handler for sub-agent execution."""
-        self._message_handler = handler
+        for turn in range(self._max_turns):
+            try:
+                response = await self._provider.chat(
+                    messages=messages,
+                    tools=self._tools or None,
+                )
+            except Exception as e:
+                logger.error("SubAgent %s LLM error: %s", self._task_id, e)
+                return SubAgentResult(
+                    task_id=self._task_id, success=False,
+                    output=f"[success=False] LLM error: {e}",
+                    turns_used=turn + 1, error=str(e),
+                )
 
-    async def spawn(self, task: str, parent_id: str = None, model: str = None,
-                    container_isolated: bool = False) -> SubAgentTask:
-        """Spawn a new sub-agent to handle a task asynchronously."""
-        task_id = str(uuid.uuid4())[:8]
-        sa_task = SubAgentTask(
-            id=task_id, parent_id=parent_id, task=task,
-            status="pending", model=model,
-            container_isolated=container_isolated,
+            if not response.has_tool_calls:
+                return SubAgentResult(
+                    task_id=self._task_id, success=True,
+                    output=response.content or "",
+                    turns_used=turn + 1,
+                )
+
+            # Process tool calls
+            messages.append(LLMMessage(
+                role="assistant", content=response.content,
+                tool_calls=response.tool_calls,
+            ))
+
+            for tc in response.tool_calls:
+                tool_output = await self._execute_tool(tc)
+                messages.append(LLMMessage(
+                    role="tool", content=tool_output,
+                    tool_call_id=tc.id, name=tc.name,
+                ))
+
+        # Max turns exceeded
+        last_content = messages[-1].content or "" if messages else ""
+        return SubAgentResult(
+            task_id=self._task_id, success=False,
+            output=f"[success=False] Max turns ({self._max_turns}) exceeded. Last output: {last_content}",
+            turns_used=self._max_turns,
         )
-        async with self._lock:
-            self._tasks[task_id] = sa_task
-            self._cleanup_old_tasks()
 
-        # Execute in background
-        bg = asyncio.create_task(self._execute(sa_task))
-        self._bg_tasks.add(bg)
-        bg.add_done_callback(self._bg_tasks.discard)
-        return sa_task
+    def _build_messages(self, context: dict[str, str]) -> list[LLMMessage]:
+        msgs = [LLMMessage(role="system", content=self._system_prompt)]
+        if context:
+            context_text = "\n".join(
+                f"[Prior result from {tid}]: {output}" for tid, output in context.items()
+            )
+            msgs.append(LLMMessage(
+                role="system",
+                content=f"Context from prior tasks:\n{context_text}",
+            ))
+        msgs.append(LLMMessage(role="user", content=self._description))
+        return msgs
 
-    def _cleanup_old_tasks(self) -> None:
-        """Remove oldest completed/failed tasks when exceeding _MAX_TASKS."""
-        if len(self._tasks) <= self._MAX_TASKS:
-            return
-        finished = sorted(
-            (t for t in self._tasks.values() if t.status in ("completed", "failed")),
-            key=lambda t: t.created_at,
-        )
-        to_remove = len(self._tasks) - self._MAX_TASKS
-        for t in finished[:to_remove]:
-            del self._tasks[t.id]
-
-    async def _execute(self, sa_task: SubAgentTask):
-        """Execute sub-agent task."""
-        sa_task.status = "running"
+    async def _execute_tool(self, tc: ToolCall) -> str:
+        if self._tool_executor is None:
+            return f"[success=False] No tool executor available for {tc.name}"
         try:
-            # Container-isolated execution
-            if sa_task.container_isolated:
-                try:
-                    from breadmind.core.container import ContainerExecutor
-                    executor = ContainerExecutor()
-                    result = await executor.run_subagent(sa_task.task)
-                    if result.error:
-                        sa_task.result = f"Container error: {result.error}"
-                        sa_task.status = "failed"
-                    else:
-                        sa_task.result = result.stdout
-                        sa_task.status = "completed"
-                except Exception as e:
-                    sa_task.result = f"Container isolation failed: {e}"
-                    sa_task.status = "failed"
-                    logger.error(f"Sub-agent {sa_task.id} container execution failed: {e}")
-                return
-
-            if self._message_handler:
-                if asyncio.iscoroutinefunction(self._message_handler):
-                    result = await self._message_handler(
-                        sa_task.task, user="subagent", channel=f"subagent:{sa_task.id}"
-                    )
-                else:
-                    result = self._message_handler(
-                        sa_task.task, user="subagent", channel=f"subagent:{sa_task.id}"
-                    )
-                sa_task.result = str(result)
-                sa_task.status = "completed"
-            else:
-                sa_task.result = "No message handler available"
-                sa_task.status = "failed"
+            result = await self._tool_executor(tc.name, tc.arguments)
+            prefix = "[success=True]" if result.success else "[success=False]"
+            output = str(result.output)[:50000]
+            return f"{prefix} {output}"
         except Exception as e:
-            sa_task.result = f"Error: {e}"
-            sa_task.status = "failed"
-            logger.error(f"Sub-agent {sa_task.id} failed: {e}")
-        finally:
-            sa_task.completed_at = datetime.now(timezone.utc)
-
-    def get_task(self, task_id: str) -> dict | None:
-        task = self._tasks.get(task_id)
-        if not task:
-            return None
-        return {
-            "id": task.id, "parent_id": task.parent_id, "task": task.task,
-            "status": task.status, "result": task.result,
-            "created_at": task.created_at.isoformat(),
-            "completed_at": task.completed_at.isoformat() if task.completed_at else None,
-            "model": task.model,
-        }
-
-    def list_tasks(self, limit: int = 20) -> list[dict]:
-        tasks = sorted(self._tasks.values(), key=lambda t: t.created_at, reverse=True)[:limit]
-        return [self.get_task(t.id) for t in tasks]
-
-    def get_status(self) -> dict:
-        statuses = {"pending": 0, "running": 0, "completed": 0, "failed": 0}
-        for t in self._tasks.values():
-            statuses[t.status] = statuses.get(t.status, 0) + 1
-        return {"total": len(self._tasks), **statuses}
+            return f"[success=False] Tool error: {e}"

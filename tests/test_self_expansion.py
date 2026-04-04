@@ -4,48 +4,9 @@ from unittest.mock import AsyncMock, MagicMock
 from breadmind.core.performance import PerformanceTracker
 from breadmind.core.skill_store import SkillStore
 from breadmind.core.tool_gap import ToolGapDetector
-from breadmind.core.team_builder import TeamBuilder
-from breadmind.core.swarm import SwarmManager
 
 
 class TestSelfExpansionIntegration:
-    @pytest.mark.asyncio
-    async def test_full_expansion_flow(self):
-        """Test: TeamBuilder creates role -> Swarm executes -> PerformanceTracker records."""
-        tracker = PerformanceTracker()
-        skill_store = SkillStore(tracker=tracker)
-
-        call_log = []
-        async def mock_handler(msg, user="", channel=""):
-            call_log.append(channel)
-            if "team_build" in channel:
-                return "ASSESS|general|0.3|skip\nCREATE|test_expert|Test expert|You are a test expert.|test"
-            if "decompose" in channel:
-                return "TASK|test_expert|Run the test analysis|none"
-            if "aggregate" in channel:
-                return "Test analysis complete"
-            return "Task done"
-
-        manager = SwarmManager(message_handler=mock_handler, tracker=tracker)
-        team_builder = TeamBuilder(manager, tracker, skill_store, mock_handler)
-        manager.set_team_builder(team_builder)
-
-        swarm = await manager.spawn_swarm("Analyze test coverage")
-        for _ in range(100):
-            await asyncio.sleep(0.1)
-            info = manager.get_swarm(swarm.id)
-            if info and info["status"] in ("completed", "failed"):
-                break
-
-        # Verify: role was created
-        roles = [r["role"] for r in manager.get_available_roles()]
-        assert "test_expert" in roles
-
-        # Verify: performance was tracked
-        stats = tracker.get_role_stats("test_expert")
-        assert stats is not None
-        assert stats.total_runs >= 1
-
     @pytest.mark.asyncio
     async def test_tool_gap_to_suggestion_flow(self):
         """Test: unknown tool -> ToolGapDetector suggests MCP -> suggestion available."""

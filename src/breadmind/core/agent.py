@@ -38,6 +38,7 @@ class CoreAgent:
         behavior_prompt: str | None = None,
         profiler: object | None = None,
         prompt_builder: object | None = None,
+        orchestrator: object | None = None,
     ):
         self._provider = provider
         self._tools = tool_registry
@@ -60,6 +61,7 @@ class CoreAgent:
         self._progress_callback: object | None = None
         self._profiler = profiler
         self._prompt_builder = prompt_builder
+        self._orchestrator = orchestrator
         self._provider_name: str = ""
         self._persona: str = "professional"
         self._role: str | None = None
@@ -321,6 +323,29 @@ class CoreAgent:
         # Record intent for adaptive user profiling
         if self._profiler:
             self._profiler.record_intent(user, intent.category.value)
+
+        # Step 1.5: Route complex tasks to Orchestrator
+        if self._orchestrator and intent.complexity == "complex":
+            logger.info(json.dumps({"event": "orchestrator_route", "complexity": "complex"}))
+            if self._progress_callback:
+                await self._progress_callback("orchestrator", "Complex task detected, routing to orchestrator...")
+            try:
+                result = await self._orchestrator.run(message, user=user, channel=channel)
+                # Store result in working memory
+                if self._working_memory is not None:
+                    self._working_memory.add_message(
+                        session_id,
+                        LLMMessage(role="assistant", content=result),
+                    )
+                await get_event_bus().publish_fire_and_forget(Event(
+                    type=EventType.SESSION_END,
+                    data={"user": user, "channel": channel, "session_id": session_id, "route": "orchestrator"},
+                    source="agent",
+                ))
+                return result
+            except Exception as e:
+                logger.warning("Orchestrator failed, falling back to single agent: %s", e)
+                # Fall through to normal single-agent loop
 
         # Auto-resolve credential_ref in user message — bypass LLM
         import re as _cred_re
@@ -629,7 +654,7 @@ class CoreAgent:
             "skill_manage", "memory_save", "memory_search",
             "swarm_role", "messenger_connect", "network_scan", "router_manage",
             "task_create", "task_list", "event_create", "event_list",
-            "reminder_set", "delegate_tasks",
+            "reminder_set",
         }
 
         if len(tools) <= max_tools:

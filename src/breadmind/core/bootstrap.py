@@ -124,6 +124,22 @@ async def init_core_services(config, db, provider, safety_cfg, vault=None):
     )
     container.register("safety_guard", guard)
 
+    # ── Role Registry & Orchestrator ────────────────────────────
+    from breadmind.core.role_registry import RoleRegistry
+    from breadmind.core.result_evaluator import ResultEvaluator
+    from breadmind.core.orchestrator import Orchestrator
+
+    role_registry = RoleRegistry()
+    container.register("role_registry", role_registry)
+
+    orchestrator = Orchestrator(
+        provider=provider,
+        role_registry=role_registry,
+        evaluator=ResultEvaluator(),
+        tool_registry=registry,
+    )
+    container.register("orchestrator", orchestrator)
+
     # ── MCP Client ──────────────────────────────────────────────
     from breadmind.tools.mcp_client import MCPClientManager
     mcp_manager = MCPClientManager(
@@ -351,6 +367,7 @@ async def init_core_services(config, db, provider, safety_cfg, vault=None):
         "mcp_store": mcp_store,
         "adapter_registry": adapter_registry,
         "oauth_manager": oauth_manager,
+        "orchestrator": orchestrator,
     }
 
 
@@ -394,7 +411,7 @@ async def init_plugins(container: ServiceContainer):
 
 # ── Phase 5: Agent ───────────────────────────────────────────────────────
 
-async def init_agent(config, provider, registry, guard, db, memory_components):
+async def init_agent(config, provider, registry, guard, db, memory_components, orchestrator=None):
     """Initialize CoreAgent with BehaviorTracker."""
     from breadmind.core.agent import CoreAgent
     from breadmind.config import DEFAULT_PERSONA
@@ -477,6 +494,8 @@ async def init_agent(config, provider, registry, guard, db, memory_components):
     )
     if audit_logger is not None:
         agent_kwargs["audit_logger"] = audit_logger
+    if orchestrator is not None:
+        agent_kwargs["orchestrator"] = orchestrator
 
     agent = CoreAgent(**agent_kwargs)
 
@@ -689,6 +708,7 @@ async def bootstrap_all(
                 "context_builder": components.context_builder,
                 "profiler": components.profiler,
             },
+            orchestrator=components.container.get("orchestrator") if components.container else None,
         )
         logger.info("Phase 5 complete: agent initialized")
     except Exception as e:
@@ -701,9 +721,9 @@ async def bootstrap_all(
                 components.db, message_router, event_callback,
                 vault=components.credential_vault,
             )
-            # Register orchestrator in container for messenger plugin
+            # Register messenger connection orchestrator in container for messenger plugin
             if components.container and messenger_result.get("orchestrator"):
-                components.container.register("orchestrator", messenger_result["orchestrator"])
+                components.container.register("connection_orchestrator", messenger_result["orchestrator"])
             logger.info("Phase 6 complete: messenger initialized")
         except Exception as e:
             logger.error("Phase 6 failed (messenger): %s", e)

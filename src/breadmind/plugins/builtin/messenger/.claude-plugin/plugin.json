@@ -7,7 +7,7 @@
     "enabled_by_default": false,
     "depends_on": [],
     "requires": [],
-    "optional_requires": ["orchestrator"],
+    "optional_requires": ["connection_orchestrator"],
     "python_module": "plugin",
     "safety": { "require_approval": [], "blacklist": [] }
   }
