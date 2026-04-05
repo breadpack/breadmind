@@ -5,10 +5,11 @@ import asyncio
 import logging
 import re
 import time
-import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Awaitable
+
+from breadmind.utils.helpers import cancel_task_safely, generate_short_id
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,7 @@ class CronEngine:
         handler: Callable,
         args: dict | None = None,
     ) -> CronJob:
-        job_id = f"cron_{uuid.uuid4().hex[:8]}"
+        job_id = f"cron_{generate_short_id()}"
         job = CronJob(
             id=job_id,
             name=name,
@@ -98,12 +99,7 @@ class CronEngine:
 
     async def stop(self) -> None:
         self._running = False
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
+        await cancel_task_safely(self._task)
 
     async def _run_loop(self) -> None:
         while self._running:

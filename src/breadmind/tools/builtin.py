@@ -5,9 +5,9 @@ import os
 import re
 import shlex
 import sys
-import uuid
 from pathlib import Path
 from breadmind.messenger.auto_connect.base import _get_base_url
+from breadmind.utils.helpers import generate_short_id
 from breadmind.tools.registry import tool
 
 logger = logging.getLogger(__name__)
@@ -266,7 +266,7 @@ async def shell_exec(command: str, host: str = "localhost", timeout: int = 30,
 
         # Background execution: return immediately with a job ID
         if run_in_background:
-            job_id = f"bg_{uuid.uuid4().hex[:8]}"
+            job_id = f"bg_{generate_short_id()}"
             _background_jobs[job_id] = proc
             return (
                 f"Background job started: {job_id}. "

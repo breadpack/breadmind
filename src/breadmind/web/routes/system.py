@@ -495,10 +495,10 @@ def setup_system_routes(r: APIRouter, app_state):
         if not webhook_manager:
             return JSONResponse(status_code=503, content={"error": "Webhook manager not configured"})
         data = await request.json()
-        import uuid
+        from breadmind.utils.helpers import generate_short_id
         from breadmind.web.webhook import WebhookEndpoint
         ep = WebhookEndpoint(
-            id=data.get("id", str(uuid.uuid4())[:8]),
+            id=data.get("id", generate_short_id()),
             name=data.get("name", ""),
             path=data.get("path", ""),
             event_type=data.get("event_type", "generic"),

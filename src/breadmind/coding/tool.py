@@ -5,7 +5,6 @@ import json
 import logging
 import shutil
 import time
-import uuid
 from pathlib import Path
 
 from breadmind.tools.registry import ToolResult
@@ -14,6 +13,7 @@ from breadmind.coding.executors.local import LocalExecutor
 from breadmind.coding.executors.remote import RemoteExecutor
 from breadmind.coding.session_store import CodingSessionStore
 from breadmind.coding.project_config import ProjectConfigManager
+from breadmind.utils.helpers import generate_short_id
 
 logger = logging.getLogger("breadmind.coding")
 
@@ -104,7 +104,7 @@ def create_code_delegate_tool(db=None, session_store=None, provider=None):
             try:
                 from breadmind.coding.channel_supervisor import ChannelSupervisor
 
-                sup_session_id = session_id or str(uuid.uuid4())[:8]
+                sup_session_id = session_id or generate_short_id()
                 supervisor = ChannelSupervisor(
                     provider=provider,
                     max_auto_retries=3,
@@ -310,7 +310,7 @@ async def _execute_long_running(
     import asyncio
     from breadmind.coding.job_tracker import JobTracker
 
-    job_id = str(uuid.uuid4())[:8]
+    job_id = generate_short_id()
     tracker = JobTracker.get_instance()
 
     # Ensure project directory exists

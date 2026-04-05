@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import json
 import time
-import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from breadmind.utils.helpers import generate_short_id
 
 
 @dataclass
@@ -48,7 +49,7 @@ class SessionForker:
             branch_at = len(messages)
         branch_at = max(0, min(branch_at, len(messages)))
 
-        new_id = uuid.uuid4().hex[:12]
+        new_id = generate_short_id(12)
         branch = SessionBranch(
             session_id=new_id,
             parent_id=parent_session_id,

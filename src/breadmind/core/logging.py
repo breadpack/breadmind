@@ -8,7 +8,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
@@ -55,7 +54,8 @@ def get_request_context() -> RequestContext:
 
 def generate_trace_id() -> str:
     """uuid4 hex의 앞 16자리로 trace_id를 생성한다."""
-    return uuid.uuid4().hex[:16]
+    from breadmind.utils.helpers import generate_short_id
+    return generate_short_id(16)
 
 
 @contextmanager

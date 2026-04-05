@@ -4,11 +4,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Awaitable
+
+from breadmind.utils.helpers import generate_short_id
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +68,7 @@ class TaskBoard:
     async def add_task(self, title: str, description: str = "",
                        depends_on: list[str] | None = None) -> TeamTask:
         async with self._lock:
-            task_id = f"task_{uuid.uuid4().hex[:8]}"
+            task_id = f"task_{generate_short_id()}"
             task = TeamTask(
                 id=task_id, title=title, description=description,
                 depends_on=depends_on or [],
@@ -142,7 +143,7 @@ class Mailbox:
     async def send(self, from_agent: str, to_agent: str, content: str,
                    reply_to: str | None = None) -> TeamMessage:
         msg = TeamMessage(
-            id=f"msg_{uuid.uuid4().hex[:8]}",
+            id=f"msg_{generate_short_id()}",
             from_agent=from_agent, to_agent=to_agent,
             content=content, reply_to=reply_to,
         )
@@ -169,7 +170,7 @@ class AgentTeam:
 
     def __init__(self, name: str, lead_id: str = "") -> None:
         self._name = name
-        self._lead_id = lead_id or f"lead_{uuid.uuid4().hex[:8]}"
+        self._lead_id = lead_id or f"lead_{generate_short_id()}"
         self._teammates: dict[str, TeammateConfig] = {}
         self._task_board = TaskBoard()
         self._mailbox = Mailbox()

@@ -1,7 +1,6 @@
 from __future__ import annotations
 import logging
 import time
-import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
@@ -15,6 +14,7 @@ from breadmind.core.sanitizer import InputSanitizer
 from breadmind.plugins.builtin.safety.approval import ApprovalHandler, ApprovalRequest
 from breadmind.plugins.builtin.safety.guard import SafetyGuard
 from breadmind.plugins.builtin.safety.hooks import HookRunner
+from breadmind.utils.helpers import generate_short_id
 
 if TYPE_CHECKING:
     from breadmind.plugins.builtin.agent_loop.auto_compact import AutoCompactor
@@ -57,7 +57,7 @@ class MessageLoopAgent:
         self._max_turns = max_turns
         self._memory = memory
         self._prompt_context = prompt_context or PromptContext()
-        self._agent_id = f"agent_{uuid.uuid4().hex[:8]}"
+        self._agent_id = f"agent_{generate_short_id()}"
         self._hook_runner = hook_runner
         self._auto_compactor = auto_compactor
         self._output_limiter = output_limiter

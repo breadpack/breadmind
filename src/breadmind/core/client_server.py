@@ -6,9 +6,10 @@ dedicated server process, control it from a lightweight client.
 
 from __future__ import annotations
 
-import uuid
 from dataclasses import dataclass, field
 from enum import Enum
+
+from breadmind.utils.helpers import generate_short_id
 
 
 class NodeRole(str, Enum):
@@ -103,7 +104,7 @@ class InferenceClient:
     def __init__(self, config: ClientConfig | None = None) -> None:
         self._config = config or ClientConfig()
         self._connected = False
-        self._session_id = uuid.uuid4().hex[:12]
+        self._session_id = generate_short_id(12)
 
     @property
     def connected(self) -> bool:

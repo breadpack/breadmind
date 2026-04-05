@@ -144,8 +144,8 @@ def setup_chat_routes(r: APIRouter, app_state):
                     continue
 
                 if msg.get("type") == "new_session":
-                    import uuid
-                    current_session = str(uuid.uuid4())[:8]
+                    from breadmind.utils.helpers import generate_short_id
+                    current_session = generate_short_id()
                     await websocket.send_text(json.dumps({
                         "type": "session_created",
                         "session_id": current_session,

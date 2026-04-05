@@ -12,6 +12,8 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
+from breadmind.utils.helpers import cancel_task_safely
+
 logger = logging.getLogger(__name__)
 
 
@@ -66,12 +68,7 @@ class MemoryGC:
 
     async def stop(self):
         """Stop the periodic GC loop."""
-        if self._task and not self._task.done():
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
+        await cancel_task_safely(self._task)
         logger.info("MemoryGC stopped")
 
     def get_stats(self) -> dict:

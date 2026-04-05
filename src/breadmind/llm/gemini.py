@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import uuid
 from collections.abc import AsyncGenerator
 
 import json
@@ -15,6 +14,7 @@ from .base import (
     ToolDefinition,
 )
 from .retry import RetryConfig, retry_with_backoff, retry_with_backoff_stream
+from breadmind.utils.helpers import generate_short_id
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -400,7 +400,7 @@ class GeminiProvider(LLMProvider):
                 # Save the raw part for exact round-trip
                 metadata["_raw_part"] = part
                 tool_calls.append(ToolCall(
-                    id=str(uuid.uuid4())[:8],
+                    id=generate_short_id(),
                     name=fc.get("name", ""),
                     arguments=fc.get("args", {}),
                     metadata=metadata,

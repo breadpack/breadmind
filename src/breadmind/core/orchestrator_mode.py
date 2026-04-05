@@ -7,9 +7,10 @@ agent roles (planner, coder, debugger, reviewer).  Inspired by Kilo Code.
 from __future__ import annotations
 
 import re
-import uuid
 from dataclasses import dataclass, field
 from enum import Enum
+
+from breadmind.utils.helpers import generate_short_id
 
 
 class AgentRole(str, Enum):
@@ -21,7 +22,7 @@ class AgentRole(str, Enum):
 
 @dataclass
 class SubTask:
-    id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
+    id: str = field(default_factory=generate_short_id)
     description: str = ""
     assigned_to: AgentRole = AgentRole.CODER
     depends_on: list[str] = field(default_factory=list)
@@ -74,7 +75,7 @@ class OrchestratorMode:
             task_description=task_description,
             subtasks=subtasks,
         )
-        plan_id = uuid.uuid4().hex[:8]
+        plan_id = generate_short_id()
         self._plans[plan_id] = plan
         for st in subtasks:
             self._all_subtasks[st.id] = st

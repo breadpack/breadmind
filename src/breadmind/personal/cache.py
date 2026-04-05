@@ -11,6 +11,8 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from breadmind.utils.helpers import cancel_task_safely
+
 logger = logging.getLogger(__name__)
 
 
@@ -104,12 +106,7 @@ class PersonalCache:
         logger.info("PersonalCache prefetch loop started (interval=%ds)", interval)
 
     async def stop(self) -> None:
-        if self._prefetch_task:
-            self._prefetch_task.cancel()
-            try:
-                await self._prefetch_task
-            except asyncio.CancelledError:
-                pass
+        await cancel_task_safely(self._prefetch_task)
 
 
 # Singleton instance

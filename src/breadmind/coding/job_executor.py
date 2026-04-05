@@ -12,6 +12,8 @@ import logging
 import time
 from typing import Any
 
+from breadmind.utils.helpers import generate_short_id
+
 logger = logging.getLogger("breadmind.coding.job_executor")
 
 
@@ -60,8 +62,7 @@ class CodingJobExecutor:
 
         # Register with JobTracker
         if not job_id:
-            import uuid
-            job_id = str(uuid.uuid4())[:8]
+            job_id = generate_short_id()
         self._tracker.create_job(
             job_id=job_id, project=project, agent=agent,
             prompt=original_prompt,

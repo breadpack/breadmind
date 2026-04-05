@@ -6,6 +6,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
+from breadmind.utils.helpers import cancel_task_safely
+
 if TYPE_CHECKING:
     from breadmind.personal.adapters.base import AdapterRegistry
 
@@ -27,12 +29,7 @@ class PersonalScheduler:
         logger.info("PersonalScheduler started (interval=%ds)", self._check_interval)
 
     async def stop(self) -> None:
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
+        await cancel_task_safely(self._task)
 
     async def _loop(self) -> None:
         while True:

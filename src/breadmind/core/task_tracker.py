@@ -4,10 +4,11 @@ from __future__ import annotations
 import json
 import os
 import time
-import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
+
+from breadmind.utils.helpers import generate_short_id
 
 
 class TaskStatus(str, Enum):
@@ -44,7 +45,7 @@ class TaskTracker:
     def create(self, title: str, description: str = "",
                blocked_by: list[str] | None = None,
                owner: str = "", metadata: dict | None = None) -> TrackedTask:
-        task_id = f"task_{uuid.uuid4().hex[:8]}"
+        task_id = f"task_{generate_short_id()}"
         task = TrackedTask(
             id=task_id, title=title, description=description,
             blocked_by=blocked_by or [], owner=owner,
