@@ -11,11 +11,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from textwrap import dedent
 
+from breadmind.constants import DEFAULT_CLAUDE_MODEL
+
 
 @dataclass
 class ActionConfig:
     trigger: str = "pull_request"
-    model: str = "claude-sonnet-4-6"
+    model: str = DEFAULT_CLAUDE_MODEL
     allowed_tools: list[str] = field(default_factory=list)
     prompt: str = ""
     timeout_minutes: int = 10

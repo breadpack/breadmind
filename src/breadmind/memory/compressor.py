@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from breadmind.constants import THINK_BUDGET_SMALL
 from breadmind.llm.base import LLMMessage
 
 logger = logging.getLogger("breadmind.memory.compressor")
@@ -127,7 +128,7 @@ async def compress_history(
         ]
         response = await provider.chat(
             messages=summary_messages,
-            think_budget=1024,
+            think_budget=THINK_BUDGET_SMALL,
         )
         summary_text = response.content or ""
 

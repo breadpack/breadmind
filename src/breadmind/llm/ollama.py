@@ -16,6 +16,7 @@ from .base import (
 from .rate_limiter import RateLimiter
 from .retry import RetryConfig, retry_with_backoff, retry_with_backoff_stream
 from .token_counter import TokenCounter
+from breadmind.constants import DEFAULT_OLLAMA_MODEL
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -31,7 +32,7 @@ class OllamaProvider(LLMProvider):
     def __init__(
         self,
         base_url: str = "http://localhost:11434",
-        default_model: str = "llama3",
+        default_model: str = DEFAULT_OLLAMA_MODEL,
         rate_limiter: RateLimiter | None = None,
         retry_config: RetryConfig | None = None,
         session_manager: "HTTPSessionManager | None" = None,

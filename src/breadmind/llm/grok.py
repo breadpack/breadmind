@@ -13,6 +13,7 @@ from .base import (
     ToolDefinition,
 )
 from .retry import RetryConfig, retry_with_backoff, retry_with_backoff_stream
+from breadmind.constants import DEFAULT_GROK_MODEL, DEFAULT_MAX_TOKENS
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ class GrokProvider(LLMProvider):
     def __init__(
         self,
         api_key: str,
-        default_model: str = "grok-3",
+        default_model: str = DEFAULT_GROK_MODEL,
         retry_config: RetryConfig | None = None,
     ):
         self._client = openai.AsyncOpenAI(
@@ -44,7 +45,7 @@ class GrokProvider(LLMProvider):
         api_messages = self._convert_messages(messages)
         kwargs: dict = {
             "model": model or self._default_model,
-            "max_tokens": 4096,
+            "max_tokens": DEFAULT_MAX_TOKENS,
             "messages": api_messages,
         }
 
@@ -77,7 +78,7 @@ class GrokProvider(LLMProvider):
         api_messages = self._convert_messages(messages)
         kwargs: dict = {
             "model": model or self._default_model,
-            "max_tokens": 4096,
+            "max_tokens": DEFAULT_MAX_TOKENS,
             "messages": api_messages,
             "stream": True,
         }

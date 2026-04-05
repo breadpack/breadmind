@@ -9,6 +9,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse, JSONResponse
 
+from breadmind.constants import MAX_UPLOAD_SIZE
 from breadmind.web.dependencies import get_db
 
 logger = logging.getLogger(__name__)
@@ -18,7 +19,7 @@ router = APIRouter(tags=["files"])
 
 @dataclass
 class UploadConfig:
-    max_file_size: int = 10 * 1024 * 1024  # 10MB
+    max_file_size: int = MAX_UPLOAD_SIZE
     allowed_types: list[str] = field(default_factory=lambda: [
         "image/png",
         "image/jpeg",

@@ -14,6 +14,7 @@ from .base import (
     ToolDefinition,
 )
 from .retry import RetryConfig, retry_with_backoff, retry_with_backoff_stream
+from breadmind.constants import DEFAULT_LLM_TIMEOUT, MAX_TOKENS_GEMINI
 from breadmind.utils.helpers import generate_short_id
 
 from typing import TYPE_CHECKING
@@ -71,7 +72,7 @@ class GeminiProvider(LLMProvider):
                 self._convert_tool(t) for t in tools
             ]}]
 
-        body["generationConfig"] = {"maxOutputTokens": 8192}
+        body["generationConfig"] = {"maxOutputTokens": MAX_TOKENS_GEMINI}
 
         # Adjust thinking budget based on task complexity
         effective_budget = think_budget if think_budget is not None else 0
@@ -91,7 +92,7 @@ class GeminiProvider(LLMProvider):
                     url,
                     json=body,
                     headers={"Content-Type": "application/json"},
-                    timeout=aiohttp.ClientTimeout(total=120),
+                    timeout=aiohttp.ClientTimeout(total=DEFAULT_LLM_TIMEOUT),
                 ) as resp:
                     if resp.status == 429:
                         raise _GeminiHTTPError(resp.status, "Rate limited")
@@ -142,7 +143,7 @@ class GeminiProvider(LLMProvider):
         # (tool call turn은 handle_message_stream에서 비스트리밍 chat()으로 처리)
 
         body["generationConfig"] = {
-            "maxOutputTokens": 8192,
+            "maxOutputTokens": MAX_TOKENS_GEMINI,
             "responseModalities": ["TEXT"],
         }
 
@@ -158,7 +159,7 @@ class GeminiProvider(LLMProvider):
                     url,
                     json=body,
                     headers={"Content-Type": "application/json"},
-                    timeout=aiohttp.ClientTimeout(total=120),
+                    timeout=aiohttp.ClientTimeout(total=DEFAULT_LLM_TIMEOUT),
                 ) as resp:
                     if resp.status != 200:
                         if resp.status in {429, 500, 502, 503, 529}:

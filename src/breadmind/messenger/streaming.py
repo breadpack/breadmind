@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Awaitable
 
+from breadmind.constants import TELEGRAM_MAX_MESSAGE_LENGTH, SLACK_MAX_MESSAGE_LENGTH
+
 logger = logging.getLogger(__name__)
 
 
@@ -159,7 +161,7 @@ class TelegramStreamAdapter(BaseStreamAdapter):
 
     def default_config(self) -> StreamConfig:
         return StreamConfig(
-            min_chars=100, max_chars=4096,
+            min_chars=100, max_chars=TELEGRAM_MAX_MESSAGE_LENGTH,
             update_interval_ms=1500,  # Telegram rate limit friendly
             coalesce=True, code_fence_aware=True,
         )
@@ -189,7 +191,7 @@ class SlackStreamAdapter(BaseStreamAdapter):
 
     def default_config(self) -> StreamConfig:
         return StreamConfig(
-            min_chars=80, max_chars=3000,
+            min_chars=80, max_chars=SLACK_MAX_MESSAGE_LENGTH,
             update_interval_ms=2000,  # Slack API rate limit: ~1 req/sec
             coalesce=True, code_fence_aware=True,
         )

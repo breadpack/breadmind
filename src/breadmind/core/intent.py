@@ -9,6 +9,13 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum
 
+from breadmind.constants import (
+    THINK_BUDGET_MEDIUM,
+    THINK_BUDGET_LARGE,
+    THINK_BUDGET_DIAGNOSE,
+    THINK_BUDGET_CODING,
+)
+
 
 class IntentCategory(str, Enum):
     QUERY = "query"           # Information lookup (status, logs, metrics)
@@ -240,17 +247,17 @@ def classify(message: str) -> Intent:
 # Complex reasoning tasks get more budget, simple ones get less.
 # Claude extended_thinking: 1,024 ~ 128,000 / Gemini thinkingBudget: 0 ~ 24,576
 _THINK_BUDGETS: dict[IntentCategory, int] = {
-    IntentCategory.CHAT: 0,          # Simple conversation — no deep thinking
-    IntentCategory.LEARN: 2048,      # Memory ops — minimal reasoning
-    IntentCategory.QUERY: 4096,      # Info lookup — data interpretation
-    IntentCategory.CONFIGURE: 4096,  # Settings — impact assessment
-    IntentCategory.EXECUTE: 10240,   # Actions — multi-step execution planning
-    IntentCategory.DIAGNOSE: 16384,  # Troubleshooting — deep root-cause analysis, multiple hypotheses
-    IntentCategory.SCHEDULE: 5120,   # Calendar ops — date/time reasoning
-    IntentCategory.TASK: 5120,       # Task management — priority assessment
-    IntentCategory.SEARCH_FILES: 5120,  # File search — query formulation
-    IntentCategory.CONTACT: 3072,    # Contact lookup — simple matching
-    IntentCategory.CODING: 12288,    # Coding tasks — planning, design, implementation strategy
+    IntentCategory.CHAT: 0,               # Simple conversation — no deep thinking
+    IntentCategory.LEARN: 2048,           # Memory ops — minimal reasoning
+    IntentCategory.QUERY: THINK_BUDGET_MEDIUM,      # Info lookup — data interpretation
+    IntentCategory.CONFIGURE: THINK_BUDGET_MEDIUM,  # Settings — impact assessment
+    IntentCategory.EXECUTE: THINK_BUDGET_LARGE,     # Actions — multi-step execution planning
+    IntentCategory.DIAGNOSE: THINK_BUDGET_DIAGNOSE, # Troubleshooting — deep root-cause analysis, multiple hypotheses
+    IntentCategory.SCHEDULE: 5120,        # Calendar ops — date/time reasoning
+    IntentCategory.TASK: 5120,            # Task management — priority assessment
+    IntentCategory.SEARCH_FILES: 5120,    # File search — query formulation
+    IntentCategory.CONTACT: 3072,         # Contact lookup — simple matching
+    IntentCategory.CODING: THINK_BUDGET_CODING,     # Coding tasks — planning, design, implementation strategy
 }
 
 

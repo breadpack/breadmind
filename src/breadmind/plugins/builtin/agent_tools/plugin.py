@@ -6,6 +6,7 @@ import asyncio
 import logging
 from typing import Any, Callable
 
+from breadmind.constants import THINK_BUDGET_SMALL
 from breadmind.plugins.protocol import BaseToolPlugin
 from breadmind.tools.registry import tool
 
@@ -203,7 +204,7 @@ class AgentToolsPlugin(BaseToolPlugin):
                     response = await provider.chat(
                         messages=sub_messages,
                         tools=sub_tools or None,
-                        think_budget=1024,
+                        think_budget=THINK_BUDGET_SMALL,
                     )
 
                 return {

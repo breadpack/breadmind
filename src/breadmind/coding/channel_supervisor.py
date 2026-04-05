@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from breadmind.constants import THINK_BUDGET_SMALL
+
 from aiohttp import web
 
 logger = logging.getLogger("breadmind.coding.channel")
@@ -337,7 +339,7 @@ class ChannelSupervisor:
         ]
 
         try:
-            response = await self._provider.chat(messages=messages, think_budget=1024)
+            response = await self._provider.chat(messages=messages, think_budget=THINK_BUDGET_SMALL)
             data = json.loads(response.content)
             return SupervisorAction(
                 action=data.get("action", "continue"),
