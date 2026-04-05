@@ -2,10 +2,9 @@
 from __future__ import annotations
 
 import logging
-import uuid
 from typing import Callable
 
-from breadmind.messenger.router import MessengerGateway, IncomingMessage
+from breadmind.messenger.router import MessengerGateway
 
 logger = logging.getLogger(__name__)
 
@@ -14,10 +13,9 @@ class TeamsGateway(MessengerGateway):
     """Microsoft Teams bot using Bot Framework REST API."""
 
     def __init__(self, app_id: str, app_password: str, on_message: Callable | None = None) -> None:
+        super().__init__(platform="teams", on_message=on_message)
         self._app_id = app_id
         self._app_password = app_password
-        self._on_message = on_message
-        self._connected = False
         self._access_token: str = ""
         self._service_url: str = ""
 
@@ -54,11 +52,8 @@ class TeamsGateway(MessengerGateway):
                 elif resp.status not in (200, 201):
                     logger.error("Teams send failed: %s", await resp.text())
 
-    async def ask_approval(self, channel_id: str, action_name: str, params: dict) -> str:
-        action_id = str(uuid.uuid4())[:8]
-        text = f"Approval Required: {action_name}\nParams: {params}\nAction ID: {action_id}"
-        await self.send(channel_id, text)
-        return action_id
+    def _format_approval_message(self, action_name: str, params: dict, action_id: str) -> str:
+        return f"Approval Required: {action_name}\nParams: {params}\nAction ID: {action_id}"
 
     async def handle_incoming(self, activity: dict) -> str | None:
         """Process incoming activity from Bot Framework webhook."""
@@ -69,11 +64,10 @@ class TeamsGateway(MessengerGateway):
 
         self._service_url = activity.get("serviceUrl", self._service_url)
 
-        msg = IncomingMessage(
+        msg = self._create_incoming_message(
             text=activity["text"],
-            user_id=activity.get("from", {}).get("id", ""),
-            channel_id=activity.get("conversation", {}).get("id", ""),
-            platform="teams",
+            user=activity.get("from", {}).get("id", ""),
+            channel=activity.get("conversation", {}).get("id", ""),
         )
 
         if self._on_message:

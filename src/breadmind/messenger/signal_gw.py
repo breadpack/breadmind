@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-import uuid
 from breadmind.messenger.router import MessengerGateway
 
 logger = logging.getLogger(__name__)
@@ -12,12 +11,10 @@ class SignalGateway(MessengerGateway):
 
     def __init__(self, phone_number: str, signal_cli_path: str = "signal-cli",
                  on_message=None, poll_interval: int = 5):
+        super().__init__(platform="signal", on_message=on_message)
         self._phone_number = phone_number
         self._signal_cli = signal_cli_path
-        self._on_message = on_message
         self._poll_interval = poll_interval
-        self._connected = False
-        self._enabled = True
         self._poll_task: asyncio.Task | None = None
 
     async def start(self):
@@ -65,17 +62,14 @@ class SignalGateway(MessengerGateway):
         except Exception as e:
             logger.error(f"Signal send error: {e}")
 
-    async def ask_approval(self, channel_id: str, action_name: str, params: dict) -> str:
-        action_id = str(uuid.uuid4())[:8]
-        text = (
+    def _format_approval_message(self, action_name: str, params: dict, action_id: str) -> str:
+        return (
             f"\U0001f510 Approval Required\n"
             f"Action: {action_name}\n"
             f"Params: {params}\n\n"
             f"Reply: approve {action_id}\n"
             f"Or: deny {action_id}"
         )
-        await self.send(channel_id, text)
-        return action_id
 
     async def _poll_messages(self):
         """Poll for new Signal messages using signal-cli receive."""
@@ -128,8 +122,6 @@ class SignalGateway(MessengerGateway):
         if sender == self._phone_number:
             return
 
-        from breadmind.messenger.router import IncomingMessage
-
         # Check for approval responses
         is_approval = False
         approval_action_id = None
@@ -144,11 +136,10 @@ class SignalGateway(MessengerGateway):
             approval_action_id = body_lower.split(" ", 1)[1].strip().split()[0]
             approved = False
 
-        msg = IncomingMessage(
+        msg = self._create_incoming_message(
             text=body,
-            user_id=sender,
-            channel_id=sender,
-            platform="signal",
+            user=sender,
+            channel=sender,
             is_approval=is_approval,
             approval_action_id=approval_action_id,
             approved=approved,

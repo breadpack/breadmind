@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import uuid
 from breadmind.messenger.router import MessengerGateway
 
 logger = logging.getLogger(__name__)
@@ -10,13 +9,11 @@ class WhatsAppGateway(MessengerGateway):
     """WhatsApp messenger gateway via Twilio API."""
 
     def __init__(self, account_sid: str, auth_token: str, from_number: str, on_message=None):
+        super().__init__(platform="whatsapp", on_message=on_message)
         self._account_sid = account_sid
         self._auth_token = auth_token
         self._from_number = from_number  # "whatsapp:+14155238886" format
-        self._on_message = on_message
         self._client = None
-        self._connected = False
-        self._enabled = True
 
     async def start(self):
         try:
@@ -51,16 +48,13 @@ class WhatsAppGateway(MessengerGateway):
         except Exception as e:
             logger.error(f"WhatsApp send failed: {e}")
 
-    async def ask_approval(self, channel_id: str, action_name: str, params: dict) -> str:
-        action_id = str(uuid.uuid4())[:8]
-        text = (
+    def _format_approval_message(self, action_name: str, params: dict, action_id: str) -> str:
+        return (
             f"\U0001f510 *Approval Required*\n"
             f"Action: `{action_name}`\n"
             f"Params: `{params}`\n\n"
             f"Reply with: approve {action_id} or deny {action_id}"
         )
-        await self.send(channel_id, text)
-        return action_id
 
     async def handle_incoming_webhook(self, form_data: dict):
         """Handle incoming Twilio webhook data."""
@@ -68,8 +62,6 @@ class WhatsAppGateway(MessengerGateway):
             return
         body = form_data.get("Body", "")
         from_number = form_data.get("From", "")
-
-        from breadmind.messenger.router import IncomingMessage
 
         # Check if this is an approval response
         is_approval = False
@@ -85,11 +77,10 @@ class WhatsAppGateway(MessengerGateway):
             approval_action_id = body_lower.split(" ", 1)[1].strip()
             approved = False
 
-        msg = IncomingMessage(
+        msg = self._create_incoming_message(
             text=body,
-            user_id=from_number,
-            channel_id=from_number,
-            platform="whatsapp",
+            user=from_number,
+            channel=from_number,
             is_approval=is_approval,
             approval_action_id=approval_action_id,
             approved=approved,

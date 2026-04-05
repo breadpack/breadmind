@@ -2,10 +2,9 @@
 from __future__ import annotations
 
 import logging
-import uuid
 from typing import Callable
 
-from breadmind.messenger.router import MessengerGateway, IncomingMessage
+from breadmind.messenger.router import MessengerGateway
 
 logger = logging.getLogger(__name__)
 
@@ -14,10 +13,9 @@ API_BASE = "https://api.line.me/v2/bot"
 
 class LINEGateway(MessengerGateway):
     def __init__(self, channel_token: str, channel_secret: str = "", on_message: Callable | None = None) -> None:
+        super().__init__(platform="line", on_message=on_message)
         self._channel_token = channel_token
         self._channel_secret = channel_secret
-        self._on_message = on_message
-        self._connected = False
 
     async def start(self) -> None:
         self._connected = True
@@ -37,11 +35,8 @@ class LINEGateway(MessengerGateway):
                 if resp.status != 200:
                     logger.error("LINE send failed: %s", await resp.text())
 
-    async def ask_approval(self, channel_id: str, action_name: str, params: dict) -> str:
-        action_id = str(uuid.uuid4())[:8]
-        text = f"\U0001f510 \uc2b9\uc778 \uc694\uccad: {action_name}\n\ud30c\ub77c\ubbf8\ud130: {params}\nAction ID: {action_id}"
-        await self.send(channel_id, text)
-        return action_id
+    def _format_approval_message(self, action_name: str, params: dict, action_id: str) -> str:
+        return f"\U0001f510 \uc2b9\uc778 \uc694\uccad: {action_name}\n\ud30c\ub77c\ubbf8\ud130: {params}\nAction ID: {action_id}"
 
     async def handle_webhook(self, body: dict) -> list[str | None]:
         """Process LINE webhook events."""
@@ -50,11 +45,10 @@ class LINEGateway(MessengerGateway):
             if event.get("type") != "message" or event.get("message", {}).get("type") != "text":
                 responses.append(None)
                 continue
-            msg = IncomingMessage(
+            msg = self._create_incoming_message(
                 text=event["message"]["text"],
-                user_id=event.get("source", {}).get("userId", ""),
-                channel_id=event.get("source", {}).get("userId", ""),
-                platform="line",
+                user=event.get("source", {}).get("userId", ""),
+                channel=event.get("source", {}).get("userId", ""),
             )
             if self._on_message:
                 resp = await self._on_message(msg)
