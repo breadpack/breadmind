@@ -4,6 +4,7 @@ import logging
 from collections.abc import AsyncGenerator
 
 import anthropic
+from breadmind.constants import DEFAULT_CLAUDE_MODEL, DEFAULT_MAX_TOKENS, THINKING_MAX_TOKENS
 from .base import (
     LLMProvider,
     LLMResponse,
@@ -24,7 +25,7 @@ class ClaudeProvider(LLMProvider):
     def __init__(
         self,
         api_key: str,
-        default_model: str = "claude-sonnet-4-6",
+        default_model: str = DEFAULT_CLAUDE_MODEL,
         rate_limiter: RateLimiter | None = None,
         api_keys: list[str] | None = None,
         retry_config: RetryConfig | None = None,
@@ -48,7 +49,7 @@ class ClaudeProvider(LLMProvider):
         use_thinking = think_budget is not None and think_budget > 0
         kwargs: dict = {
             "model": model or self._default_model,
-            "max_tokens": 16384 if use_thinking else 4096,
+            "max_tokens": THINKING_MAX_TOKENS if use_thinking else DEFAULT_MAX_TOKENS,
             "messages": api_messages,
         }
 
@@ -106,7 +107,7 @@ class ClaudeProvider(LLMProvider):
         system_prompt, api_messages = self._convert_messages(messages)
         kwargs: dict = {
             "model": model or self._default_model,
-            "max_tokens": 4096,
+            "max_tokens": DEFAULT_MAX_TOKENS,
             "messages": api_messages,
         }
 

@@ -56,7 +56,8 @@ def _worker_bootstrap(**kwargs):
     _guard = SafetyGuard(load_safety_config())
 
     # Redis for Pub/Sub
-    redis_url = os.environ.get("BREADMIND_REDIS_URL", "redis://localhost:6379/0")
+    from breadmind.constants import DEFAULT_REDIS_URL
+    redis_url = os.environ.get("BREADMIND_REDIS_URL", DEFAULT_REDIS_URL)
     try:
         _redis_client = sync_redis.from_url(redis_url)
         _redis_client.ping()

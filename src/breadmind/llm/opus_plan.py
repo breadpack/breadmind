@@ -11,6 +11,8 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum
 
+from breadmind.constants import DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_OPUS_MODEL
+
 
 class TaskPhase(str, Enum):
     PLANNING = "planning"
@@ -20,9 +22,9 @@ class TaskPhase(str, Enum):
 
 @dataclass
 class ModelStrategy:
-    planning_model: str = "claude-opus-4-6"
-    implementation_model: str = "claude-sonnet-4-6"
-    review_model: str = "claude-sonnet-4-6"
+    planning_model: str = DEFAULT_CLAUDE_OPUS_MODEL
+    implementation_model: str = DEFAULT_CLAUDE_MODEL
+    review_model: str = DEFAULT_CLAUDE_MODEL
     auto_switch: bool = True
 
 

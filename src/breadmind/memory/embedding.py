@@ -6,6 +6,15 @@ import logging
 import math
 from typing import Any
 
+from breadmind.constants import (
+    DEFAULT_OLLAMA_URL,
+    EMBEDDING_FASTEMBED_MODEL,
+    EMBEDDING_GEMINI_MODEL,
+    EMBEDDING_LOCAL_MODEL,
+    EMBEDDING_OLLAMA_MODEL,
+    EMBEDDING_OPENAI_MODEL,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -25,7 +34,7 @@ class EmbeddingService:
         provider: str = "auto",  # "fastembed", "ollama", "local", "gemini", "openai", "auto", "off"
         api_key: str = "",
         model_name: str = "",
-        ollama_base_url: str = "http://localhost:11434",
+        ollama_base_url: str = DEFAULT_OLLAMA_URL,
     ):
         self._provider = provider
         self._api_key = api_key
@@ -60,7 +69,7 @@ class EmbeddingService:
             try:
                 from fastembed import TextEmbedding  # noqa: F401
                 self._backend = "fastembed"
-                self._model_name = self._model_name or "BAAI/bge-small-en-v1.5"
+                self._model_name = self._model_name or EMBEDDING_FASTEMBED_MODEL
                 self._dimensions = 384
                 logger.info(f"Embedding backend: fastembed ({self._model_name})")
                 return
@@ -86,7 +95,7 @@ class EmbeddingService:
                     logger.info("Ollama not reachable, skipping")
                     raise ConnectionError("Ollama not reachable")
                 self._backend = "ollama"
-                self._model_name = self._model_name or "nomic-embed-text"
+                self._model_name = self._model_name or EMBEDDING_OLLAMA_MODEL
                 self._dimensions = 768
                 logger.info(f"Embedding backend: Ollama ({self._model_name})")
                 return
@@ -99,7 +108,7 @@ class EmbeddingService:
             try:
                 import sentence_transformers  # noqa: F401
                 self._backend = "local"
-                self._model_name = self._model_name or "all-MiniLM-L6-v2"
+                self._model_name = self._model_name or EMBEDDING_LOCAL_MODEL
                 self._dimensions = 384
                 logger.info(f"Embedding backend: local ({self._model_name})")
                 return
@@ -112,7 +121,7 @@ class EmbeddingService:
             try:
                 import aiohttp  # noqa: F401
                 self._backend = "gemini"
-                self._model_name = self._model_name or "gemini-embedding-001"
+                self._model_name = self._model_name or EMBEDDING_GEMINI_MODEL
                 self._dimensions = 768
                 logger.info(f"Embedding backend: Gemini API ({self._model_name})")
                 return
@@ -125,7 +134,7 @@ class EmbeddingService:
             try:
                 import aiohttp  # noqa: F401
                 self._backend = "openai"
-                self._model_name = self._model_name or "text-embedding-3-small"
+                self._model_name = self._model_name or EMBEDDING_OPENAI_MODEL
                 self._dimensions = 1536
                 logger.info(f"Embedding backend: OpenAI API ({self._model_name})")
                 return
