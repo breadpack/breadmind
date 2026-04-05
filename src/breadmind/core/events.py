@@ -111,6 +111,12 @@ class EventType(str, Enum):
     MCP_TOOLS_UPDATED = "mcp_tools_updated"
     APPROVAL_REQUESTED = "approval_requested"
     APPROVAL_RESOLVED = "approval_resolved"
+    # Lifecycle events (Round 11)
+    STOP = "stop"
+    SUBAGENT_STOP = "subagent_stop"
+    PRE_COMPACT = "pre_compact"
+    USER_PROMPT_SUBMIT = "user_prompt_submit"
+    PERMISSION_REQUEST = "permission_request"
 
 
 @dataclass

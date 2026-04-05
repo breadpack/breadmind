@@ -64,6 +64,13 @@ class Agent:
         self.plugins = plugins or {}
         self._agent_loop: Any = None
         self._initialized = False
+        self._team_name: str | None = None
+        self._team: Any = None
+
+    def with_team(self, team_name: str) -> "Agent":
+        """Enable team mode for multi-agent collaboration."""
+        self._team_name = team_name
+        return self
 
     def _build(self) -> None:
         """Lazy initialization of internal components."""
@@ -99,6 +106,11 @@ class Agent:
             role=self.prompt.role,
             persona=self.prompt.persona,
         )
+
+        # Team mode
+        if self._team_name:
+            from breadmind.core.agent_team import AgentTeam
+            self._team = AgentTeam(name=self._team_name)
 
         self._initialized = True
 

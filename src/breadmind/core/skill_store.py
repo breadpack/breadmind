@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -25,6 +26,9 @@ class Skill:
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     source: str = "manual"
+    frontmatter_only: bool = False  # True = only name/description loaded
+    full_loaded: bool = False  # True = prompt_template fully loaded
+    file_path: str = ""  # source file for lazy loading
 
 
 class SkillStore:
@@ -113,6 +117,51 @@ class SkillStore:
                 scored.append((score, skill))
         scored.sort(key=lambda x: x[0], reverse=True)
         return [s for _, s in scored[:limit]]
+
+    async def load_frontmatter_only(self, name: str, description: str,
+                                      file_path: str, trigger_keywords: list[str] | None = None) -> Skill:
+        """Load only skill metadata (progressive disclosure). Full content loaded on demand."""
+        skill = Skill(
+            name=name, description=description, prompt_template="",
+            trigger_keywords=trigger_keywords or [],
+            frontmatter_only=True, file_path=file_path,
+        )
+        async with self._lock:
+            self._skills[name] = skill
+        return skill
+
+    async def load_full(self, name: str) -> Skill | None:
+        """Load full skill content on demand."""
+        skill = self._skills.get(name)
+        if skill is None:
+            return None
+        if skill.full_loaded or not skill.frontmatter_only:
+            return skill
+        if not skill.file_path or not os.path.exists(skill.file_path):
+            return skill
+        try:
+            with open(skill.file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            # Parse YAML frontmatter + markdown body
+            if content.startswith('---'):
+                parts = content.split('---', 2)
+                if len(parts) >= 3:
+                    skill.prompt_template = parts[2].strip()
+                else:
+                    skill.prompt_template = content
+            else:
+                skill.prompt_template = content
+            skill.full_loaded = True
+            skill.frontmatter_only = False
+        except (IOError, OSError):
+            pass
+        return skill
+
+    def get_frontmatter_list(self) -> list[dict]:
+        """Get lightweight list of all skills (name + description only) for LLM context."""
+        return [{"name": s.name, "description": s.description,
+                 "keywords": s.trigger_keywords}
+                for s in self._skills.values()]
 
     async def record_usage(self, name: str, success: bool) -> None:
         async with self._lock:

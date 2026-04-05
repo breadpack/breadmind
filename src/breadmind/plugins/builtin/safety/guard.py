@@ -1,4 +1,5 @@
 from __future__ import annotations
+import fnmatch
 import re
 import time
 from dataclasses import dataclass
@@ -22,6 +23,15 @@ DESTRUCTIVE_TOOLS = frozenset({
 
 
 @dataclass
+class PermissionRule:
+    """Parsed permission rule with tool/arg glob patterns."""
+    tool_pattern: str  # glob for tool name
+    arg_pattern: str  # glob for stringified args (empty = any)
+    action: str  # "allow", "deny", "ask"
+    scope: str  # "once", "session", "always"
+
+
+@dataclass
 class SafetyVerdict:
     """안전 검사 결과."""
     allowed: bool
@@ -36,12 +46,36 @@ class SafetyGuard:
                  blocked_patterns: list[str] | None = None,
                  approve_required: list[str] | None = None,
                  audit_log: AuditLog | None = None,
-                 auto_classifier: AutoSafetyClassifier | None = None) -> None:
+                 auto_classifier: AutoSafetyClassifier | None = None,
+                 permission_rules: list[dict] | None = None) -> None:
         self._autonomy = autonomy
         self._blocked = [re.compile(re.escape(p)) for p in (blocked_patterns or [])]
         self._approve_required = set(approve_required or [])
         self._audit_log = audit_log
         self._auto_classifier = auto_classifier
+        self._permission_rules = permission_rules or []
+        self._compiled_rules = [self._compile_rule(r) for r in self._permission_rules]
+
+    @staticmethod
+    def _compile_rule(rule: dict) -> PermissionRule:
+        """Parse 'shell_exec(npm test:*)' into tool_pattern + arg_pattern."""
+        pattern = rule.get("pattern", "")
+        action = rule.get("action", "ask")
+        scope = rule.get("scope", "session")
+
+        m = re.match(r'^(\S+?)\((.+)\)$', pattern)
+        if m:
+            return PermissionRule(m.group(1), m.group(2), action, scope)
+        return PermissionRule(pattern, "", action, scope)
+
+    def _check_permission_rules(self, tool_name: str, arguments: dict) -> str | None:
+        """Check permission rules. Returns 'allow'/'deny'/'ask' or None if no match."""
+        args_str = str(arguments)
+        for rule in self._compiled_rules:
+            if fnmatch.fnmatch(tool_name, rule.tool_pattern):
+                if not rule.arg_pattern or fnmatch.fnmatch(args_str, f"*{rule.arg_pattern}*"):
+                    return rule.action
+        return None
 
     def check(self, tool_name: str, arguments: dict[str, Any],
               user: str = "", trace_id: str | None = None) -> SafetyVerdict:
@@ -53,6 +87,21 @@ class SafetyGuard:
                 verdict = SafetyVerdict(allowed=False, reason=f"Blocked pattern matched: {pattern.pattern}")
                 self._record_audit(tool_name, arguments, verdict, user, trace_id, start)
                 return verdict
+
+        # Check permission rules (after blocked patterns, before autonomy logic)
+        rule_result = self._check_permission_rules(tool_name, arguments)
+        if rule_result == "allow":
+            verdict = SafetyVerdict(allowed=True)
+            self._record_audit(tool_name, arguments, verdict, user, trace_id, start)
+            return verdict
+        elif rule_result == "deny":
+            verdict = SafetyVerdict(allowed=False, reason="Denied by permission rule")
+            self._record_audit(tool_name, arguments, verdict, user, trace_id, start)
+            return verdict
+        elif rule_result == "ask":
+            verdict = SafetyVerdict(allowed=True, needs_approval=True, reason="Permission rule requires approval")
+            self._record_audit(tool_name, arguments, verdict, user, trace_id, start)
+            return verdict
 
         if self._autonomy == "auto":
             verdict = SafetyVerdict(allowed=True)

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from typing import Any
 
 from .base import LLMProvider
@@ -120,3 +121,49 @@ register_provider("ollama", OllamaProvider, None,
                    display_name="Ollama (Local)", free_tier=True,
                    models=["llama3.1", "mistral", "qwen2.5"],
                    signup_url="https://ollama.com/download")
+
+
+# --- Auth Profile Rotation ---
+
+@dataclass
+class AuthProfile:
+    """An API key / auth credential for a provider."""
+    key: str
+    name: str = ""
+    cooldown_until: float = 0  # timestamp when cooldown ends
+    failure_count: int = 0
+
+
+class AuthRotator:
+    """Rotates through multiple auth profiles for a provider."""
+
+    def __init__(self, profiles: list[AuthProfile]) -> None:
+        self._profiles = profiles
+        self._current_idx = 0
+
+    def get_current(self) -> AuthProfile | None:
+        """Get current active profile (skipping cooled-down ones)."""
+        now = time.time()
+        for _ in range(len(self._profiles)):
+            profile = self._profiles[self._current_idx]
+            if now >= profile.cooldown_until:
+                return profile
+            self._current_idx = (self._current_idx + 1) % len(self._profiles)
+        return None  # all in cooldown
+
+    def report_failure(self, cooldown_seconds: float = 60) -> AuthProfile | None:
+        """Mark current profile as failed, advance to next."""
+        profile = self._profiles[self._current_idx]
+        profile.failure_count += 1
+        profile.cooldown_until = time.time() + cooldown_seconds
+        self._current_idx = (self._current_idx + 1) % len(self._profiles)
+        return self.get_current()
+
+    def report_success(self) -> None:
+        """Reset failure count for current profile."""
+        self._profiles[self._current_idx].failure_count = 0
+
+    @property
+    def active_count(self) -> int:
+        now = time.time()
+        return sum(1 for p in self._profiles if now >= p.cooldown_until)

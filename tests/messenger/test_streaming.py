@@ -176,7 +176,7 @@ async def test_truncate_at_natural_boundary():
     result = adapter._truncate(text)
     assert len(result) <= 2000
     # Should break at the newline (rfind returns index of \n, so result is up to that point)
-    assert len(result) == 1900
+    assert len(result) == 1901  # includes the newline character
 
     # Text with space boundary
     text2 = "word " * 500  # 2500 chars

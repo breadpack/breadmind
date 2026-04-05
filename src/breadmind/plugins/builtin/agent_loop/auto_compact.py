@@ -1,7 +1,10 @@
 """Auto-compact: context window 초과 방지를 위한 다단계 대화 자동 압축."""
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import TYPE_CHECKING
@@ -50,10 +53,14 @@ class AutoCompactor:
         provider: ProviderProtocol,
         config: CompactConfig | None = None,
         token_counter: TokenCounter | None = None,
+        instruction_files: list[str] | None = None,
+        on_pre_compact: Callable | None = None,
     ) -> None:
         self._provider = provider
         self._config = config or CompactConfig()
         self._token_counter = token_counter
+        self._instruction_files = instruction_files or []
+        self._on_pre_compact = on_pre_compact
         self._last_compact_level: CompactionLevel = CompactionLevel.NONE
 
     @property
@@ -104,6 +111,16 @@ class AutoCompactor:
         if level == CompactionLevel.NONE:
             return messages
 
+        # Fire pre-compact hook
+        if self._on_pre_compact:
+            try:
+                if asyncio.iscoroutinefunction(self._on_pre_compact):
+                    await self._on_pre_compact(messages, level)
+                else:
+                    self._on_pre_compact(messages, level)
+            except Exception:
+                logger.warning("Pre-compact hook failed", exc_info=True)
+
         result = list(messages)
 
         # Level 1: Trim large tool results
@@ -129,6 +146,26 @@ class AutoCompactor:
             except Exception:
                 logger.exception("Auto-compact failed at level 4")
                 return messages
+
+        # Re-inject instruction files (they must survive compaction)
+        if self._instruction_files and result:
+            injected = []
+            for fpath in self._instruction_files:
+                try:
+                    with open(fpath, "r", encoding="utf-8") as f:
+                        content = f.read().strip()
+                    if content:
+                        injected.append(Message(
+                            role="system",
+                            content=f"[Instruction file: {os.path.basename(fpath)}]\n{content}",
+                        ))
+                except (IOError, OSError):
+                    pass
+            if injected:
+                # Insert after system message but before conversation
+                insert_idx = 1 if result and result[0].role == "system" else 0
+                for i, msg in enumerate(injected):
+                    result.insert(insert_idx + i, msg)
 
         old_tokens = self.estimate_tokens(messages)
         new_tokens = self.estimate_tokens(result)

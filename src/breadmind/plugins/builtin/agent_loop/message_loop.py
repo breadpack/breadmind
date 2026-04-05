@@ -148,10 +148,53 @@ class MessageLoopAgent:
                 messages = await self._auto_compactor.compact(messages)
 
             _chat_start = time.perf_counter()
-            response: LLMResponse = await self._provider.chat(messages, tools)
+            try:
+                response: LLMResponse = await self._provider.chat(messages, tools)
+            except Exception as e:
+                error_str = str(e).lower()
+                if "too long" in error_str or "context" in error_str or "token" in error_str:
+                    # Context overflow - emergency compact and retry
+                    logger.warning("Context overflow detected, performing emergency compaction")
+                    if self._auto_compactor:
+                        messages = await self._auto_compactor.compact(messages, force_level=4)
+                        try:
+                            response = await self._provider.chat(messages, tools)
+                        except Exception:
+                            return AgentResponse(
+                                content="Context overflow: unable to recover after emergency compaction.",
+                                tool_calls_count=total_tool_calls,
+                                tokens_used=total_tokens,
+                                cost_usd=self._cost_tracker.total_cost if self._cost_tracker else 0.0,
+                            )
+                    else:
+                        return AgentResponse(
+                            content="Context overflow: message history too large.",
+                            tool_calls_count=total_tool_calls,
+                            tokens_used=total_tokens,
+                            cost_usd=self._cost_tracker.total_cost if self._cost_tracker else 0.0,
+                        )
+                else:
+                    raise
             _chat_duration = time.perf_counter() - _chat_start
+            llm_elapsed_ms = _chat_duration * 1000
             total_tokens += response.usage.total_tokens
             self._record_usage(response, duration=_chat_duration)
+
+            # Record metrics via OTel if available
+            try:
+                from breadmind.core.otel import get_otel
+                otel = get_otel()
+                if otel.available and response.usage:
+                    otel.record_token_usage(
+                        response.usage.input_tokens, response.usage.output_tokens,
+                        model=getattr(self._provider, 'default_model', ''),
+                    )
+                    otel.record_llm_latency(
+                        llm_elapsed_ms,
+                        model=getattr(self._provider, 'default_model', ''),
+                    )
+            except Exception:
+                pass  # OTel is best-effort
 
             if not response.has_tool_calls:
                 # Append assistant reply and persist

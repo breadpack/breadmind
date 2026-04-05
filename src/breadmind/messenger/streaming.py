@@ -6,9 +6,18 @@ import logging
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Callable, Awaitable
 
 logger = logging.getLogger(__name__)
+
+
+class BreakPreference(str, Enum):
+    PARAGRAPH = "paragraph"
+    NEWLINE = "newline"
+    SENTENCE = "sentence"
+    WHITESPACE = "whitespace"
+    HARD = "hard"
 
 
 @dataclass
@@ -105,16 +114,38 @@ class BaseStreamAdapter(ABC):
         self._buffer = ""
         self._message_id = None
 
+    def _find_break_point(self, text: str, max_pos: int) -> int:
+        """Find optimal break point using preference hierarchy."""
+        # Try paragraph break
+        idx = text.rfind("\n\n", 0, max_pos)
+        if idx > 0:
+            return idx + 2
+        # Try newline break
+        idx = text.rfind("\n", 0, max_pos)
+        if idx > 0:
+            return idx + 1
+        # Try sentence break
+        for pattern in [". ", "! ", "? ", "\u3002", "\uff01", "\uff1f"]:
+            idx = text.rfind(pattern, 0, max_pos)
+            if idx > 0:
+                return idx + len(pattern)
+        # Try whitespace
+        idx = text.rfind(" ", 0, max_pos)
+        if idx > 0:
+            return idx + 1
+        # Hard break
+        return max_pos
+
     def _truncate(self, text: str) -> str:
         """Truncate to max_chars, trying to break at a natural boundary."""
         if len(text) <= self._config.max_chars:
             return text
-        # Try to break at paragraph, then newline, then space
-        for sep in ["\n\n", "\n", " "]:
-            idx = text.rfind(sep, 0, self._config.max_chars)
-            if idx > 0:
-                return text[:idx]
-        return text[:self._config.max_chars]
+        break_pos = self._find_break_point(text, self._config.max_chars)
+        truncated = text[:break_pos]
+        # If we're inside a code fence, close it
+        if truncated.count("```") % 2 == 1:
+            truncated += "\n```"
+        return truncated
 
     def _track_code_fence(self, text: str) -> None:
         """Track whether we're inside a code fence."""

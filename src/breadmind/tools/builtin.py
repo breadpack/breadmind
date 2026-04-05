@@ -5,6 +5,7 @@ import os
 import re
 import shlex
 import sys
+import uuid
 from pathlib import Path
 from breadmind.messenger.auto_connect.base import _get_base_url
 from breadmind.tools.registry import tool
@@ -36,6 +37,28 @@ ALLOWED_SSH_HOSTS: list[str] = []
 
 # Shell metacharacters that indicate potential command injection
 SHELL_META_CHARS = re.compile(r'[;&|`$]')
+
+# Background job tracking for shell_exec
+_background_jobs: dict[str, asyncio.subprocess.Process] = {}
+
+
+def _contains_unc_path(command: str) -> bool:
+    """Block UNC paths on Windows to prevent credential theft."""
+    if sys.platform != "win32":
+        return False
+    return bool(re.search(r'\\\\[^\\]+\\', command))
+
+
+def _truncate_head_tail(output: str, max_size: int = 50000) -> str:
+    """Truncate output keeping both head and tail for context."""
+    if len(output) <= max_size:
+        return output
+    half = max_size // 2
+    return (
+        output[:half]
+        + f"\n\n[...truncated {len(output) - max_size} chars...]\n\n"
+        + output[-half:]
+    )
 
 
 def _get_known_hosts() -> str | None:
@@ -169,11 +192,11 @@ def _validate_path(path: str) -> Path:
     return p
 
 
-@tool(description="Execute a shell command locally, via SSH, or in an isolated Docker container. Use host='localhost' for local commands. Set container=True for Docker isolation.")
+@tool(description="Execute a shell command locally, via SSH, or in an isolated Docker container. Use host='localhost' for local commands. Set container=True for Docker isolation. Set run_in_background=True for fire-and-forget execution.")
 async def shell_exec(command: str, host: str = "localhost", timeout: int = 30,
                      port: int = 22, username: str = None,
                      key_file: str = None, container: bool = False,
-                     image: str = None) -> str:
+                     image: str = None, run_in_background: bool = False) -> str:
     # Redirect SSH commands to router_manage for secure credential handling
     import re as _re
     if _re.search(r'\bssh\b', command) and host == "localhost":
@@ -183,6 +206,10 @@ async def shell_exec(command: str, host: str = "localhost", timeout: int = 30,
             "router_type='openwrt', username='root') 를 호출하세요. "
             "password가 없으면 빈 문자열로 호출하면 자격증명 입력 폼이 자동 생성됩니다."
         )
+
+    # Block UNC paths on Windows to prevent credential theft
+    if _contains_unc_path(command):
+        return "Error: UNC paths (\\\\server\\share) are blocked for security reasons."
 
     # Check if command is allowed (whitelist + blacklist)
     allowed, reason = _is_command_allowed(command)
@@ -237,11 +264,34 @@ async def shell_exec(command: str, host: str = "localhost", timeout: int = 30,
         except OSError as e:
             return f"Error: Failed to execute command: {e}"
 
+        # Background execution: return immediately with a job ID
+        if run_in_background:
+            job_id = f"bg_{uuid.uuid4().hex[:8]}"
+            _background_jobs[job_id] = proc
+            return (
+                f"Background job started: {job_id}. "
+                f"Use shell_exec with command='bg_status {job_id}' to check."
+            )
+
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except asyncio.TimeoutError:
-            proc.kill()
-            raise TimeoutError(f"Command timed out after {timeout}s: {command}")
+            # Capture partial output before killing
+            partial = ""
+            try:
+                proc.kill()
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(), timeout=5
+                )
+                partial = (stdout or b"").decode("utf-8", errors="replace")
+            except Exception:
+                pass
+            if partial:
+                return (
+                    f"Command timed out after {timeout}s.\n"
+                    f"Partial output:\n{partial[:10000]}"
+                )
+            return f"Command timed out after {timeout}s."
 
         encoding = "cp949" if is_windows else "utf-8"
         output = stdout.decode(encoding, errors="replace")
@@ -251,7 +301,8 @@ async def shell_exec(command: str, host: str = "localhost", timeout: int = 30,
             result += f"\nSTDERR: {errors}"
         if proc.returncode != 0:
             result += f"\nExit code: {proc.returncode}"
-        return result.strip()
+        # Apply head+tail truncation for large outputs
+        return _truncate_head_tail(result.strip())
     else:
         # Validate SSH host
         if ToolSecurityConfig._allowed_ssh_hosts and host not in ToolSecurityConfig._allowed_ssh_hosts:

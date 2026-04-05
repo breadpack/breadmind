@@ -435,6 +435,22 @@ async def init_agent(config, provider, registry, guard, db, memory_components, o
     if metrics_collector is not None and hasattr(registry, 'set_metrics_collector'):
         registry.set_metrics_collector(metrics_collector)
 
+    # Initialize OpenTelemetry (optional)
+    otel_integration = None
+    try:
+        otel_enabled = os.environ.get("BREADMIND_OTEL_ENABLED", "").lower() in ("1", "true")
+        if otel_enabled:
+            from breadmind.core.otel import init_otel, OTelConfig
+            otel_config = OTelConfig(
+                enabled=True,
+                service_name="breadmind",
+                endpoint=os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+                log_user_prompts=os.environ.get("OTEL_LOG_USER_PROMPTS", "").lower() == "1",
+            )
+            otel_integration = init_otel(otel_config)
+    except (ImportError, Exception) as e:
+        logger.debug("OpenTelemetry not available: %s", e)
+
     # Load saved behavior prompt
     saved_behavior_prompt = None
     if db is not None:

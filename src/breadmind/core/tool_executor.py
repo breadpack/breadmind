@@ -16,7 +16,10 @@ from breadmind.core.safety import SafetyGuard, SafetyResult
 
 if TYPE_CHECKING:
     from breadmind.core.audit import AuditLogger
+    from breadmind.core.sandbox_executor import SandboxExecutor
     from breadmind.core.tool_gap import ToolGapDetector
+    from breadmind.core.tool_hooks import ToolHookRunner
+    from breadmind.tools.schema_validator import SchemaValidator
 
 logger = logging.getLogger("breadmind.agent")
 
@@ -46,10 +49,16 @@ class ToolExecutor:
         tool_registry: ToolRegistry,
         safety_guard: SafetyGuard,
         tool_timeout: int = 30,
+        sandbox_executor: SandboxExecutor | None = None,
+        hook_runner: ToolHookRunner | None = None,
+        schema_validator: SchemaValidator | None = None,
     ):
         self._tools = tool_registry
         self._guard = safety_guard
         self._tool_timeout = tool_timeout
+        self._sandbox = sandbox_executor
+        self._hook_runner = hook_runner
+        self._validator = schema_validator
 
     @property
     def tool_timeout(self) -> int:
@@ -213,12 +222,46 @@ class ToolExecutor:
         """Execute a single tool call with timeout and error handling."""
         t_start = time.monotonic()
         try:
+            # Use sandbox for shell commands if available
+            if self._sandbox and tc.name == "shell_exec":
+                command = tc.arguments.get("command", "")
+                workdir = tc.arguments.get("workdir")
+                sandbox_result = await self._sandbox.execute(command, workdir)
+                elapsed = (time.monotonic() - t_start) * 1000
+                prefix = f"[success={sandbox_result.success}]"
+                return tc, f"{prefix} {sandbox_result.output}", elapsed
+
+            # Pre-hooks: may block or modify arguments
+            if self._hook_runner:
+                from breadmind.core.tool_hooks import ToolHookResult
+                hook_result = await self._hook_runner.run_pre_hooks(tc.name, tc.arguments)
+                if hook_result.action == "block":
+                    elapsed = (time.monotonic() - t_start) * 1000
+                    return tc, f"[success=False] Blocked by hook: {hook_result.block_reason}", elapsed
+                if hook_result.action == "modify" and hook_result.modified_input:
+                    tc_arguments = hook_result.modified_input  # use modified args
+                else:
+                    tc_arguments = tc.arguments
+            else:
+                tc_arguments = tc.arguments
+
+            # Schema validation
+            if self._validator and tc.name in [d.name for d in self._tools.get_all_definitions()]:
+                defn = next((d for d in self._tools.get_all_definitions() if d.name == tc.name), None)
+                if defn and defn.parameters:
+                    from breadmind.tools.schema_validator import SchemaValidator
+                    vr = self._validator.validate(tc_arguments, defn.parameters)
+                    if not vr.valid:
+                        errors = "; ".join(f"{e.field}: {e.message}" for e in vr.errors)
+                        elapsed = (time.monotonic() - t_start) * 1000
+                        return tc, f"[success=False] Validation failed: {errors}", elapsed
+
             # Determine timeout
             timeout = self._tool_timeout
             no_timeout = False
 
             if tc.name == "code_delegate":
-                is_long = tc.arguments.get("long_running", False)
+                is_long = tc_arguments.get("long_running", False)
                 if isinstance(is_long, str):
                     is_long = is_long.lower() in ("true", "1", "yes")
                 if is_long:
@@ -229,26 +272,34 @@ class ToolExecutor:
             # Execute: no timeout for long-running, otherwise use asyncio.wait_for
             if no_timeout:
                 logger.info("Executing %s with NO timeout (long_running)", tc.name)
-                result = await self._tools.execute(tc.name, tc.arguments)
+                result = await self._tools.execute(tc.name, tc_arguments)
             else:
                 logger.info("Executing %s with timeout=%ds", tc.name, timeout)
                 result = await asyncio.wait_for(
-                    self._tools.execute(tc.name, tc.arguments),
+                    self._tools.execute(tc.name, tc_arguments),
                     timeout=timeout,
                 )
             # Check for tool gap
             if result.not_found and ctx.tool_gap_detector:
                 try:
                     gap_result = await ctx.tool_gap_detector.check_and_resolve(
-                        tc.name, tc.arguments, ctx.user, ctx.channel,
+                        tc.name, tc_arguments, ctx.user, ctx.channel,
                     )
                     elapsed = (time.monotonic() - t_start) * 1000
                     return tc, f"[success=False] {gap_result.message}", elapsed
                 except Exception as e:
                     logger.error(f"ToolGapDetector error: {e}")
             elapsed = (time.monotonic() - t_start) * 1000
-            prefix = f"[success={result.success}]"
-            return tc, f"{prefix} {result.output}", elapsed
+            output = f"[success={result.success}] {result.output}"
+            success = result.success
+
+            # Post-hooks: may append context
+            if self._hook_runner:
+                post_result = await self._hook_runner.run_post_hooks(tc.name, tc.arguments, output, success)
+                if post_result.additional_context:
+                    output += f"\n[Hook context] {post_result.additional_context}"
+
+            return tc, output, elapsed
         except asyncio.TimeoutError:
             elapsed = (time.monotonic() - t_start) * 1000
             return tc, f"[success=False] Tool execution timed out after {timeout}s.", elapsed
