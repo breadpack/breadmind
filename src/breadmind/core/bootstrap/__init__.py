@@ -16,52 +16,25 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from breadmind.core.events import get_event_bus, EventBus
+from breadmind.core.events import get_event_bus
 from breadmind.plugins.container import ServiceContainer
 
+from breadmind.core.bootstrap.components import (  # noqa: F401 — re-exported
+    AppComponents,
+    DatabaseComponents,
+    LLMComponents,
+    MemoryComponents,
+    ToolComponents,
+    PluginComponents,
+    MonitoringComponents,
+    NetworkComponents,
+    PersonalComponents,
+)
+
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class AppComponents:
-    """Container for all initialized application components."""
-    config: Any = None
-    db: Any = None
-    provider: Any = None
-    registry: Any = None
-    guard: Any = None
-    agent: Any = None
-    working_memory: Any = None
-    monitoring_engine: Any = None
-    mcp_manager: Any = None
-    mcp_store: Any = None
-    swarm_manager: Any = None
-    behavior_tracker: Any = None
-    skill_store: Any = None
-    performance_tracker: Any = None
-    search_engine: Any = None
-    context_builder: Any = None
-    episodic_memory: Any = None
-    semantic_memory: Any = None
-    smart_retriever: Any = None
-    profiler: Any = None
-    safety_cfg: Any = field(default_factory=dict)
-    meta_tools: Any = field(default_factory=dict)
-    audit_logger: Any = None
-    metrics_collector: Any = None
-    tool_gap_detector: Any = None
-    adapter_registry: Any = None
-    oauth_manager: Any = None
-    credential_vault: Any = None
-    personal_scheduler: Any = None
-    bg_job_manager: Any = None
-    event_bus: EventBus | None = None
-    plugin_mgr: Any = None
-    container: ServiceContainer | None = None
 
 
 def _detect_package_managers() -> list[str]:
@@ -393,7 +366,8 @@ async def init_plugins(container: ServiceContainer):
     )
 
     # Load builtin plugins first (sorted by priority)
-    builtin_dir = Path(__file__).resolve().parent.parent / "plugins" / "builtin"
+    # __file__ is now bootstrap/__init__.py, so parent.parent.parent = src/breadmind/
+    builtin_dir = Path(__file__).resolve().parent.parent.parent / "plugins" / "builtin"
     builtin_count = await plugin_mgr.load_builtin(builtin_dir)
     print(f"  Builtin plugins: {builtin_count} loaded")
 
@@ -470,7 +444,8 @@ async def init_agent(config, provider, registry, guard, db, memory_components, o
     import platform as _plat
     from datetime import datetime, timezone
 
-    prompts_dir = Path(__file__).resolve().parent.parent / "prompts"
+    # __file__ is now bootstrap/__init__.py, so parent.parent.parent = src/breadmind/
+    prompts_dir = Path(__file__).resolve().parent.parent.parent / "prompts"
 
     def _count_tokens(text: str) -> int:
         return len(text) // 4
@@ -634,9 +609,9 @@ async def bootstrap_all(
     """Run all initialization phases in dependency order.
 
     Phase 1: Database + Credential Vault
-    Phase 2: Core services → ServiceContainer
+    Phase 2: Core services -> ServiceContainer
     Phase 3: (merged into Phase 2)
-    Phase 4: PluginManager loads all plugins → tools registered
+    Phase 4: PluginManager loads all plugins -> tools registered
     Phase 5: Agent
     Phase 6: Messenger (optional)
     Phase 7: Background jobs
@@ -663,7 +638,7 @@ async def bootstrap_all(
     except Exception as e:
         logger.warning("Credential vault init failed (non-critical): %s", e)
 
-    # ── Phase 2: Core services → ServiceContainer ────────────────────
+    # ── Phase 2: Core services -> ServiceContainer ────────────────────
     try:
         services = await init_core_services(
             config, components.db, provider, safety_cfg,
