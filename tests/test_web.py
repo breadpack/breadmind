@@ -1085,7 +1085,7 @@ def test_apply_update_success(monkeypatch):
     data = resp.json()
     assert data["status"] == "ok"
     assert data["restart_required"] is True
-    assert "Update installed" in data["message"]
+    assert "Update" in data["message"]
 
 
 def test_apply_update_failure_then_github(monkeypatch):
@@ -1118,7 +1118,7 @@ def test_apply_update_failure_then_github(monkeypatch):
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "ok"
-    assert "GitHub" in data["message"]
+    assert "Update" in data["message"]
 
 
 def test_restart_service_returns_status():

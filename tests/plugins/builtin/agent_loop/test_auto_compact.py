@@ -1,13 +1,12 @@
 """AutoCompactor 단위 테스트."""
 from __future__ import annotations
 
-from dataclasses import dataclass
 from unittest.mock import AsyncMock
 
 import pytest
 
 from breadmind.core.protocols import LLMResponse, Message, TokenUsage
-from breadmind.plugins.builtin.agent_loop.auto_compact import AutoCompactor, CompactConfig
+from breadmind.plugins.builtin.agent_loop.auto_compact import AutoCompactor, CompactConfig, CompactionLevel
 
 
 def _msg(role: str, content: str) -> Message:
@@ -49,10 +48,11 @@ class TestShouldCompact:
 
     def test_exact_threshold_returns_false(self):
         provider = _make_provider()
-        config = CompactConfig(max_context_tokens=1000, compact_threshold=0.7)
+        # level_thresholds에서 가장 낮은 임계값(0.7)과 동일한 토큰이면 should_compact=False
+        config = CompactConfig(max_context_tokens=1000, level_thresholds={1: 0.7, 2: 0.8, 3: 0.9, 4: 0.95})
         compactor = AutoCompactor(provider, config)
 
-        # 2800 chars -> 700 tokens, threshold = 700 (not exceeded)
+        # 2800 chars -> 700 tokens, threshold_1 = 700 (not exceeded)
         messages = [_msg("user", "x" * 2800)]
         assert compactor.should_compact(messages) is False
 
@@ -74,7 +74,7 @@ class TestCompact:
             _msg("user", "msg2"),
             _msg("assistant", "resp2"),
         ]
-        result = await compactor.compact(messages)
+        result = await compactor.compact(messages, force_level=CompactionLevel.SUMMARIZE_OLD)
 
         assert result[0].role == "system"
         assert result[0].content == "You are helpful."
@@ -92,7 +92,7 @@ class TestCompact:
             _msg("user", "msg2"),
             _msg("assistant", "resp2"),
         ]
-        result = await compactor.compact(messages)
+        result = await compactor.compact(messages, force_level=CompactionLevel.SUMMARIZE_OLD)
 
         # summary message is second
         assert result[1].role == "system"
@@ -112,7 +112,7 @@ class TestCompact:
             _msg("user", "recent1"),
             _msg("assistant", "recent2"),
         ]
-        result = await compactor.compact(messages)
+        result = await compactor.compact(messages, force_level=CompactionLevel.SUMMARIZE_OLD)
 
         # [system, summary, recent1, recent2]
         assert len(result) == 4
@@ -147,7 +147,7 @@ class TestCompact:
             _msg("user", "msg2"),
             _msg("assistant", "resp2"),
         ]
-        result = await compactor.compact(messages)
+        result = await compactor.compact(messages, force_level=CompactionLevel.SUMMARIZE_OLD)
         assert result is messages  # safety: returns original
 
     @pytest.mark.asyncio
@@ -162,7 +162,7 @@ class TestCompact:
             _msg("user", "recent1"),
             _msg("assistant", "recent2"),
         ]
-        result = await compactor.compact(messages)
+        result = await compactor.compact(messages, force_level=CompactionLevel.SUMMARIZE_OLD)
 
         # [summary, recent1, recent2]
         assert len(result) == 3

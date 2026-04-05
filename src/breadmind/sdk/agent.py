@@ -70,6 +70,9 @@ class Agent:
         if self._initialized:
             return
 
+        from breadmind.core.logging import setup_logging
+        setup_logging()
+
         from breadmind.plugins.builtin.safety.guard import SafetyGuard
 
         # Safety

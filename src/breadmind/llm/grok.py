@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import AsyncGenerator
 
@@ -13,22 +12,27 @@ from .base import (
     TokenUsage,
     ToolDefinition,
 )
+from .retry import RetryConfig, retry_with_backoff, retry_with_backoff_stream
 
 logger = logging.getLogger(__name__)
-
-_MAX_RETRIES = 3
 
 
 class GrokProvider(LLMProvider):
     """xAI Grok provider (OpenAI-compatible API)."""
 
-    def __init__(self, api_key: str, default_model: str = "grok-3"):
+    def __init__(
+        self,
+        api_key: str,
+        default_model: str = "grok-3",
+        retry_config: RetryConfig | None = None,
+    ):
         self._client = openai.AsyncOpenAI(
             api_key=api_key,
             base_url="https://api.x.ai/v1",
         )
         self._default_model = default_model
         self.model = default_model
+        self._retry_config = retry_config or RetryConfig()
 
     async def chat(
         self,
@@ -57,27 +61,11 @@ class GrokProvider(LLMProvider):
                 for t in tools
             ]
 
-        last_error: Exception | None = None
-        for attempt in range(_MAX_RETRIES):
-            try:
-                response = await self._client.chat.completions.create(**kwargs)
-                return self._parse_response(response)
-            except openai.RateLimitError as e:
-                last_error = e
-                backoff = 2 ** attempt
-                logger.warning(
-                    "Grok rate limited (attempt %d/%d), retrying in %ds",
-                    attempt + 1, _MAX_RETRIES, backoff,
-                )
-                await asyncio.sleep(backoff)
-            except openai.APIError as e:
-                last_error = e
-                if attempt < _MAX_RETRIES - 1:
-                    await asyncio.sleep(2 ** attempt)
-                    continue
-                raise
+        async def _do_call() -> LLMResponse:
+            response = await self._client.chat.completions.create(**kwargs)
+            return self._parse_response(response)
 
-        raise last_error  # type: ignore[misc]
+        return await retry_with_backoff(_do_call, config=self._retry_config)
 
     async def chat_stream(
         self,
@@ -95,14 +83,19 @@ class GrokProvider(LLMProvider):
         }
         # 스트리밍에서는 tools 없이 텍스트만 (tool call turn은 비스트리밍으로 처리)
 
-        try:
+        async def _do_stream() -> AsyncGenerator[str, None]:
             stream = await self._client.chat.completions.create(**kwargs)
             async for chunk in stream:
                 if chunk.choices and chunk.choices[0].delta.content:
                     yield chunk.choices[0].delta.content
-        except openai.APIError as e:
-            logger.error("Grok streaming error: %s", e)
-            # 스트리밍 실패 시 일반 chat()으로 폴백
+
+        try:
+            async for chunk in retry_with_backoff_stream(
+                _do_stream, config=self._retry_config
+            ):
+                yield chunk
+        except Exception:
+            logger.error("Grok streaming failed after retries, falling back to chat()")
             response = await self.chat(messages, tools, model)
             if response.content:
                 yield response.content

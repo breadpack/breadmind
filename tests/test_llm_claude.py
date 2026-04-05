@@ -266,7 +266,7 @@ async def test_claude_retry_on_rate_limit(claude_provider):
         "create",
         new_callable=AsyncMock,
         side_effect=side_effect,
-    ), patch("breadmind.llm.claude.asyncio.sleep", new_callable=AsyncMock):
+    ), patch("breadmind.llm.retry.asyncio.sleep", new_callable=AsyncMock):
         result = await claude_provider.chat(
             messages=[LLMMessage(role="user", content="hi")],
         )

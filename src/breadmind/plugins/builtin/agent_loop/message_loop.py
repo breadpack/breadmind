@@ -1,14 +1,17 @@
 from __future__ import annotations
 import logging
+import time
 import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
+from breadmind.core.logging import generate_trace_id, set_request_context
 from breadmind.core.protocols import (
     AgentContext, AgentProtocol, AgentResponse, ExecutionContext,
     LLMResponse, Message, PromptContext, ProviderProtocol,
     ToolCall, ToolFilter,
 )
+from breadmind.core.sanitizer import InputSanitizer
 from breadmind.plugins.builtin.safety.approval import ApprovalHandler, ApprovalRequest
 from breadmind.plugins.builtin.safety.guard import SafetyGuard
 from breadmind.plugins.builtin.safety.hooks import HookRunner
@@ -18,6 +21,7 @@ if TYPE_CHECKING:
     from breadmind.plugins.builtin.agent_loop.cost_tracker import CostTracker
     from breadmind.plugins.builtin.agent_loop.spawner import Spawner
     from breadmind.plugins.builtin.memory.conversation_store import ConversationStore
+    from breadmind.plugins.builtin.safety.audit import AuditLog
     from breadmind.plugins.builtin.tools.output_limiter import OutputLimiter
 
 logger = logging.getLogger(__name__)
@@ -43,7 +47,9 @@ class MessageLoopAgent:
                  spawner_factory: Callable[..., Spawner] | None = None,
                  conversation_store: ConversationStore | None = None,
                  approval_handler: ApprovalHandler | None = None,
-                 cost_tracker: CostTracker | None = None) -> None:
+                 cost_tracker: CostTracker | None = None,
+                 audit_log: AuditLog | None = None,
+                 sanitizer: InputSanitizer | None = None) -> None:
         self._provider = provider
         self._prompt_builder = prompt_builder
         self._tool_registry = tool_registry
@@ -61,12 +67,34 @@ class MessageLoopAgent:
         self._conversation_store = conversation_store
         self._approval_handler = approval_handler
         self._cost_tracker = cost_tracker
+        self._audit_log = audit_log
+        self._sanitizer = sanitizer
 
     @property
     def agent_id(self) -> str:
         return self._agent_id
 
     async def handle_message(self, message: str, ctx: AgentContext) -> AgentResponse:
+        # Request trace context 설정
+        trace_id = generate_trace_id()
+        set_request_context(
+            trace_id=trace_id,
+            user=ctx.user,
+            channel=ctx.channel,
+            session_id=ctx.session_id,
+        )
+        logger.info("handle_message started [trace_id=%s]", trace_id)
+
+        # Input sanitization
+        if self._sanitizer:
+            message = self._sanitizer.sanitize_message(message)
+            detected, pattern = self._sanitizer.check_prompt_injection(message)
+            if detected:
+                logger.warning(
+                    "Prompt injection detected [trace_id=%s, pattern=%s, user=%s]",
+                    trace_id, pattern, ctx.user,
+                )
+
         # 멀티모달: 이미지 경로 추출 및 Attachment 변환
         from breadmind.plugins.builtin.tools.multimodal import process_message_attachments
         clean_message, attachments = process_message_attachments(message)
@@ -110,22 +138,30 @@ class MessageLoopAgent:
         total_tool_calls = 0
         total_tokens = 0
 
-        for _ in range(self._max_turns):
+        for turn in range(self._max_turns):
+            logger.info("Turn %d started [trace_id=%s]", turn + 1, trace_id)
+
             # Auto-compact: threshold 초과 시 오래된 메시지 압축
             if self._auto_compactor and self._auto_compactor.should_compact(messages):
                 logger.info("Auto-compact triggered (tokens estimate: %d)",
                             self._auto_compactor.estimate_tokens(messages))
                 messages = await self._auto_compactor.compact(messages)
 
+            _chat_start = time.perf_counter()
             response: LLMResponse = await self._provider.chat(messages, tools)
+            _chat_duration = time.perf_counter() - _chat_start
             total_tokens += response.usage.total_tokens
-            self._record_usage(response)
+            self._record_usage(response, duration=_chat_duration)
 
             if not response.has_tool_calls:
                 # Append assistant reply and persist
                 messages.append(Message(role="assistant", content=response.content))
                 await self._persist_conversation(
                     ctx, messages, total_tokens,
+                )
+                logger.info(
+                    "Turn %d ended (final) [trace_id=%s, tokens=%d]",
+                    turn + 1, trace_id, total_tokens,
                 )
                 return AgentResponse(
                     content=response.content or "",
@@ -216,6 +252,11 @@ class MessageLoopAgent:
                     ]
 
                 for call, result in zip(allowed_calls, results):
+                    logger.info(
+                        "Tool execution completed: %s [trace_id=%s, success=%s]",
+                        call.name, trace_id, result.success,
+                    )
+
                     # Output limiter: 도구 출력 크기 제한
                     if self._output_limiter:
                         result = self._output_limiter.limit_tool_result(result)
@@ -246,6 +287,9 @@ class MessageLoopAgent:
                         tool_call_id=call.id,
                     ))
 
+            logger.info("Turn %d ended [trace_id=%s]", turn + 1, trace_id)
+
+        logger.info("handle_message ended (max turns) [trace_id=%s]", trace_id)
         await self._persist_conversation(ctx, messages, total_tokens)
         return AgentResponse(
             content="Max turns reached.",
@@ -262,6 +306,26 @@ class MessageLoopAgent:
         tool_calls가 있는 turn은 비스트리밍 chat()으로 처리하고,
         마지막 텍스트 응답만 chat_stream()으로 스트리밍한다.
         """
+        # Request trace context 설정
+        stream_trace_id = generate_trace_id()
+        set_request_context(
+            trace_id=stream_trace_id,
+            user=ctx.user,
+            channel=ctx.channel,
+            session_id=ctx.session_id,
+        )
+        logger.info("handle_message_stream started [trace_id=%s]", stream_trace_id)
+
+        # Input sanitization
+        if self._sanitizer:
+            message = self._sanitizer.sanitize_message(message)
+            detected, pattern = self._sanitizer.check_prompt_injection(message)
+            if detected:
+                logger.warning(
+                    "Prompt injection detected [trace_id=%s, pattern=%s, user=%s]",
+                    stream_trace_id, pattern, ctx.user,
+                )
+
         # 멀티모달: 이미지 경로 추출 및 Attachment 변환
         from breadmind.plugins.builtin.tools.multimodal import process_message_attachments
         clean_message, attachments = process_message_attachments(message)
@@ -306,9 +370,11 @@ class MessageLoopAgent:
                     yield StreamEvent("compact", None)
 
                 # 비스트리밍 chat()으로 먼저 호출하여 tool_calls 여부 확인
+                _chat_start = time.perf_counter()
                 response: LLMResponse = await self._provider.chat(messages, tools)
+                _chat_duration = time.perf_counter() - _chat_start
                 total_tokens += response.usage.total_tokens
-                self._record_usage(response)
+                self._record_usage(response, duration=_chat_duration)
 
                 if not response.has_tool_calls:
                     # 마지막 응답 = 텍스트 → 스트리밍으로 재호출
@@ -452,17 +518,59 @@ class MessageLoopAgent:
             logger.exception("Streaming error")
             yield StreamEvent("error", str(e))
 
-    def _record_usage(self, response: LLMResponse) -> None:
-        """CostTracker에 LLM 응답의 토큰 사용량을 기록한다."""
+    def _record_usage(self, response: LLMResponse, *, duration: float = 0.0) -> None:
+        """CostTracker에 LLM 응답의 토큰 사용량을 기록하고 Prometheus 메트릭에 반영한다."""
         if not self._cost_tracker:
             return
         usage = response.usage
-        self._cost_tracker.record(
+        call_cost = self._cost_tracker.record(
             input_tokens=usage.input_tokens,
             output_tokens=usage.output_tokens,
             cache_creation=usage.cache_creation_input_tokens,
             cache_read=usage.cache_read_input_tokens,
         )
+
+        # Prometheus metrics
+        try:
+            from breadmind.core.metrics import get_metrics_registry
+            registry = get_metrics_registry()
+            provider_name = getattr(self._provider, "name", "unknown")
+            model_name = getattr(self._provider, "model", self._cost_tracker.model)
+
+            base_labels = {"provider": provider_name, "model": model_name}
+
+            registry.counter(
+                "breadmind_llm_requests_total",
+                "Total LLM API requests",
+                labels={**base_labels, "status": "ok"},
+            )
+            registry.counter(
+                "breadmind_llm_tokens_total",
+                "Total LLM tokens used",
+                labels={**base_labels, "type": "input"},
+                value=float(usage.input_tokens),
+            )
+            registry.counter(
+                "breadmind_llm_tokens_total",
+                "Total LLM tokens used",
+                labels={**base_labels, "type": "output"},
+                value=float(usage.output_tokens),
+            )
+            registry.counter(
+                "breadmind_llm_cost_usd_total",
+                "Total LLM cost in USD",
+                labels=base_labels,
+                value=call_cost,
+            )
+            if duration > 0:
+                registry.histogram_observe(
+                    "breadmind_llm_request_duration_seconds",
+                    "LLM request duration in seconds",
+                    value=duration,
+                    labels=base_labels,
+                )
+        except Exception:
+            pass  # metrics should never break the agent loop
 
     def _build_done_data(
         self, total_tokens: int, total_tool_calls: int,

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import AsyncGenerator
 
@@ -15,11 +14,10 @@ from .base import (
 )
 from .key_rotation import KeyRotator
 from .rate_limiter import RateLimiter
+from .retry import RetryConfig, retry_with_backoff, retry_with_backoff_stream
 from .token_counter import TokenCounter
 
 logger = logging.getLogger(__name__)
-
-_MAX_RETRIES = 3
 
 
 class ClaudeProvider(LLMProvider):
@@ -29,10 +27,12 @@ class ClaudeProvider(LLMProvider):
         default_model: str = "claude-sonnet-4-6",
         rate_limiter: RateLimiter | None = None,
         api_keys: list[str] | None = None,
+        retry_config: RetryConfig | None = None,
     ):
         self._client = anthropic.AsyncAnthropic(api_key=api_key)
         self._default_model = default_model
         self._rate_limiter = rate_limiter
+        self._retry_config = retry_config or RetryConfig()
         self._key_rotator: KeyRotator | None = (
             KeyRotator(api_keys) if api_keys and len(api_keys) > 1 else None
         )
@@ -84,44 +84,17 @@ class ClaudeProvider(LLMProvider):
                 estimated_tokens += TokenCounter.estimate_tools_tokens(tools)
             await self._rate_limiter.acquire(estimated_tokens)
 
-        # Retry with exponential backoff on 429 RateLimitError
-        last_error: Exception | None = None
-        for attempt in range(_MAX_RETRIES):
-            try:
-                response = await self._client.messages.create(**kwargs)
-                result = self._parse_response(response)
+        async def _do_call() -> LLMResponse:
+            response = await self._client.messages.create(**kwargs)
+            return self._parse_response(response)
 
-                # Record actual usage
-                if self._rate_limiter:
-                    await self._rate_limiter.record_usage(result.usage.total_tokens)
+        result = await retry_with_backoff(_do_call, config=self._retry_config)
 
-                return result
-            except anthropic.RateLimitError as e:
-                last_error = e
+        # Record actual usage
+        if self._rate_limiter:
+            await self._rate_limiter.record_usage(result.usage.total_tokens)
 
-                # Key rotation: 다른 key로 전환하여 즉시 재시도
-                if self._key_rotator:
-                    current = self._key_rotator.current_key
-                    await self._key_rotator.mark_exhausted(current)
-                    new_key = await self._key_rotator.rotate()
-                    logger.warning(
-                        "Rate limited (attempt %d/%d), rotating API key",
-                        attempt + 1,
-                        _MAX_RETRIES,
-                    )
-                    self._client = anthropic.AsyncAnthropic(api_key=new_key)
-                    continue
-
-                backoff = 2**attempt
-                logger.warning(
-                    "Rate limited (attempt %d/%d), retrying in %ds",
-                    attempt + 1,
-                    _MAX_RETRIES,
-                    backoff,
-                )
-                await asyncio.sleep(backoff)
-
-        raise last_error  # type: ignore[misc]
+        return result
 
     async def chat_stream(
         self,
@@ -153,9 +126,15 @@ class ClaudeProvider(LLMProvider):
             kwargs["tools"] = converted_tools
 
         # 스트리밍 컨텍스트 매니저를 사용하여 텍스트 델타를 순차적으로 반환
-        async with self._client.messages.stream(**kwargs) as stream:
-            async for text in stream.text_stream:
-                yield text
+        async def _do_stream() -> AsyncGenerator[str, None]:
+            async with self._client.messages.stream(**kwargs) as stream:
+                async for text in stream.text_stream:
+                    yield text
+
+        async for chunk in retry_with_backoff_stream(
+            _do_stream, config=self._retry_config
+        ):
+            yield chunk
 
     async def health_check(self) -> bool:
         """클라이언트 설정 상태만 확인한다. 불필요한 API 호출을 하지 않는다."""

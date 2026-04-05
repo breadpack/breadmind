@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from collections.abc import AsyncGenerator
@@ -15,20 +14,40 @@ from .base import (
     TokenUsage,
     ToolDefinition,
 )
+from .retry import RetryConfig, retry_with_backoff, retry_with_backoff_stream
+
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from breadmind.core.http_pool import HTTPSessionManager
 
 logger = logging.getLogger(__name__)
 
-_MAX_RETRIES = 3
 _API_BASE = "https://generativelanguage.googleapis.com/v1beta"
+
+
+class _GeminiHTTPError(Exception):
+    """HTTP error with status code for retry logic detection."""
+
+    def __init__(self, status_code: int, message: str):
+        self.status_code = status_code
+        super().__init__(message)
 
 
 class GeminiProvider(LLMProvider):
     """Google Gemini API provider."""
 
-    def __init__(self, api_key: str, default_model: str = "gemini-2.5-flash"):
+    def __init__(
+        self,
+        api_key: str,
+        default_model: str = "gemini-2.5-flash",
+        retry_config: RetryConfig | None = None,
+        session_manager: "HTTPSessionManager | None" = None,
+    ):
         self._api_key = api_key
         self._default_model = default_model
         self.model = default_model
+        self._retry_config = retry_config or RetryConfig()
+        self._session_manager = session_manager
 
     async def chat(
         self,
@@ -62,44 +81,42 @@ class GeminiProvider(LLMProvider):
 
         logger.debug("Gemini request body: %s", json.dumps(body, default=str)[:3000])
 
-        last_error: Exception | None = None
-        for attempt in range(_MAX_RETRIES):
+        async def _do_call() -> LLMResponse:
+            if self._session_manager is not None:
+                session = await self._session_manager.get_session("gemini")
+            else:
+                session = aiohttp.ClientSession()
             try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        url,
-                        json=body,
-                        headers={"Content-Type": "application/json"},
-                        timeout=aiohttp.ClientTimeout(total=120),
-                    ) as resp:
-                        if resp.status == 429:
-                            backoff = 2 ** attempt
-                            logger.warning(
-                                "Gemini rate limited (attempt %d/%d), retrying in %ds",
-                                attempt + 1, _MAX_RETRIES, backoff,
-                            )
-                            await asyncio.sleep(backoff)
-                            last_error = Exception(f"Rate limited: HTTP {resp.status}")
-                            continue
+                async with session.post(
+                    url,
+                    json=body,
+                    headers={"Content-Type": "application/json"},
+                    timeout=aiohttp.ClientTimeout(total=120),
+                ) as resp:
+                    if resp.status == 429:
+                        raise _GeminiHTTPError(resp.status, "Rate limited")
 
-                        if resp.status != 200:
-                            error_text = await resp.text()
-                            raise Exception(
-                                f"Gemini API error: HTTP {resp.status} - {error_text[:500]}"
-                            )
+                    if resp.status in {500, 502, 503, 529}:
+                        error_text = await resp.text()
+                        raise _GeminiHTTPError(
+                            resp.status,
+                            f"Gemini API error: HTTP {resp.status} - {error_text[:500]}",
+                        )
 
-                        data = await resp.json()
-                        logger.debug("Gemini raw response: %s", json.dumps(data, default=str)[:2000])
-                        return self._parse_response(data)
+                    if resp.status != 200:
+                        error_text = await resp.text()
+                        raise Exception(
+                            f"Gemini API error: HTTP {resp.status} - {error_text[:500]}"
+                        )
 
-            except aiohttp.ClientError as e:
-                last_error = e
-                if attempt < _MAX_RETRIES - 1:
-                    await asyncio.sleep(2 ** attempt)
-                    continue
-                raise
+                    data = await resp.json()
+                    logger.debug("Gemini raw response: %s", json.dumps(data, default=str)[:2000])
+                    return self._parse_response(data)
+            finally:
+                if self._session_manager is None:
+                    await session.close()
 
-        raise last_error  # type: ignore[misc]
+        return await retry_with_backoff(_do_call, config=self._retry_config)
 
     async def chat_stream(
         self,
@@ -129,8 +146,14 @@ class GeminiProvider(LLMProvider):
             "responseModalities": ["TEXT"],
         }
 
-        try:
-            async with aiohttp.ClientSession() as session:
+        async def _do_stream() -> AsyncGenerator[str, None]:
+            if self._session_manager is not None:
+                session = await self._session_manager.get_session("gemini")
+                owns_session = False
+            else:
+                session = aiohttp.ClientSession()
+                owns_session = True
+            try:
                 async with session.post(
                     url,
                     json=body,
@@ -138,6 +161,12 @@ class GeminiProvider(LLMProvider):
                     timeout=aiohttp.ClientTimeout(total=120),
                 ) as resp:
                     if resp.status != 200:
+                        if resp.status in {429, 500, 502, 503, 529}:
+                            error_text = await resp.text()
+                            raise _GeminiHTTPError(
+                                resp.status,
+                                f"Gemini streaming API error: HTTP {resp.status} - {error_text[:500]}",
+                            )
                         error_text = await resp.text()
                         raise Exception(
                             f"Gemini streaming API error: HTTP {resp.status} - {error_text[:500]}"
@@ -165,9 +194,17 @@ class GeminiProvider(LLMProvider):
                                     text = part.get("text")
                                     if text:
                                         yield text
-        except aiohttp.ClientError as e:
-            logger.error("Gemini streaming error: %s", e)
-            # 스트리밍 실패 시 일반 chat()으로 폴백
+            finally:
+                if owns_session:
+                    await session.close()
+
+        try:
+            async for chunk in retry_with_backoff_stream(
+                _do_stream, config=self._retry_config
+            ):
+                yield chunk
+        except Exception:
+            logger.error("Gemini streaming failed after retries, falling back to chat()")
             response = await self.chat(messages, tools, model)
             if response.content:
                 yield response.content

@@ -1,11 +1,17 @@
+from __future__ import annotations
+
 import inspect
 import asyncio
 import hashlib
 import json
 import time
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, TYPE_CHECKING
 from breadmind.llm.base import ToolDefinition
+from breadmind.tools.schema_validator import SchemaValidator
+
+if TYPE_CHECKING:
+    from breadmind.core.tool_hooks import ToolHookRunner
 
 MAX_OUTPUT_SIZE: int = 50_000
 
@@ -17,7 +23,15 @@ class ToolResult:
     not_found: bool = False
 
 
-def tool(description: str):
+@dataclass
+class ToolMetadata:
+    """Concurrency safety metadata for a tool."""
+
+    read_only: bool = False
+    concurrency_safe: bool = True
+
+
+def tool(description: str, read_only: bool = False, concurrency_safe: bool = True):
     """Decorator to register a function as an agent tool."""
     def decorator(func: Callable):
         sig = inspect.signature(func)
@@ -46,6 +60,9 @@ def tool(description: str):
                 "properties": properties,
                 "required": required,
             },
+        )
+        func._tool_metadata = ToolMetadata(
+            read_only=read_only, concurrency_safe=concurrency_safe
         )
         return func
     return decorator
@@ -158,14 +175,22 @@ class ToolResultCache:
 
 
 class ToolRegistry:
-    def __init__(self, cache: ToolResultCache | None = None,
-                 cacheable_tools: set[str] | None = None):
+    def __init__(
+        self,
+        cache: ToolResultCache | None = None,
+        cacheable_tools: set[str] | None = None,
+        validator: SchemaValidator | None = None,
+        hook_runner: ToolHookRunner | None = None,
+    ):
         self._tools: dict[str, Callable] = {}
         self._definitions: dict[str, ToolDefinition] = {}
         self._mcp_tools: dict[str, str] = {}  # tool_name -> server_name
         self._mcp_callback: Callable | None = None
+        self._tool_metadata: dict[str, ToolMetadata] = {}
         self.cache = cache
         self.cacheable_tools: set[str] = cacheable_tools or set()
+        self.validator = validator
+        self.hook_runner = hook_runner
 
     def register(self, func: Callable):
         defn = getattr(func, "_tool_definition", None)
@@ -173,6 +198,9 @@ class ToolRegistry:
             raise ValueError(f"{func.__name__} is not decorated with @tool")
         self._tools[defn.name] = func
         self._definitions[defn.name] = defn
+        metadata = getattr(func, "_tool_metadata", None)
+        if metadata:
+            self._tool_metadata[defn.name] = metadata
 
     def unregister(self, name: str) -> bool:
         """Remove a builtin tool by name. Returns True if found."""
@@ -213,12 +241,61 @@ class ToolRegistry:
             return f"mcp:{server}"
         return "unknown"
 
+    def register_metadata(self, name: str, metadata: ToolMetadata) -> None:
+        """Register concurrency metadata for a tool."""
+        self._tool_metadata[name] = metadata
+
+    def get_metadata(self, name: str) -> ToolMetadata:
+        """Get metadata for a tool. Defaults to read_only=False, concurrency_safe=True."""
+        return self._tool_metadata.get(name, ToolMetadata())
+
+    def classify_batch(
+        self, tool_names: list[str]
+    ) -> tuple[list[str], list[str]]:
+        """Split tool names into (parallel_safe, sequential) groups.
+
+        Tools that are both read_only and concurrency_safe are parallel_safe.
+        All others are sequential.
+        """
+        parallel_safe: list[str] = []
+        sequential: list[str] = []
+        for name in tool_names:
+            meta = self.get_metadata(name)
+            if meta.read_only and meta.concurrency_safe:
+                parallel_safe.append(name)
+            else:
+                sequential.append(name)
+        return parallel_safe, sequential
+
     async def execute(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         # Check cache for cacheable tools
         if self.cache and name in self.cacheable_tools:
             cached = self.cache.get(name, arguments)
             if cached is not None:
                 return cached
+
+        # Schema validation (before any execution)
+        if self.validator:
+            defn = self._definitions.get(name)
+            if defn:
+                validation = self.validator.validate(arguments, defn.parameters)
+                if not validation.valid:
+                    error_msgs = "; ".join(e.message for e in validation.errors)
+                    return ToolResult(
+                        success=False,
+                        output=f"Schema validation failed: {error_msgs}",
+                    )
+
+        # Pre-hooks
+        if self.hook_runner:
+            hook_result = await self.hook_runner.run_pre_hooks(name, arguments)
+            if hook_result.action == "block":
+                return ToolResult(
+                    success=False,
+                    output=f"Blocked by hook: {hook_result.block_reason}",
+                )
+            if hook_result.action == "modify" and hook_result.modified_input is not None:
+                arguments = hook_result.modified_input
 
         # Check builtin first
         func = self._tools.get(name)
@@ -243,6 +320,17 @@ class ToolRegistry:
                 output_str = _truncate_output(str(output))
                 result = ToolResult(success=True, output=output_str)
 
+                # Post-hooks
+                if self.hook_runner:
+                    post_result = await self.hook_runner.run_post_hooks(
+                        name, arguments, result.output, result.success
+                    )
+                    if post_result.additional_context:
+                        result = ToolResult(
+                            success=result.success,
+                            output=result.output + "\n" + post_result.additional_context,
+                        )
+
                 # Cache successful result if cacheable
                 if self.cache and name in self.cacheable_tools and result.success:
                     self.cache.set(name, arguments, result)
@@ -258,6 +346,17 @@ class ToolRegistry:
         if server_name is not None and self._mcp_callback:
             original_name = name.split("__", 1)[1] if "__" in name else name
             result = await self._mcp_callback(server_name, original_name, arguments)
+
+            # Post-hooks for MCP tools
+            if self.hook_runner:
+                post_result = await self.hook_runner.run_post_hooks(
+                    name, arguments, result.output, result.success
+                )
+                if post_result.additional_context:
+                    result = ToolResult(
+                        success=result.success,
+                        output=result.output + "\n" + post_result.additional_context,
+                    )
 
             # Cache successful MCP result if cacheable
             if self.cache and name in self.cacheable_tools and result.success:

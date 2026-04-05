@@ -471,6 +471,8 @@ class TestPluginManager:
     async def test_load_registers_coding_agent(self, tmp_path):
         from breadmind.coding.adapters import get_adapter, unregister_adapter
         manager = self._make_manager(tmp_path)
+        # requires 에 "python" 서비스가 필요하므로 컨테이너에 등록
+        manager.container.register("python", True)
         make_plugin_dir(manager._plugins_dir, FULL_MANIFEST)
         await manager.load("full-plugin")
         try:
@@ -483,6 +485,7 @@ class TestPluginManager:
     async def test_unload_unregisters_coding_agent(self, tmp_path):
         from breadmind.coding.adapters import get_adapter, unregister_adapter
         manager = self._make_manager(tmp_path)
+        manager.container.register("python", True)
         make_plugin_dir(manager._plugins_dir, FULL_MANIFEST)
         await manager.load("full-plugin")
         await manager.unload("full-plugin")

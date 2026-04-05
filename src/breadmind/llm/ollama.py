@@ -14,7 +14,12 @@ from .base import (
     ToolDefinition,
 )
 from .rate_limiter import RateLimiter
+from .retry import RetryConfig, retry_with_backoff, retry_with_backoff_stream
 from .token_counter import TokenCounter
+
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from breadmind.core.http_pool import HTTPSessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -28,10 +33,14 @@ class OllamaProvider(LLMProvider):
         base_url: str = "http://localhost:11434",
         default_model: str = "llama3",
         rate_limiter: RateLimiter | None = None,
+        retry_config: RetryConfig | None = None,
+        session_manager: "HTTPSessionManager | None" = None,
     ):
         self._base_url = base_url.rstrip("/")
         self._default_model = default_model
         self._rate_limiter = rate_limiter
+        self._retry_config = retry_config or RetryConfig()
+        self._session_manager = session_manager
 
     async def chat(
         self,
@@ -67,31 +76,41 @@ class OllamaProvider(LLMProvider):
                 estimated_tokens += TokenCounter.estimate_tools_tokens(tools)
             await self._rate_limiter.acquire(estimated_tokens)
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{self._base_url}/api/chat", json=payload
-            ) as resp:
-                data = await resp.json()
+        async def _do_call() -> LLMResponse:
+            if self._session_manager is not None:
+                session = await self._session_manager.get_session("ollama")
+            else:
+                session = aiohttp.ClientSession()
+            try:
+                async with session.post(
+                    f"{self._base_url}/api/chat", json=payload
+                ) as resp:
+                    data = await resp.json()
+            finally:
+                if self._session_manager is None:
+                    await session.close()
 
-        msg = data.get("message", {})
-        tool_calls = []
-        for tc in msg.get("tool_calls", []):
-            fn = tc.get("function", {})
-            tool_calls.append(ToolCall(
-                id=fn.get("name", ""),
-                name=fn.get("name", ""),
-                arguments=fn.get("arguments", {}),
-            ))
+            msg = data.get("message", {})
+            tool_calls_list = []
+            for tc in msg.get("tool_calls", []):
+                fn = tc.get("function", {})
+                tool_calls_list.append(ToolCall(
+                    id=fn.get("name", ""),
+                    name=fn.get("name", ""),
+                    arguments=fn.get("arguments", {}),
+                ))
 
-        result = LLMResponse(
-            content=msg.get("content"),
-            tool_calls=tool_calls,
-            usage=TokenUsage(
-                input_tokens=data.get("prompt_eval_count", 0),
-                output_tokens=data.get("eval_count", 0),
-            ),
-            stop_reason="tool_use" if tool_calls else "end_turn",
-        )
+            return LLMResponse(
+                content=msg.get("content"),
+                tool_calls=tool_calls_list,
+                usage=TokenUsage(
+                    input_tokens=data.get("prompt_eval_count", 0),
+                    output_tokens=data.get("eval_count", 0),
+                ),
+                stop_reason="tool_use" if tool_calls_list else "end_turn",
+            )
+
+        result = await retry_with_backoff(_do_call, config=self._retry_config)
 
         if self._rate_limiter:
             await self._rate_limiter.record_usage(result.usage.total_tokens)
@@ -114,8 +133,14 @@ class OllamaProvider(LLMProvider):
         }
         # 스트리밍에서는 tools 없이 텍스트만 (tool call turn은 비스트리밍으로 처리)
 
-        try:
-            async with aiohttp.ClientSession() as session:
+        async def _do_stream() -> AsyncGenerator[str, None]:
+            if self._session_manager is not None:
+                session = await self._session_manager.get_session("ollama")
+                owns_session = False
+            else:
+                session = aiohttp.ClientSession()
+                owns_session = True
+            try:
                 async with session.post(
                     f"{self._base_url}/api/chat",
                     json=payload,
@@ -147,9 +172,17 @@ class OllamaProvider(LLMProvider):
                             # done=true이면 스트림 종료
                             if data.get("done", False):
                                 return
-        except aiohttp.ClientError as e:
-            logger.error("Ollama streaming error: %s", e)
-            # 스트리밍 실패 시 일반 chat()으로 폴백
+            finally:
+                if owns_session:
+                    await session.close()
+
+        try:
+            async for chunk in retry_with_backoff_stream(
+                _do_stream, config=self._retry_config
+            ):
+                yield chunk
+        except Exception:
+            logger.error("Ollama streaming failed after retries, falling back to chat()")
             response = await self.chat(messages, tools, model)
             if response.content:
                 yield response.content
@@ -158,9 +191,16 @@ class OllamaProvider(LLMProvider):
         """Ollama 서버 상태를 확인한다. 타임아웃을 설정하여 행(hang)을 방지한다."""
         try:
             timeout = aiohttp.ClientTimeout(total=_HEALTH_CHECK_TIMEOUT)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(f"{self._base_url}/api/tags") as resp:
+            if self._session_manager is not None:
+                session = await self._session_manager.get_session("ollama")
+                async with session.get(
+                    f"{self._base_url}/api/tags", timeout=timeout,
+                ) as resp:
                     return resp.status == 200
+            else:
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.get(f"{self._base_url}/api/tags") as resp:
+                        return resp.status == 200
         except Exception:
             return False
 

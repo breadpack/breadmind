@@ -3,6 +3,8 @@ import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 
+from breadmind.cli.ui import ConsoleUI, get_ui
+
 
 @dataclass
 class CheckResult:
@@ -13,38 +15,45 @@ class CheckResult:
 
 async def run_doctor(args) -> None:
     """시스템 진단 실행."""
-    print("🩺 BreadMind Doctor")
-    print("=" * 50)
+    ui = get_ui()
+    ui.panel("BreadMind Doctor", "Running system diagnostics...")
 
     results: list[CheckResult] = []
 
     # 1. Config
-    results.append(check_config())
+    with ui.spinner("Checking configuration"):
+        results.append(check_config())
 
     # 2. Python version
-    results.append(check_python())
+    with ui.spinner("Checking Python version"):
+        results.append(check_python())
 
     # 3. Dependencies
-    results.extend(check_dependencies())
+    with ui.spinner("Checking dependencies"):
+        results.extend(check_dependencies())
 
     # 4. LLM Providers
-    results.extend(await check_providers())
+    with ui.spinner("Checking LLM providers"):
+        results.extend(await check_providers())
 
     # 5. Database
-    results.append(await check_database())
+    with ui.spinner("Checking database"):
+        results.append(await check_database())
 
     # 6. MCP Servers
-    results.extend(await check_mcp_servers())
+    with ui.spinner("Checking MCP servers"):
+        results.extend(await check_mcp_servers())
 
     # 7. Disk space
-    results.append(check_disk_space())
+    with ui.spinner("Checking disk space"):
+        results.append(check_disk_space())
 
-    # Print results
-    print()
+    # Print results as table
     ok = warn = fail = skip = 0
+    table_rows: list[list[str]] = []
     for r in results:
-        icon = {"ok": "✅", "warn": "⚠️", "fail": "❌", "skip": "⏭️"}[r.status]
-        print(f"  {icon} {r.name}: {r.detail}")
+        icon = {"ok": "[ok]", "warn": "[!]", "fail": "[x]", "skip": "[-]"}[r.status]
+        table_rows.append([icon, r.name, r.detail])
         if r.status == "ok":
             ok += 1
         elif r.status == "warn":
@@ -54,9 +63,16 @@ async def run_doctor(args) -> None:
         else:
             skip += 1
 
-    print(f"\n  Summary: {ok} ok, {warn} warnings, {fail} failures, {skip} skipped")
+    ui.table(["Status", "Check", "Detail"], table_rows)
+
+    summary = f"{ok} ok, {warn} warnings, {fail} failures, {skip} skipped"
     if fail > 0:
-        print("  Run 'breadmind setup' to fix configuration issues.")
+        ui.error(f"Summary: {summary}")
+        ui.warning("Run 'breadmind setup' to fix configuration issues.")
+    elif warn > 0:
+        ui.warning(f"Summary: {summary}")
+    else:
+        ui.success(f"Summary: {summary}")
 
 
 def check_config() -> CheckResult:

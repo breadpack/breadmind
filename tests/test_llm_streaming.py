@@ -50,6 +50,9 @@ async def test_gemini_chat_stream_returns_async_generator():
         def post(self, url, **kwargs):
             return FakeResponse()
 
+        async def close(self):
+            pass
+
         async def __aenter__(self):
             return self
 
@@ -152,6 +155,9 @@ async def test_ollama_chat_stream_returns_async_generator():
         status = 200
         content = FakeContent(json_lines.encode("utf-8"))
 
+        async def json(self):
+            return {"message": {"content": "Hello world"}, "done": True}
+
         async def __aenter__(self):
             return self
 
@@ -161,6 +167,9 @@ async def test_ollama_chat_stream_returns_async_generator():
     class FakeSession:
         def post(self, url, **kwargs):
             return FakeResponse()
+
+        async def close(self):
+            pass
 
         async def __aenter__(self):
             return self

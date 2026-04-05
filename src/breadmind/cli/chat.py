@@ -6,6 +6,9 @@ import os
 import uuid
 from pathlib import Path
 
+from breadmind.cli.session_manager import SessionManager
+from breadmind.cli.ui import get_ui
+
 
 async def run_chat(args) -> None:
     """대화형 CLI 채팅 실행.
@@ -16,6 +19,7 @@ async def run_chat(args) -> None:
     - 기본 도구 레지스트리
     - MessageLoopAgent + 스트리밍
     - ConversationStore (대화 저장/복원)
+    - SessionManager (세션 저장/복원)
     """
     # 1. Config 로드
     try:
@@ -87,16 +91,18 @@ async def run_chat(args) -> None:
         CallbackApprovalHandler, ApprovalRequest, ApprovalResponse,
     )
 
+    ui = get_ui()
+
     async def cli_approval(request: ApprovalRequest) -> ApprovalResponse:
-        print(f"\n[!] Approval required: {request.tool_name}")
-        print(f"    Reason: {request.reason}")
-        print(f"    Arguments: {request.arguments}")
-        answer = await asyncio.get_running_loop().run_in_executor(
-            None, lambda: input("    Execute? (y/n): ").strip().lower(),
+        ui.warning(f"Approval required: {request.tool_name}")
+        ui.info(f"    Reason: {request.reason}")
+        ui.info(f"    Arguments: {request.arguments}")
+        approved = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: ui.confirm("    Execute?"),
         )
         return ApprovalResponse(
             request_id=request.request_id,
-            approved=answer in ("y", "yes"),
+            approved=approved,
         )
 
     approval = CallbackApprovalHandler(cli_approval)
@@ -116,29 +122,88 @@ async def run_chat(args) -> None:
         conversation_store=conversation_store,
     )
 
-    # 12. 세션 관리
-    session_id = args.continue_session or f"chat_{uuid.uuid4().hex[:8]}"
-    resume = args.continue_session is not None
+    # 12. SessionManager
+    session_mgr = SessionManager()
 
-    from breadmind.core.protocols import AgentContext
+    # 13. 세션 관리 -- --continue / --resume 지원
+    session_id, resume = await _resolve_session(args, session_mgr, ui)
+
     use_stream = args.stream and not args.no_stream
 
-    print(f"BreadMind CLI Chat [{'streaming' if use_stream else 'standard'}]")
-    print(f"  Session: {session_id}")
+    mode = "streaming" if use_stream else "standard"
+    panel_lines = [f"Session: {session_id}  |  Mode: {mode}"]
     if resume:
-        print("  Resuming previous session...")
-    print("  Type 'exit' to quit, '/sessions' to list sessions")
-    print("-" * 50)
+        panel_lines.append("Resuming previous session...")
+    panel_lines.append("Type 'exit' to quit, '/sessions' to list sessions")
+    ui.panel("BreadMind CLI Chat", "\n".join(panel_lines))
 
-    # 13. 대화 루프
-    await _chat_loop(agent, conversation_store, session_id, resume, use_stream)
+    # 14. 대화 루프
+    await _chat_loop(agent, conversation_store, session_id, resume, use_stream, session_mgr)
+
+
+async def _resolve_session(args, session_mgr: SessionManager, ui) -> tuple[str, bool]:
+    """CLI 인자를 기반으로 세션 ID와 resume 여부를 결정."""
+    # --continue (-c): 가장 최근 세션 재개
+    if getattr(args, "continue_last", False):
+        latest = session_mgr.get_latest_session_id()
+        if latest:
+            ui.info(f"[Resumed session {latest}]")
+            return latest, True
+        ui.warning("No previous session found. Starting new session.")
+        return f"chat_{uuid.uuid4().hex[:8]}", False
+
+    # --resume (-r): 특정 세션 또는 목록 선택
+    resume_val = getattr(args, "resume_session", None)
+    if resume_val is not None:
+        if resume_val != "":
+            # 특정 세션 ID 지정
+            loaded = session_mgr.load_session(resume_val)
+            if loaded is not None:
+                ui.info(f"[Resumed session {resume_val}]")
+                return resume_val, True
+            ui.warning(f"Session '{resume_val}' not found. Starting new session.")
+            return f"chat_{uuid.uuid4().hex[:8]}", False
+        # 빈 값: 목록에서 선택
+        sessions = session_mgr.list_sessions(limit=20)
+        if not sessions:
+            ui.warning("No sessions found. Starting new session.")
+            return f"chat_{uuid.uuid4().hex[:8]}", False
+
+        import datetime
+        rows = []
+        for i, s in enumerate(sessions, 1):
+            ts = datetime.datetime.fromtimestamp(s["timestamp"]).strftime("%Y-%m-%d %H:%M")
+            short_id = s["id"][:16]
+            rows.append([str(i), short_id, s["preview"] or "(empty)", ts, str(s["message_count"])])
+        ui.table(["#", "Session ID", "Last Message", "Updated", "Messages"], rows)
+
+        try:
+            choice = await asyncio.get_running_loop().run_in_executor(
+                None, lambda: input("Select session number (or Enter to cancel): ").strip(),
+            )
+            if choice.isdigit() and 1 <= int(choice) <= len(sessions):
+                picked = sessions[int(choice) - 1]
+                ui.info(f"[Resumed session {picked['id']}]")
+                return picked["id"], True
+        except (KeyboardInterrupt, EOFError):
+            pass
+        ui.info("Starting new session.")
+        return f"chat_{uuid.uuid4().hex[:8]}", False
+
+    # --continue (기존 하위 호환) 또는 새 세션
+    if args.continue_session:
+        return args.continue_session, True
+    return f"chat_{uuid.uuid4().hex[:8]}", False
 
 
 async def _chat_loop(
     agent, conversation_store, session_id: str, resume: bool, use_stream: bool,
+    session_mgr: SessionManager | None = None,
 ) -> None:
     """메인 대화 루프."""
     from breadmind.core.protocols import AgentContext
+
+    ui = get_ui()
 
     while True:
         try:
@@ -146,21 +211,21 @@ async def _chat_loop(
                 None, lambda: input("\nyou> ").strip(),
             )
         except (KeyboardInterrupt, EOFError):
-            print("\nGoodbye!")
+            ui.info("Goodbye!")
             break
 
         if not user_input:
             continue
         if user_input.lower() in ("exit", "quit", "/exit", "/quit"):
-            print("Goodbye!")
+            ui.info("Goodbye!")
             break
         if user_input == "/sessions":
             if conversation_store:
                 sessions = await conversation_store.list_conversations()
-                for s in sessions:
-                    print(f"  {s.session_id} | {s.title} | {s.updated_at}")
+                rows = [[s.session_id, s.title, str(s.updated_at)] for s in sessions]
+                ui.table(["Session ID", "Title", "Updated"], rows)
             else:
-                print("  No conversation store available.")
+                ui.warning("No conversation store available.")
             continue
 
         # 이미지 경로 감지 시 안내 메시지 출력
@@ -171,7 +236,7 @@ async def _chat_loop(
             valid = [p for p in detected_paths if _Path(p).exists()]
             if valid:
                 names = ", ".join(_Path(p).name for p in valid)
-                print(f"  [image detected: {names}]")
+                ui.info(f"Image detected: {names}")
 
         ctx = AgentContext(
             user="cli_user", channel="cli",
@@ -182,30 +247,55 @@ async def _chat_loop(
         if use_stream:
             await _handle_stream(agent, user_input, ctx)
         else:
-            resp = await agent.handle_message(user_input, ctx)
-            print(f"\nbreadmind> {resp.content}\n")
+            with ui.spinner("Thinking..."):
+                resp = await agent.handle_message(user_input, ctx)
+            ui.markdown(f"**breadmind>** {resp.content}")
+
+        # 세션 자동 저장
+        if session_mgr is not None:
+            try:
+                _save_current_session(session_mgr, session_id, agent)
+            except Exception:
+                pass  # 세션 저장 실패는 무시
+
+
+def _save_current_session(session_mgr: SessionManager, session_id: str, agent) -> None:
+    """현재 agent의 대화 이력을 세션으로 저장."""
+    # agent에서 메시지 이력 추출 시도
+    messages_raw: list[dict] = []
+    history = getattr(agent, "messages", None) or getattr(agent, "_messages", None)
+    if history:
+        for msg in history:
+            if hasattr(msg, "role"):
+                messages_raw.append({"role": msg.role, "content": msg.content or ""})
+            elif isinstance(msg, dict):
+                messages_raw.append(msg)
+    if messages_raw:
+        session_mgr.save_session(session_id, messages_raw)
 
 
 async def _handle_stream(agent, user_input: str, ctx) -> None:
     """스트리밍 응답 처리."""
+    ui = get_ui()
     async for event in agent.handle_message_stream(user_input, ctx):
         if event.type == "text":
             print(event.data, end="", flush=True)
         elif event.type == "tool_start":
             tools = event.data.get("tools", [])
-            print(f"\n  [tool: {', '.join(tools)}]", flush=True)
+            ui.info(f"tool: {', '.join(tools)}")
         elif event.type == "tool_end":
             results = event.data.get("results", [])
-            status = ", ".join(
-                f"{r['name']}:{'ok' if r['success'] else 'fail'}" for r in results
-            )
-            print(f"  [{status}]", flush=True)
+            for r in results:
+                if r["success"]:
+                    ui.success(f"{r['name']}: ok")
+                else:
+                    ui.error(f"{r['name']}: fail")
         elif event.type == "error":
-            print(f"\n  [error: {event.data}]", flush=True)
+            ui.error(str(event.data))
         elif event.type == "done":
             tokens = event.data.get("tokens", 0)
             tc = event.data.get("tool_calls", 0)
-            print(f"\n  [{tokens} tokens, {tc} tools]\n", flush=True)
+            ui.info(f"{tokens} tokens, {tc} tools")
     print()
 
 

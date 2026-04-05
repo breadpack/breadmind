@@ -1,14 +1,19 @@
 import asyncio
 import json
 import logging
+import time
 from fastapi import FastAPI, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from typing import Callable
 
+from breadmind.core.metrics import get_metrics_registry, normalize_path
+
+from breadmind.web.idempotency import setup_idempotency
 from breadmind.web.rate_limiter import RateLimiter
+from breadmind.web.versioning import setup_versioning
 from breadmind.web.routes import (
     setup_chat_routes,
     setup_config_routes,
@@ -32,6 +37,9 @@ from breadmind.web.routes.credential_input import setup_credential_input_routes
 from breadmind.web.routes.bg_jobs import setup_bg_job_routes
 from breadmind.web.routes.coding_jobs import register_coding_job_routes
 from breadmind.web.routes.plugins import router as plugins_router
+from breadmind.web.routes.upload import router as upload_router
+from breadmind.web.routes.export import setup_export_routes
+from breadmind.web.routes.backup import setup_backup_routes
 
 logger = logging.getLogger(__name__)
 
@@ -170,15 +178,71 @@ class WebApp:
 
         # Middleware registration order: first registered = innermost.
         # Execution order (outermost → innermost):
-        #   HTTPS enforce → Rate limit → Security headers → Auth → handler
+        #   HTTPS enforce → Rate limit → Security headers → Auth → Metrics → Idempotency → handler
 
-        # --- Auth middleware (innermost – registered first) ---
+        # --- Idempotency middleware (innermost – registered first) ---
+        setup_idempotency(app)
+
+        # --- Metrics collection middleware ---
+
+        _metrics_registry = get_metrics_registry()
+        _active_connections_count = 0
+        _active_lock = asyncio.Lock()
+
+        @app.middleware("http")
+        async def metrics_middleware(request: Request, call_next):
+            nonlocal _active_connections_count
+            path = request.url.path
+            method = request.method
+
+            # Skip metrics collection for the /metrics endpoint itself and static files
+            if path == "/metrics" or path.startswith("/static/"):
+                return await call_next(request)
+
+            async with _active_lock:
+                _active_connections_count += 1
+            _metrics_registry.gauge(
+                "breadmind_active_connections",
+                "Currently active HTTP connections",
+                value=_active_connections_count,
+            )
+
+            start = time.perf_counter()
+            try:
+                response = await call_next(request)
+            finally:
+                duration = time.perf_counter() - start
+                async with _active_lock:
+                    _active_connections_count -= 1
+                _metrics_registry.gauge(
+                    "breadmind_active_connections",
+                    "Currently active HTTP connections",
+                    value=_active_connections_count,
+                )
+
+            normalized = normalize_path(path)
+            status_code = str(response.status_code)
+            _metrics_registry.counter(
+                "breadmind_http_requests_total",
+                "Total HTTP requests",
+                labels={"method": method, "path": normalized, "status_code": status_code},
+            )
+            _metrics_registry.histogram_observe(
+                "breadmind_http_request_duration_seconds",
+                "HTTP request duration in seconds",
+                value=duration,
+                labels={"method": method, "path": normalized},
+            )
+            return response
+
+        # --- Auth middleware ---
 
         @app.middleware("http")
         async def auth_middleware(request: Request, call_next):
             path = request.url.path
             # Skip auth for certain paths
-            skip_paths = ["/api/auth/", "/health", "/api/webhook/receive/", "/api/workers/install-script",
+            skip_paths = ["/api/auth/", "/health", "/metrics",
+                         "/api/webhook/receive/", "/api/workers/install-script",
                          "/credential-input/", "/api/vault/submit-external/"]
             if any(path.startswith(p) for p in skip_paths):
                 return await call_next(request)
@@ -308,6 +372,23 @@ class WebApp:
         app.include_router(personal_router)
         app.include_router(infra_router)
         app.include_router(plugins_router)
+        app.include_router(upload_router)
+        setup_export_routes(app, self)
+        setup_backup_routes(app, self)
+
+        # --- Prometheus metrics endpoint (outside versioning) ---
+
+        @app.get("/metrics")
+        async def prometheus_metrics():
+            """Return all metrics in Prometheus text exposition format."""
+            body = _metrics_registry.format_prometheus()
+            return PlainTextResponse(
+                content=body,
+                media_type="text/plain; version=0.0.4; charset=utf-8",
+            )
+
+        # --- API versioning (must come after all route registrations) ---
+        setup_versioning(app)
 
         # --- Static files (JS, CSS) ---
         static_dir = Path(__file__).parent / "static"

@@ -239,8 +239,14 @@ def load_config(config_dir: str = "config") -> AppConfig:
     if not config_path.exists():
         return AppConfig()
 
-    with open(config_path) as f:
-        raw = yaml.safe_load(f) or {}
+    # When BREADMIND_ENV is explicitly set, load environment-specific profile
+    # and deep-merge it on top of the base config.yaml.
+    if os.environ.get("BREADMIND_ENV"):
+        from breadmind.core.config_profiles import load_with_profile
+        raw = load_with_profile(config_dir)
+    else:
+        with open(config_path) as f:
+            raw = yaml.safe_load(f) or {}
 
     # Expand env vars
     raw = _expand_env(raw)
@@ -293,6 +299,19 @@ def load_config(config_dir: str = "config") -> AppConfig:
     redis_url = os.environ.get("BREADMIND_REDIS_URL")
     if redis_url:
         config.task.redis_url = redis_url
+
+    # Optional Pydantic schema validation (opt-in via env var)
+    if os.environ.get("BREADMIND_VALIDATE_CONFIG") == "1":
+        try:
+            from breadmind.core.config_schema import validate_config
+
+            validate_config(raw)
+        except Exception as exc:
+            import logging as _logging
+
+            _logging.getLogger(__name__).warning(
+                "Pydantic config validation failed (non-fatal): %s", exc
+            )
 
     return config
 

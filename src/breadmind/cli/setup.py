@@ -5,11 +5,13 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from breadmind.cli.ui import ConsoleUI, get_ui
+
 
 async def run_setup(args) -> None:
     """Interactive setup wizard."""
-    print("\n\U0001f35e BreadMind Setup Wizard")
-    print("=" * 40)
+    ui = get_ui()
+    ui.panel("BreadMind Setup Wizard", "Interactive first-time configuration")
 
     # Step 1: Config directory
     config_dir = _ensure_config_dir()
@@ -30,18 +32,17 @@ async def run_setup(args) -> None:
     # Step 6: Test chat
     await _test_chat(provider_name, api_key, model)
 
-    print("\n\u2705 Setup complete!")
-    print(f"   Config: {config_dir}")
-    print("   Run: breadmind web")
+    ui.panel("Setup Complete", f"Config: {config_dir}\nRun: breadmind web")
 
 
 def _ensure_config_dir() -> str:
     """Ensure config directory exists and return its path."""
     from breadmind.config import get_default_config_dir
 
+    ui = get_ui()
     config_dir = get_default_config_dir()
     os.makedirs(config_dir, exist_ok=True)
-    print(f"\n\U0001f4c1 Config directory: {config_dir}")
+    ui.info(f"Config directory: {config_dir}")
     return config_dir
 
 
@@ -49,22 +50,25 @@ async def _setup_provider() -> tuple[str, str, str]:
     """Select LLM provider, enter API key, and choose model."""
     from breadmind.llm.factory import get_provider_options
 
+    ui = get_ui()
     options = get_provider_options()
 
-    print("\n\U0001f4e1 Select LLM Provider:")
+    ui.info("Select LLM Provider:")
+    rows = []
     for i, opt in enumerate(options, 1):
         free = " (free)" if opt.get("free_tier") else ""
-        print(f"  {i}. {opt['name']}{free}")
+        rows.append([str(i), f"{opt['name']}{free}"])
+    ui.table(["#", "Provider"], rows)
 
     while True:
-        choice = input(f"\nChoice (1-{len(options)}): ").strip()
+        choice = ui.prompt(f"Choice (1-{len(options)})")
         try:
             idx = int(choice) - 1
             if 0 <= idx < len(options):
                 break
         except ValueError:
             pass
-        print("Invalid choice.")
+        ui.error("Invalid choice.")
 
     selected = options[idx]
     provider_name = selected["id"]
@@ -76,25 +80,23 @@ async def _setup_provider() -> tuple[str, str, str]:
         existing = os.environ.get(selected["env_key"], "")
         if existing:
             masked = existing[:8] + "..." + existing[-4:]
-            use_existing = input(
-                f"\n\U0001f511 Found existing key: {masked}. Use it? (y/n): "
-            ).strip().lower()
-            if use_existing in ("y", "yes", ""):
+            ui.info(f"Found existing key: {masked}")
+            if ui.confirm("Use existing key?"):
                 api_key = existing
 
         if not api_key:
             if selected.get("signup_url"):
-                print(f"\n\U0001f517 Get API key: {selected['signup_url']}")
-            api_key = input(f"\U0001f511 Enter {selected['env_key']}: ").strip()
+                ui.info(f"Get API key: {selected['signup_url']}")
+            api_key = ui.prompt(f"Enter {selected['env_key']}")
 
     # Model selection
     models = selected.get("models", [])
     model = models[0] if models else ""
     if len(models) > 1:
-        print("\n\U0001f4e6 Available models:")
-        for i, m in enumerate(models, 1):
-            print(f"  {i}. {m}")
-        choice = input(f"Choice (1-{len(models)}, default=1): ").strip()
+        ui.info("Available models:")
+        model_rows = [[str(i), m] for i, m in enumerate(models, 1)]
+        ui.table(["#", "Model"], model_rows)
+        choice = ui.prompt(f"Choice (1-{len(models)})", default="1")
         try:
             idx = int(choice) - 1
             if 0 <= idx < len(models):
@@ -107,55 +109,54 @@ async def _setup_provider() -> tuple[str, str, str]:
 
 async def _verify_api_key(provider_name: str, api_key: str, model: str) -> None:
     """Verify API key with a health check."""
-    print(f"\n\U0001f50d Verifying {provider_name} API key...", end=" ", flush=True)
-    try:
-        from breadmind.llm.factory import _PROVIDER_REGISTRY
+    ui = get_ui()
+    with ui.spinner(f"Verifying {provider_name} API key"):
+        try:
+            from breadmind.llm.factory import _PROVIDER_REGISTRY
 
-        info = _PROVIDER_REGISTRY.get(provider_name)
-        if info and api_key:
-            provider = info.cls(api_key=api_key, default_model=model)
-            ok = await provider.health_check()
-            if ok:
-                print("\u2713")
+            info = _PROVIDER_REGISTRY.get(provider_name)
+            if info and api_key:
+                provider = info.cls(api_key=api_key, default_model=model)
+                ok = await provider.health_check()
+                if ok:
+                    ui.success(f"{provider_name} API key verified")
+                else:
+                    ui.warning(f"{provider_name} key may be invalid")
             else:
-                print("\u2717 (key may be invalid)")
-        else:
-            print("skipped")
-    except Exception as e:
-        print(f"\u2717 ({e})")
+                ui.info("Verification skipped")
+        except Exception as e:
+            ui.error(f"Verification failed: {e}")
 
 
 async def _setup_database() -> str | None:
     """Configure PostgreSQL connection (optional)."""
-    print("\n\U0001f5c4\ufe0f  PostgreSQL Setup (optional, enables memory persistence)")
-    use_db = input("   Configure PostgreSQL? (y/n, default=n): ").strip().lower()
-    if use_db not in ("y", "yes"):
-        print("   Skipped \u2014 using file-based storage.")
+    ui = get_ui()
+    ui.info("PostgreSQL Setup (optional, enables memory persistence)")
+    if not ui.confirm("Configure PostgreSQL?"):
+        ui.info("Skipped -- using file-based storage.")
         return None
 
-    dsn = input(
-        "   DSN (e.g., postgresql://user:pass@localhost:5432/breadmind): "
-    ).strip()
+    dsn = ui.prompt("DSN (e.g., postgresql://user:pass@localhost:5432/breadmind)")
     if not dsn:
-        print("   Skipped.")
+        ui.info("Skipped.")
         return None
 
     # Test connection
-    print("   Testing connection...", end=" ", flush=True)
-    try:
-        import asyncpg  # noqa: F811
+    with ui.spinner("Testing database connection"):
+        try:
+            import asyncpg  # noqa: F811
 
-        conn = await asyncpg.connect(dsn)
-        await conn.execute("SELECT 1")
-        await conn.close()
-        print("\u2713")
-        return dsn
-    except ImportError:
-        print("\u2717 (asyncpg not installed: pip install asyncpg)")
-        return None
-    except Exception as e:
-        print(f"\u2717 ({e})")
-        return None
+            conn = await asyncpg.connect(dsn)
+            await conn.execute("SELECT 1")
+            await conn.close()
+            ui.success("Database connection OK")
+            return dsn
+        except ImportError:
+            ui.error("asyncpg not installed: pip install asyncpg")
+            return None
+        except Exception as e:
+            ui.error(f"Connection failed: {e}")
+            return None
 
 
 def _write_config(
@@ -166,11 +167,9 @@ def _write_config(
 ) -> None:
     """Generate config.yaml."""
     config_path = os.path.join(config_dir, "config.yaml")
+    ui = get_ui()
     if os.path.exists(config_path):
-        overwrite = input(
-            f"\n   {config_path} exists. Overwrite? (y/n): "
-        ).strip().lower()
-        if overwrite not in ("y", "yes"):
+        if not ui.confirm(f"{config_path} exists. Overwrite?"):
             return
 
     db_section = ""
@@ -193,7 +192,7 @@ def _write_config(
     )
 
     Path(config_path).write_text(content, encoding="utf-8")
-    print(f"   Written: {config_path}")
+    ui.success(f"Written: {config_path}")
 
 
 def _write_env(
@@ -215,28 +214,31 @@ def _write_env(
         lines.append(f"DATABASE_URL={db_dsn}")
 
     if lines:
+        ui = get_ui()
         Path(env_path).write_text("\n".join(lines) + "\n", encoding="utf-8")
-        print(f"   Written: {env_path}")
+        ui.success(f"Written: {env_path}")
 
 
 async def _test_chat(provider_name: str, api_key: str, model: str) -> None:
     """Run a quick test chat to verify everything works end-to-end."""
-    print("\n\U0001f9ea Test chat...")
+    ui = get_ui()
+    ui.info("Running test chat...")
     try:
         from breadmind.llm.factory import _PROVIDER_REGISTRY
         from breadmind.llm.base import LLMMessage
 
         info = _PROVIDER_REGISTRY.get(provider_name)
         if not info or not api_key:
-            print("   Skipped (no provider/key)")
+            ui.info("Skipped (no provider/key)")
             return
 
-        provider = info.cls(api_key=api_key, default_model=model)
-        response = await provider.chat(
-            [LLMMessage(role="user", content="Say 'Hello from BreadMind!' in one line.")]
-        )
-        print(f"   Response: {response.content}")
-        print(f"   Tokens: {response.usage.total_tokens}")
+        with ui.spinner("Sending test message"):
+            provider = info.cls(api_key=api_key, default_model=model)
+            response = await provider.chat(
+                [LLMMessage(role="user", content="Say 'Hello from BreadMind!' in one line.")]
+            )
+        ui.success(f"Response: {response.content}")
+        ui.info(f"Tokens: {response.usage.total_tokens}")
         await provider.close()
     except Exception as e:
-        print(f"   Test failed: {e}")
+        ui.error(f"Test failed: {e}")

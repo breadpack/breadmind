@@ -1,0 +1,5 @@
+logging:
+  level: WARNING
+  format: json
+web:
+  cors_origins: ["https://app.breadmind.io"]

@@ -25,6 +25,8 @@ dependencies = [
     "celery>=5.4.0",
     "redis>=5.0.0",
     "fastembed>=0.4.0",
+    "alembic>=1.13.0",
+    "psycopg2-binary>=2.9.0",
 ]
 
 [project.optional-dependencies]
@@ -46,6 +48,12 @@ browser = [
 ]
 embeddings = [
     "sentence-transformers>=3.0.0",
+]
+tokenizer = [
+    "tiktoken>=0.7.0",
+]
+cli = [
+    "rich>=13.0.0",
 ]
 
 [project.scripts]

@@ -56,6 +56,10 @@ def _parse_args() -> argparse.Namespace:
     chat_parser.add_argument("--no-stream", action="store_true", help="Disable streaming")
     chat_parser.add_argument("--continue", dest="continue_session", default=None,
                              help="Continue a previous session by ID")
+    chat_parser.add_argument("-c", dest="continue_last", action="store_true", default=False,
+                             help="Resume the most recent session")
+    chat_parser.add_argument("-r", "--resume", dest="resume_session", nargs="?", const="", default=None,
+                             help="Resume a session (by ID, or pick from list)")
     chat_parser.add_argument("--config-dir", default=None, help="Config directory path")
     chat_parser.add_argument("--log-level", default=None,
                              choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
@@ -71,6 +75,19 @@ def _parse_args() -> argparse.Namespace:
 
     daemon_sub.add_parser("stop", help="Stop daemon")
     daemon_sub.add_parser("status", help="Check daemon status")
+
+    # breadmind migrate <action>
+    migrate_parser = sub.add_parser("migrate", help="Database migration management")
+    migrate_sub = migrate_parser.add_subparsers(dest="migrate_action")
+    migrate_sub.add_parser("upgrade", help="Run migrations (default: to head)")
+    migrate_down = migrate_sub.add_parser("downgrade", help="Downgrade to a specific revision")
+    migrate_down.add_argument("revision", help="Target revision")
+    migrate_sub.add_parser("history", help="Show migration history")
+    migrate_sub.add_parser("check", help="Check if database is up to date")
+    migrate_gen = migrate_sub.add_parser("generate", help="Generate a new migration")
+    migrate_gen.add_argument("message", help="Migration description")
+    migrate_stamp = migrate_sub.add_parser("stamp", help="Stamp DB without running migrations")
+    migrate_stamp.add_argument("revision", nargs="?", default="head", help="Revision to stamp (default: head)")
 
     # breadmind setup
     sub.add_parser("setup", help="Interactive setup wizard")
@@ -89,6 +106,19 @@ def _parse_args() -> argparse.Namespace:
     enable_p.add_argument("name")
     disable_p = plugin_sub.add_parser("disable", help="Disable plugin")
     disable_p.add_argument("name")
+
+    # breadmind backup <action>
+    backup_parser = sub.add_parser("backup", help="Database backup management")
+    backup_sub = backup_parser.add_subparsers(dest="backup_action")
+    backup_create = backup_sub.add_parser("create", help="Create a new backup")
+    backup_create.add_argument("--label", default=None, help="Optional label for the backup")
+    backup_create.add_argument("--config-dir", default=None, help="Config directory path")
+    backup_sub.add_parser("list", help="List available backups")
+    backup_restore = backup_sub.add_parser("restore", help="Restore from a backup")
+    backup_restore.add_argument("filename", help="Backup filename to restore")
+    backup_delete = backup_sub.add_parser("delete", help="Delete a backup")
+    backup_delete.add_argument("filename", help="Backup filename to delete")
+    backup_sub.add_parser("cleanup", help="Remove old backups exceeding retention limit")
 
     args = parser.parse_args()
     # Default to web if no command given
@@ -268,6 +298,78 @@ async def _run_plugin_command(args):
         print("Usage: breadmind plugin <list|install|uninstall|search|enable|disable>")
 
 
+async def _run_backup_command(args):
+    """Handle `breadmind backup` subcommands."""
+    from breadmind.storage.backup import BackupManager, BackupConfig, BackupError
+
+    action = getattr(args, "backup_action", None)
+    if not action:
+        print("Usage: breadmind backup <create|list|restore|delete|cleanup>")
+        return
+
+    config_dir = getattr(args, "config_dir", None) or get_default_config_dir()
+    config = load_config(config_dir) if os.path.isdir(config_dir) else load_config("config")
+
+    db_config = {
+        "host": config.database.host,
+        "port": config.database.port,
+        "name": config.database.name,
+        "user": config.database.user,
+        "password": config.database.password,
+    }
+    mgr = BackupManager(db_config, BackupConfig())
+
+    try:
+        if action == "create":
+            label = getattr(args, "label", None)
+            print("  Creating backup...")
+            info = await mgr.create_backup(label=label)
+            print(f"  Backup created: {info.filename} ({info.size_bytes:,} bytes)")
+
+        elif action == "list":
+            backups = mgr.list_backups()
+            if not backups:
+                print("  No backups found.")
+                return
+            for b in backups:
+                ts = b.created_at.strftime("%Y-%m-%d %H:%M:%S")
+                size_mb = b.size_bytes / (1024 * 1024)
+                gz = " (compressed)" if b.compressed else ""
+                print(f"  {b.filename}  {size_mb:.1f} MB  {ts}{gz}")
+
+        elif action == "restore":
+            filename = args.filename
+            from pathlib import Path
+            backup_path = Path(mgr._backup_dir) / filename
+            if not backup_path.exists():
+                print(f"  Error: Backup file not found: {filename}")
+                return
+            confirm = input(f"  Restore '{filename}'? This may overwrite existing data. [y/N]: ")
+            if confirm.strip().lower() != "y":
+                print("  Restore cancelled.")
+                return
+            print("  Restoring...")
+            await mgr.restore_backup(str(backup_path))
+            print("  Database restored successfully.")
+
+        elif action == "delete":
+            filename = args.filename
+            if mgr.delete_backup(filename):
+                print(f"  Deleted: {filename}")
+            else:
+                print(f"  Backup not found: {filename}")
+
+        elif action == "cleanup":
+            count = mgr.cleanup_old()
+            print(f"  Cleaned up {count} old backup(s).")
+
+        else:
+            print("Usage: breadmind backup <create|list|restore|delete|cleanup>")
+
+    except BackupError as exc:
+        print(f"  Error: {exc}")
+
+
 async def run():
     args = _parse_args()
 
@@ -284,8 +386,28 @@ async def run():
         await run_doctor(args)
         return
 
+    if args.command == "migrate":
+        from breadmind.storage.migrator import run_migration_command
+        action = getattr(args, "migrate_action", None)
+        if not action:
+            print("Usage: breadmind migrate <upgrade|downgrade|history|check|generate|stamp>")
+            return
+        extra_args: list[str] = []
+        if action == "downgrade":
+            extra_args = [args.revision]
+        elif action == "generate":
+            extra_args = [args.message]
+        elif action == "stamp":
+            extra_args = [getattr(args, "revision", "head")]
+        run_migration_command(action, extra_args)
+        return
+
     if args.command == "plugin":
         await _run_plugin_command(args)
+        return
+
+    if args.command == "backup":
+        await _run_backup_command(args)
         return
 
     if args.command == "chat":
@@ -746,6 +868,12 @@ async def run():
         await monitoring_engine.stop()
         await mcp_manager.stop_all()
         working_memory._sessions.clear()
+        # Close all pooled HTTP sessions
+        try:
+            from breadmind.core.http_pool import get_session_manager
+            await get_session_manager().close_all()
+        except Exception as e:
+            logger.warning("HTTP session pool shutdown error: %s", e)
         if db:
             await db.disconnect()
 

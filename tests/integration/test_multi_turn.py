@@ -1,45 +1,45 @@
 """E2E: 멀티턴 + 도구 호출."""
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
+
 from breadmind.core.protocols import (
-    Message, LLMResponse, TokenUsage, AgentContext, PromptBlock,
-    ToolCallRequest, ToolResult, ToolDefinition, ToolSchema,
+    LLMResponse, TokenUsage, ToolCallRequest, ToolResult,
+    ToolDefinition, ToolSchema,
 )
 from breadmind.plugins.builtin.agent_loop.message_loop import MessageLoopAgent
 from breadmind.plugins.builtin.safety.guard import SafetyGuard
+
+from tests.factories import (
+    make_agent_context,
+    make_mock_prompt_builder,
+    make_mock_provider,
+    make_mock_tool_registry,
+    make_text_response,
+    make_tool_call_response,
+    make_tool_result,
+)
 
 
 @pytest.mark.asyncio
 async def test_tool_call_and_response():
     """User → LLM → tool call → tool result → LLM → final text."""
-    provider = AsyncMock()
-    provider.chat = AsyncMock(side_effect=[
-        # Turn 1: LLM requests tool call
-        LLMResponse(
-            content=None,
-            tool_calls=[ToolCallRequest(id="tc1", name="shell_exec", arguments={"command": "ls"})],
-            usage=TokenUsage(50, 20), stop_reason="tool_use",
-        ),
-        # Turn 2: LLM gives final response
-        LLMResponse(
-            content="파일 목록:\n- config.yaml\n- main.py",
-            tool_calls=[], usage=TokenUsage(80, 40), stop_reason="end_turn",
-        ),
-    ])
+    tool_call_resp = make_tool_call_response(
+        [("tc1", "shell_exec", {"command": "ls"})],
+    )
+    final_resp = make_text_response(
+        "파일 목록:\n- config.yaml\n- main.py",
+        usage=TokenUsage(80, 40),
+    )
+    provider = make_mock_provider([tool_call_resp, final_resp])
 
-    prompt_builder = MagicMock()
-    prompt_builder.build.return_value = [
-        PromptBlock(section="identity", content="You are BreadMind.", cacheable=True, priority=1),
-    ]
+    prompt_builder = make_mock_prompt_builder()
 
-    tool_registry = MagicMock()
     tool_def = ToolDefinition(name="shell_exec", description="Execute shell", parameters={})
-    tool_registry.get_schemas.return_value = [
-        ToolSchema(name="shell_exec", deferred=False, definition=tool_def),
-    ]
-    tool_result = ToolResult(success=True, output="config.yaml\nmain.py")
-    tool_registry.execute = AsyncMock(return_value=tool_result)
-    tool_registry.execute_batch = AsyncMock(return_value=[tool_result])
+    tool_result = make_tool_result("config.yaml\nmain.py")
+    tool_registry = make_mock_tool_registry(
+        schemas=[ToolSchema(name="shell_exec", deferred=False, definition=tool_def)],
+        results=[tool_result],
+    )
 
     agent = MessageLoopAgent(
         provider=provider, prompt_builder=prompt_builder,
@@ -48,7 +48,7 @@ async def test_tool_call_and_response():
         max_turns=5,
     )
 
-    ctx = AgentContext(user="admin", channel="cli", session_id="s1")
+    ctx = make_agent_context(user="admin", channel="cli", session_id="s1")
     resp = await agent.handle_message("파일 목록 보여줘", ctx)
 
     assert "config.yaml" in resp.content
@@ -60,27 +60,16 @@ async def test_tool_call_and_response():
 @pytest.mark.asyncio
 async def test_blocked_tool_continues():
     """Safety blocks a tool → LLM continues without it."""
-    provider = AsyncMock()
-    provider.chat = AsyncMock(side_effect=[
-        LLMResponse(
-            content=None,
-            tool_calls=[ToolCallRequest(id="tc1", name="shell_exec", arguments={"command": "rm -rf /"})],
-            usage=TokenUsage(50, 20), stop_reason="tool_use",
+    provider = make_mock_provider([
+        make_tool_call_response(
+            [("tc1", "shell_exec", {"command": "rm -rf /"})],
         ),
-        LLMResponse(
-            content="That command is too dangerous.",
-            tool_calls=[], usage=TokenUsage(30, 15), stop_reason="end_turn",
-        ),
+        make_text_response("That command is too dangerous.",
+                           usage=TokenUsage(30, 15)),
     ])
 
-    prompt_builder = MagicMock()
-    prompt_builder.build.return_value = [
-        PromptBlock(section="identity", content="You are BreadMind.", cacheable=True, priority=1),
-    ]
-
-    tool_registry = MagicMock()
-    tool_registry.get_schemas.return_value = []
-    tool_registry.execute = AsyncMock()
+    prompt_builder = make_mock_prompt_builder()
+    tool_registry = make_mock_tool_registry()
 
     agent = MessageLoopAgent(
         provider=provider, prompt_builder=prompt_builder,
@@ -89,7 +78,7 @@ async def test_blocked_tool_continues():
         max_turns=5,
     )
 
-    ctx = AgentContext(user="admin", channel="cli", session_id="s1")
+    ctx = make_agent_context(user="admin", channel="cli", session_id="s1")
     resp = await agent.handle_message("delete everything", ctx)
 
     assert "dangerous" in resp.content.lower()
@@ -99,8 +88,7 @@ async def test_blocked_tool_continues():
 @pytest.mark.asyncio
 async def test_multi_tool_calls():
     """LLM requests multiple tools in one turn."""
-    provider = AsyncMock()
-    provider.chat = AsyncMock(side_effect=[
+    provider = make_mock_provider([
         LLMResponse(
             content=None,
             tool_calls=[
@@ -109,22 +97,14 @@ async def test_multi_tool_calls():
             ],
             usage=TokenUsage(50, 20), stop_reason="tool_use",
         ),
-        LLMResponse(
-            content="System is running since yesterday.",
-            tool_calls=[], usage=TokenUsage(30, 15), stop_reason="end_turn",
-        ),
+        make_text_response("System is running since yesterday.",
+                           usage=TokenUsage(30, 15)),
     ])
 
-    prompt_builder = MagicMock()
-    prompt_builder.build.return_value = [
-        PromptBlock(section="identity", content="Bot.", cacheable=True, priority=1),
-    ]
+    prompt_builder = make_mock_prompt_builder()
 
-    tool_registry = MagicMock()
-    tool_registry.get_schemas.return_value = []
-    tool_result = ToolResult(success=True, output="OK")
-    tool_registry.execute = AsyncMock(return_value=tool_result)
-    tool_registry.execute_batch = AsyncMock(return_value=[tool_result, tool_result])
+    tool_result = make_tool_result()
+    tool_registry = make_mock_tool_registry(results=[tool_result, tool_result])
 
     agent = MessageLoopAgent(
         provider=provider, prompt_builder=prompt_builder,
@@ -132,7 +112,7 @@ async def test_multi_tool_calls():
         safety_guard=SafetyGuard(autonomy="auto"),
     )
 
-    ctx = AgentContext(user="admin", channel="cli", session_id="s1")
+    ctx = make_agent_context(user="admin", channel="cli", session_id="s1")
     resp = await agent.handle_message("check system", ctx)
 
     assert resp.tool_calls_count == 2

@@ -16,6 +16,7 @@ class ClaudeCodeAdapter(CodingAgentAdapter):
             self.cli_command, "-p", prompt,
             "--output-format", "json",
             "--permission-mode", "bypassPermissions",
+            "--cwd", project,
         ]
         if opts.get("session_id"):
             cmd += ["--resume", opts["session_id"]]
