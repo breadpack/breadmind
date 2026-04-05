@@ -8,23 +8,6 @@ from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from .token_counter import TokenCounter
 
-# 모델별 가격 정보 (USD per 1M tokens)
-_MODEL_PRICING: dict[str, dict[str, float]] = {
-    "claude-sonnet-4-6": {
-        "input": 3.0,
-        "output": 15.0,
-        "cache_creation": 3.75,
-        "cache_read": 0.30,
-    },
-    "claude-haiku-4-5": {
-        "input": 0.80,
-        "output": 4.0,
-        "cache_creation": 1.0,
-        "cache_read": 0.08,
-    },
-}
-
-
 @dataclass
 class Attachment:
     """메시지 첨부 파일 (이미지, 파일 등)."""
@@ -62,7 +45,9 @@ class TokenUsage:
 
     def cost(self, model: str) -> float:
         """주어진 모델의 가격 정보를 기반으로 비용(USD)을 계산한다."""
-        pricing = _MODEL_PRICING.get(model)
+        from breadmind.plugins.builtin.agent_loop.cost_tracker import MODEL_PRICING
+
+        pricing = MODEL_PRICING.get(model)
         if pricing is None:
             raise ValueError(f"지원되지 않는 모델: {model}")
 
