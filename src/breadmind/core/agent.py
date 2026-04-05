@@ -245,16 +245,82 @@ class CoreAgent:
 
     async def handle_message(self, message: str, user: str, channel: str) -> str:
         session_id = f"{user}:{channel}"
-        logger.info(json.dumps({"event": "session_start", "user": user, "channel": channel}))
+        await self._emit_session_start(user, channel, session_id)
 
-        # Publish session start via EventBus (fire-and-forget)
+        # Step 1: Classify intent
+        intent, think_budget = self._classify_intent(message, user)
+
+        # Step 2: Route orchestrator / credential shortcuts
+        early_return = await self._try_early_routing(
+            message, user, channel, session_id, intent,
+        )
+        if early_return is not None:
+            return early_return
+
+        # Step 3: Build conversation messages and filter tools
+        messages, tools = await self._prepare_conversation(
+            message, user, channel, session_id, intent,
+        )
+
+        # Step 4: LLM tool-call loop
+        return await self._run_llm_loop(
+            messages, tools, think_budget, user, channel, session_id,
+        )
+
+    # ------------------------------------------------------------------
+    # Private: session lifecycle events
+    # ------------------------------------------------------------------
+
+    async def _emit_session_start(self, user: str, channel: str, session_id: str):
+        """Log and publish session start event."""
+        logger.info(json.dumps({"event": "session_start", "user": user, "channel": channel}))
         await get_event_bus().publish_fire_and_forget(Event(
             type=EventType.SESSION_START,
             data={"user": user, "channel": channel, "session_id": session_id},
             source="agent",
         ))
 
-        # Step 1: Classify intent (rule-based, no LLM call)
+    async def _emit_session_end(
+        self, user: str, channel: str, session_id: str, reason: str | None = None,
+    ):
+        """Log and publish session end event."""
+        data: dict = {"user": user, "channel": channel, "session_id": session_id}
+        if reason:
+            data["reason"] = reason
+        logger.info(json.dumps({"event": "session_end", "user": user, "channel": channel, **({"reason": reason} if reason else {})}))
+        await get_event_bus().publish_fire_and_forget(Event(
+            type=EventType.SESSION_END, data=data, source="agent",
+        ))
+
+    def _prepend_notifications(self, content: str) -> str:
+        """Prepend any pending notifications to the response content."""
+        if self._notifications:
+            prefix = "\n".join(self._notifications) + "\n\n"
+            self._notifications.clear()
+            return prefix + content
+        return content
+
+    def _finalize_response(
+        self, session_id: str, content: str, messages: list[LLMMessage],
+    ) -> str:
+        """Store response, schedule behavior analysis, return final content."""
+        final_content = self._prepend_notifications(content)
+        self._conversation.store_assistant_message(session_id, final_content)
+        if self._behavior_tracker is not None:
+            asyncio.create_task(
+                self._safe_analyze(session_id, list(messages))
+            )
+        return final_content
+
+    # ------------------------------------------------------------------
+    # Private: intent classification & early routing
+    # ------------------------------------------------------------------
+
+    def _classify_intent(self, message: str, user: str):
+        """Classify intent, log, emit profiler, and publish event.
+
+        Returns (intent, think_budget).
+        """
         from breadmind.core.intent import classify as classify_intent, get_think_budget
         intent = classify_intent(message)
         think_budget = get_think_budget(intent)
@@ -265,148 +331,126 @@ class CoreAgent:
             "think_budget": think_budget,
         }
         logger.info(json.dumps({"event": "intent_classified", **intent_data}))
-
-        await get_event_bus().publish_fire_and_forget(Event(
-            type=EventType.INTENT_CLASSIFIED,
-            data=intent_data,
-            source="agent",
-        ))
-
-        # Record intent for adaptive user profiling
         if self._profiler:
             self._profiler.record_intent(user, intent.category.value)
+        # Fire-and-forget event (sync helper schedules it)
+        asyncio.ensure_future(get_event_bus().publish_fire_and_forget(Event(
+            type=EventType.INTENT_CLASSIFIED, data=intent_data, source="agent",
+        )))
+        return intent, think_budget
 
-        # Step 1.5: Route complex tasks to Orchestrator
+    async def _try_early_routing(
+        self, message: str, user: str, channel: str, session_id: str, intent,
+    ) -> str | None:
+        """Attempt early routing (orchestrator, credential).
+
+        Returns a response string if handled, or None to continue normal flow.
+        """
+        # Route complex tasks to Orchestrator
         if self._orchestrator and intent.complexity == "complex":
-            logger.info(json.dumps({"event": "orchestrator_route", "complexity": "complex"}))
-            await self._notify_progress("orchestrator", "Complex task detected, routing to orchestrator...")
-            try:
-                result = await self._orchestrator.run(message, user=user, channel=channel)
-                # Store result in working memory
-                self._conversation.store_assistant_message(session_id, result)
-                await get_event_bus().publish_fire_and_forget(Event(
-                    type=EventType.SESSION_END,
-                    data={"user": user, "channel": channel, "session_id": session_id, "route": "orchestrator"},
-                    source="agent",
-                ))
+            result = await self._try_orchestrator(message, user, channel, session_id)
+            if result is not None:
                 return result
-            except Exception as e:
-                logger.warning("Orchestrator failed, falling back to single agent: %s", e)
-                # Fall through to normal single-agent loop
 
         # Auto-resolve credential_ref in user message — bypass LLM
+        cred_result = await self._try_credential_shortcut(message)
+        if cred_result is not None:
+            return cred_result
+
+        return None
+
+    async def _try_orchestrator(
+        self, message: str, user: str, channel: str, session_id: str,
+    ) -> str | None:
+        """Attempt to route to orchestrator. Returns result or None on failure."""
+        logger.info(json.dumps({"event": "orchestrator_route", "complexity": "complex"}))
+        await self._notify_progress("orchestrator", "Complex task detected, routing to orchestrator...")
+        try:
+            result = await self._orchestrator.run(message, user=user, channel=channel)
+            self._conversation.store_assistant_message(session_id, result)
+            await self._emit_session_end(user, channel, session_id, reason="orchestrator")
+            return result
+        except Exception as e:
+            logger.warning("Orchestrator failed, falling back to single agent: %s", e)
+            return None
+
+    async def _try_credential_shortcut(self, message: str) -> str | None:
+        """Auto-resolve credential_ref in the message, bypassing LLM."""
         import re as _cred_re
         cred_match = _cred_re.search(r"credential_ref:([\w:.@\-]+)", message)
-        if cred_match and self._tools.has_tool("router_manage"):
-            cred_ref = f"credential_ref:{cred_match.group(1)}"
-            # Extract host/username from message context
-            host_match = _cred_re.search(r"(\d+\.\d+\.\d+\.\d+)", message)
-            host = host_match.group(1) if host_match else ""
-            user_match = _cred_re.search(r"(\w+)@", message)
-            uname = user_match.group(1) if user_match else "root"
-            if host:
-                try:
-                    result = await self._tools.execute("router_manage", {
-                        "action": "connect",
-                        "host": host,
-                        "router_type": "openwrt",
-                        "username": uname,
-                        "password": cred_ref,
-                    })
-                    return result.output
-                except Exception as e:
-                    logger.warning("Auto credential_ref connect failed: %s", e)
+        if not (cred_match and self._tools.has_tool("router_manage")):
+            return None
+        cred_ref = f"credential_ref:{cred_match.group(1)}"
+        host_match = _cred_re.search(r"(\d+\.\d+\.\d+\.\d+)", message)
+        host = host_match.group(1) if host_match else ""
+        user_match = _cred_re.search(r"(\w+)@", message)
+        uname = user_match.group(1) if user_match else "root"
+        if host:
+            try:
+                result = await self._tools.execute("router_manage", {
+                    "action": "connect",
+                    "host": host,
+                    "router_type": "openwrt",
+                    "username": uname,
+                    "password": cred_ref,
+                })
+                return result.output
+            except Exception as e:
+                logger.warning("Auto credential_ref connect failed: %s", e)
+        return None
 
-        # Build initial messages (delegated to ConversationManager)
+    # ------------------------------------------------------------------
+    # Private: conversation preparation
+    # ------------------------------------------------------------------
+
+    async def _prepare_conversation(
+        self, message: str, user: str, channel: str, session_id: str, intent,
+    ):
+        """Build messages, enrich context, filter tools. Returns (messages, tools)."""
         messages = self._conversation.build_messages(
             session_id, message, self._system_prompt, user=user, channel=channel,
         )
-
-        # Step 2: Enrich context with intent-aware memory retrieval
         messages = await self._conversation.enrich_context(
             messages, session_id, message, self._system_prompt, intent=intent,
         )
 
-        # Step 3: Filter tools using intent-aware selection
         all_tools = self._tools.get_all_definitions()
         tools = self._filter_relevant_tools(all_tools, message, intent=intent)
 
-        # Track recent tool calls for loop detection
+        return messages, tools
+
+    # ------------------------------------------------------------------
+    # Private: LLM loop
+    # ------------------------------------------------------------------
+
+    async def _run_llm_loop(
+        self,
+        messages: list[LLMMessage],
+        tools: list,
+        think_budget: int,
+        user: str,
+        channel: str,
+        session_id: str,
+    ) -> str:
+        """Execute the multi-turn LLM call loop with tool execution."""
         _recent_tool_calls: list[tuple[str, str]] = []
 
         for turn in range(self._max_turns):
-            # Apply conversation summarization or token trimming
             chat_messages = await self._conversation.maybe_summarize(
                 messages, tools, provider=self._provider,
             )
-
             await self._notify_progress("thinking", "")
 
-            t0 = time.monotonic()
-            try:
-                response = await asyncio.wait_for(
-                    self._provider.chat(
-                        messages=chat_messages,
-                        tools=tools or None,
-                        think_budget=think_budget,
-                    ),
-                    timeout=self._chat_timeout,
-                )
-            except asyncio.TimeoutError:
-                logger.warning(json.dumps({"event": "llm_call", "status": "timeout", "user": user}))
-                return "요청 시간이 초과되었습니다."
-            except Exception:
-                logger.exception("LLM provider error")
-                return "서비스 오류가 발생했습니다."
-
-            duration_ms = (time.monotonic() - t0) * 1000
-            self._accumulate_usage(response)
-
-            # Log LLM call
-            model_name = getattr(self._provider, "model", "unknown")
-            if not isinstance(model_name, str):
-                model_name = "unknown"
-            logger.info(json.dumps({
-                "event": "llm_call",
-                "model": model_name,
-                "tokens": {
-                    "input": response.usage.input_tokens if response.usage else 0,
-                    "output": response.usage.output_tokens if response.usage else 0,
-                },
-                "duration_ms": round(duration_ms, 2),
-            }))
-            if self._audit_logger and response.usage:
-                self._audit_logger.log_llm_call(
-                    user, channel,
-                    model=model_name,
-                    input_tokens=response.usage.input_tokens,
-                    output_tokens=response.usage.output_tokens,
-                    cache_hit=getattr(response.usage, "cache_read_input_tokens", 0) > 0,
-                    duration_ms=duration_ms,
-                )
+            response = await self._call_llm(chat_messages, tools, think_budget, user, channel)
+            if isinstance(response, str):
+                # Error string from _call_llm
+                return response
 
             if not response.has_tool_calls:
-                final_content = response.content or ""
-                # Prepend pending notifications
-                if self._notifications:
-                    prefix = "\n".join(self._notifications) + "\n\n"
-                    self._notifications.clear()
-                    final_content = prefix + final_content
-                self._conversation.store_assistant_message(session_id, final_content)
-                logger.info(json.dumps({"event": "session_end", "user": user, "channel": channel}))
-                await get_event_bus().publish_fire_and_forget(Event(
-                    type=EventType.SESSION_END,
-                    data={"user": user, "channel": channel, "session_id": session_id},
-                    source="agent",
-                ))
-                # Fire-and-forget behavior analysis
-                if self._behavior_tracker is not None:
-                    asyncio.create_task(
-                        self._safe_analyze(session_id, list(messages))
-                    )
-                return final_content
+                await self._emit_session_end(user, channel, session_id)
+                return self._finalize_response(session_id, response.content or "", messages)
 
-            # Detect tool call loops (same tool+args repeated)
+            # Detect tool call loops
             loop_msg = self._tool_coordinator.detect_loop(
                 _recent_tool_calls, response.tool_calls,
             )
@@ -414,80 +458,156 @@ class CoreAgent:
                 self._conversation.store_assistant_message(session_id, loop_msg)
                 return loop_msg
 
-            # Process tool calls — add assistant message, then delegate to ToolExecutor
-            assistant_msg = LLMMessage(
-                role="assistant", content=response.content, tool_calls=response.tool_calls,
+            # Execute tools and check for early return (REQUEST_INPUT)
+            early = await self._execute_tools_and_check(
+                response, messages, user, channel, session_id,
             )
-            messages.append(assistant_msg)
-            self._conversation.store_message(session_id, assistant_msg)
+            if early is not None:
+                return early
 
-            exec_ctx = ToolExecutionContext(
-                user=user,
-                channel=channel,
-                session_id=session_id,
-                working_memory=self._working_memory,
-                audit_logger=self._audit_logger,
-                tool_gap_detector=self._tool_gap_detector,
-                context_builder=self._context_builder,
-                pending_approvals=self._pending_approvals,
-                on_new_tool_detected=self._detect_new_tool,
-                _injected_provider=self._provider,
-            )
-            msg_count_before = len(messages)
-            await self._tool_executor.process_tool_calls(
-                response.tool_calls, messages, exec_ctx,
-            )
-
-            # Inject Iron Laws tool reminder into the last new tool message (Claude only)
-            if self._prompt_builder:
-                reminder = self._prompt_builder.render_tool_reminder(self._provider_name)
-                if reminder:
-                    new_msgs = messages[msg_count_before:]
-                    for msg in reversed(new_msgs):
-                        if msg.role == "tool" and isinstance(msg.content, str):
-                            msg.content += f"\n\n{reminder}"
-                            break
-
-            # Check only NEW tool messages from this turn for [REQUEST_INPUT]
-            new_messages = messages[msg_count_before:]
-            for msg in reversed(new_messages):
-                if msg.role == "tool" and msg.content and "[REQUEST_INPUT]" in msg.content:
-                    import re as _re
-                    raw = msg.content
-                    # Strip [success=True/False] prefix added by ToolExecutor
-                    raw = _re.sub(r"^\[success=(?:True|False)\]\s*", "", raw)
-                    match = _re.search(
-                        r"\[REQUEST_INPUT\]([\s\S]*?)\[/REQUEST_INPUT\]",
-                        raw,
-                    )
-                    if match:
-                        # Extract context text before the form tag
-                        idx = raw.index("[REQUEST_INPUT]")
-                        pre_text = raw[:idx].strip()
-                        # Remove internal markers from user-facing text
-                        pre_text = pre_text.replace("[NEED_CREDENTIALS]", "").strip()
-                        form_block = f"[REQUEST_INPUT]{match.group(1)}[/REQUEST_INPUT]"
-                        direct_response = f"{pre_text}\n\n{form_block}" if pre_text else form_block
-                        self._conversation.store_assistant_message(session_id, direct_response)
-                        return direct_response
-                    break
-
-        logger.info(json.dumps({"event": "session_end", "user": user, "channel": channel, "reason": "max_turns"}))
-        await get_event_bus().publish_fire_and_forget(Event(
-            type=EventType.SESSION_END,
-            data={"user": user, "channel": channel, "session_id": session_id, "reason": "max_turns"},
-            source="agent",
-        ))
+        # Max turns reached
+        await self._emit_session_end(user, channel, session_id, reason="max_turns")
         final = "Maximum tool call turns reached. Please try a simpler request."
-        if self._notifications:
-            prefix = "\n".join(self._notifications) + "\n\n"
-            self._notifications.clear()
-            final = prefix + final
+        final = self._prepend_notifications(final)
         if self._behavior_tracker is not None:
             asyncio.create_task(
                 self._safe_analyze(session_id, list(messages))
             )
         return final
+
+    async def _call_llm(
+        self,
+        chat_messages: list[LLMMessage],
+        tools: list,
+        think_budget: int,
+        user: str,
+        channel: str,
+    ) -> LLMResponse | str:
+        """Make a single LLM call. Returns LLMResponse on success, or error string."""
+        t0 = time.monotonic()
+        try:
+            response = await asyncio.wait_for(
+                self._provider.chat(
+                    messages=chat_messages,
+                    tools=tools or None,
+                    think_budget=think_budget,
+                ),
+                timeout=self._chat_timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(json.dumps({"event": "llm_call", "status": "timeout", "user": user}))
+            return "요청 시간이 초과되었습니다."
+        except Exception:
+            logger.exception("LLM provider error")
+            return "서비스 오류가 발생했습니다."
+
+        duration_ms = (time.monotonic() - t0) * 1000
+        self._accumulate_usage(response)
+        self._log_llm_call(response, duration_ms, user, channel)
+        return response
+
+    def _log_llm_call(
+        self, response: LLMResponse, duration_ms: float, user: str, channel: str,
+    ):
+        """Log LLM call metrics and audit."""
+        model_name = getattr(self._provider, "model", "unknown")
+        if not isinstance(model_name, str):
+            model_name = "unknown"
+        logger.info(json.dumps({
+            "event": "llm_call",
+            "model": model_name,
+            "tokens": {
+                "input": response.usage.input_tokens if response.usage else 0,
+                "output": response.usage.output_tokens if response.usage else 0,
+            },
+            "duration_ms": round(duration_ms, 2),
+        }))
+        if self._audit_logger and response.usage:
+            self._audit_logger.log_llm_call(
+                user, channel,
+                model=model_name,
+                input_tokens=response.usage.input_tokens,
+                output_tokens=response.usage.output_tokens,
+                cache_hit=getattr(response.usage, "cache_read_input_tokens", 0) > 0,
+                duration_ms=duration_ms,
+            )
+
+    async def _execute_tools_and_check(
+        self,
+        response: LLMResponse,
+        messages: list[LLMMessage],
+        user: str,
+        channel: str,
+        session_id: str,
+    ) -> str | None:
+        """Process tool calls, inject reminders, check for REQUEST_INPUT.
+
+        Returns an early response string, or None to continue the loop.
+        """
+        assistant_msg = LLMMessage(
+            role="assistant", content=response.content, tool_calls=response.tool_calls,
+        )
+        messages.append(assistant_msg)
+        self._conversation.store_message(session_id, assistant_msg)
+
+        exec_ctx = ToolExecutionContext(
+            user=user,
+            channel=channel,
+            session_id=session_id,
+            working_memory=self._working_memory,
+            audit_logger=self._audit_logger,
+            tool_gap_detector=self._tool_gap_detector,
+            context_builder=self._context_builder,
+            pending_approvals=self._pending_approvals,
+            on_new_tool_detected=self._detect_new_tool,
+            _injected_provider=self._provider,
+        )
+        msg_count_before = len(messages)
+        await self._tool_executor.process_tool_calls(
+            response.tool_calls, messages, exec_ctx,
+        )
+
+        self._inject_tool_reminder(messages, msg_count_before)
+
+        return self._check_request_input(messages, msg_count_before, session_id)
+
+    def _inject_tool_reminder(self, messages: list[LLMMessage], msg_count_before: int):
+        """Inject Iron Laws tool reminder into the last new tool message (Claude only)."""
+        if not self._prompt_builder:
+            return
+        reminder = self._prompt_builder.render_tool_reminder(self._provider_name)
+        if not reminder:
+            return
+        new_msgs = messages[msg_count_before:]
+        for msg in reversed(new_msgs):
+            if msg.role == "tool" and isinstance(msg.content, str):
+                msg.content += f"\n\n{reminder}"
+                break
+
+    def _check_request_input(
+        self, messages: list[LLMMessage], msg_count_before: int, session_id: str,
+    ) -> str | None:
+        """Check new tool messages for [REQUEST_INPUT] and return early if found."""
+        import re as _re
+        new_messages = messages[msg_count_before:]
+        for msg in reversed(new_messages):
+            if msg.role == "tool" and msg.content and "[REQUEST_INPUT]" in msg.content:
+                raw = msg.content
+                raw = _re.sub(r"^\[success=(?:True|False)\]\s*", "", raw)
+                match = _re.search(
+                    r"\[REQUEST_INPUT\]([\s\S]*?)\[/REQUEST_INPUT\]",
+                    raw,
+                )
+                if match:
+                    idx = raw.index("[REQUEST_INPUT]")
+                    pre_text = raw[:idx].strip()
+                    pre_text = pre_text.replace("[NEED_CREDENTIALS]", "").strip()
+                    form_block = f"[REQUEST_INPUT]{match.group(1)}[/REQUEST_INPUT]"
+                    direct_response = f"{pre_text}\n\n{form_block}" if pre_text else form_block
+                    self._conversation.store_assistant_message(session_id, direct_response)
+                    return direct_response
+                break
+        return None
 
     async def _detect_new_tool(self, command: str, output: str):
         """Fire-and-forget: check if shell_exec installed or removed a tool."""
