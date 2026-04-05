@@ -1,0 +1,62 @@
+"""Central constants for BreadMind configuration defaults."""
+
+# --- Network ---
+DEFAULT_REDIS_URL = "redis://localhost:6379/0"
+DEFAULT_OLLAMA_URL = "http://localhost:11434"
+DEFAULT_CDP_URL = "http://localhost:9222"
+
+# --- LLM Models ---
+DEFAULT_PROVIDER = "gemini"
+DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-6"
+DEFAULT_CLAUDE_OPUS_MODEL = "claude-opus-4-6"
+
+# --- LLM Token Limits ---
+DEFAULT_MAX_TOKENS = 4096
+THINKING_MAX_TOKENS = 16384
+DEFAULT_THINK_BUDGET = 10000
+TEXT_TRUNCATION_LIMIT = 2000
+
+# --- Timeouts (seconds) ---
+DEFAULT_TOOL_TIMEOUT = 30
+DEFAULT_LLM_TIMEOUT = 120
+DEFAULT_SSH_TIMEOUT = 300
+DEFAULT_SESSION_TIMEOUT = 7200
+
+# --- Web ---
+DEFAULT_WEB_HOST = "127.0.0.1"
+DEFAULT_WEB_PORT = 8080
+DEFAULT_WS_PORT = 8081
+
+# --- Database ---
+DEFAULT_DB_HOST = "localhost"
+DEFAULT_DB_PORT = 5432
+DEFAULT_DB_NAME = "breadmind"
+DEFAULT_DB_USER = "breadmind"
+
+# --- Limits ---
+DEFAULT_MAX_TOOLS = 30
+DEFAULT_MAX_CONTEXT_TOKENS = 4000
+DEFAULT_MAX_TURNS = 10
+
+# --- Network / Distributed ---
+DEFAULT_HEARTBEAT_INTERVAL = 30
+DEFAULT_OFFLINE_THRESHOLD = 90
+
+# --- Memory ---
+DEFAULT_GC_INTERVAL = 3600
+DEFAULT_KG_MAX_AGE_DAYS = 90
+DEFAULT_MAX_CACHED_NOTES = 500
+
+# --- Embedding Models (provider defaults) ---
+EMBEDDING_FASTEMBED_MODEL = "BAAI/bge-small-en-v1.5"
+EMBEDDING_OLLAMA_MODEL = "nomic-embed-text"
+EMBEDDING_LOCAL_MODEL = "all-MiniLM-L6-v2"
+EMBEDDING_GEMINI_MODEL = "gemini-embedding-001"
+EMBEDDING_OPENAI_MODEL = "text-embedding-3-small"
+
+# --- Retry ---
+DEFAULT_MAX_RETRIES = 3
+DEFAULT_BASE_BACKOFF = 1
+DEFAULT_MAX_BACKOFF = 300
+DEFAULT_GATEWAY_MAX_RETRIES = 10
