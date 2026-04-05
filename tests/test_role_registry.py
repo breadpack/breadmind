@@ -48,13 +48,6 @@ def test_register_custom_role():
     assert reg.get("custom_checker") is not None
 
 
-def test_difficulty_to_model():
-    reg = RoleRegistry()
-    assert reg.difficulty_to_model("low") == "haiku"
-    assert reg.difficulty_to_model("medium") == "sonnet"
-    assert reg.difficulty_to_model("high") == "opus"
-
-
 # --- Additional coverage tests ---
 
 def test_all_9_builtin_roles_present():
@@ -112,6 +105,3 @@ def test_get_tools_deduplication():
     assert tools.count("shell_exec") == 1
 
 
-def test_difficulty_to_model_unknown_defaults_to_sonnet():
-    reg = RoleRegistry()
-    assert reg.difficulty_to_model("unknown_level") == "sonnet"

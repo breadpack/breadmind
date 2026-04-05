@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from breadmind.llm.base import LLMProvider, LLMMessage
 from breadmind.core.planner import Planner, TaskDAG, TaskNode
@@ -11,6 +11,9 @@ from breadmind.core.subagent import SubAgent, SubAgentResult
 from breadmind.core.result_evaluator import ResultEvaluator
 from breadmind.core.role_registry import RoleRegistry
 from breadmind.core.events import get_event_bus, Event, EventType
+
+if TYPE_CHECKING:
+    from breadmind.llm.tier_pool import TierProviderPool
 
 logger = logging.getLogger("breadmind.orchestrator")
 
@@ -29,12 +32,14 @@ class Orchestrator:
         evaluator: ResultEvaluator,
         tool_registry: object,
         progress_callback: Callable | None = None,
+        tier_pool: TierProviderPool | None = None,
     ) -> None:
         self._provider = provider
         self._roles = role_registry
         self._evaluator = evaluator
         self._tool_registry = tool_registry
         self._progress = progress_callback
+        self._tier_pool = tier_pool
         self._planner = Planner(provider=provider, role_registry=role_registry)
 
     async def run(self, message: str, user: str, channel: str) -> str:
@@ -117,13 +122,22 @@ class Orchestrator:
 
     def _create_subagent_factory(self):
         roles = self._roles
-        provider = self._provider
+        default_provider = self._provider
+        tier_pool = self._tier_pool
         tool_registry = self._tool_registry
 
         async def factory(node: TaskNode, context: dict[str, str]) -> SubAgentResult:
             system_prompt = roles.get_prompt(node.role)
             tool_names = node.tools or roles.get_tools(node.role)
             max_turns = _DIFFICULTY_TURNS.get(node.difficulty, 5)
+
+            # Difficulty-based provider/model selection
+            if tier_pool:
+                provider, model_override = tier_pool.get_provider_for_difficulty(
+                    node.difficulty,
+                )
+            else:
+                provider, model_override = default_provider, None
 
             all_tools = tool_registry.get_all_definitions() if hasattr(tool_registry, "get_all_definitions") else []
             tools = [t for t in all_tools if t.get("name") in tool_names] if tool_names else all_tools[:20]
@@ -137,6 +151,7 @@ class Orchestrator:
                 system_prompt=system_prompt,
                 max_turns=max_turns,
                 tool_executor=tool_registry.execute if hasattr(tool_registry, "execute") else None,
+                model_override=model_override,
             )
             return await agent.run(context=context)
 

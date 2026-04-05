@@ -3,6 +3,10 @@
 Uses a strong model for planning/architecture and a fast model for
 implementation and review, optimising cost and latency while keeping
 quality high for critical thinking steps.
+
+The strategy is provider-agnostic: model names are resolved from the
+application's tier configuration (LLMConfig.tier_high / tier_medium /
+tier_low) rather than being hardcoded to a specific provider.
 """
 
 from __future__ import annotations
@@ -11,8 +15,6 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum
 
-from breadmind.constants import DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_OPUS_MODEL
-
 
 class TaskPhase(str, Enum):
     PLANNING = "planning"
@@ -20,11 +22,19 @@ class TaskPhase(str, Enum):
     REVIEW = "review"
 
 
+# Maps task phases to difficulty tiers used by TierProviderPool
+PHASE_TO_DIFFICULTY: dict[TaskPhase, str] = {
+    TaskPhase.PLANNING: "high",
+    TaskPhase.IMPLEMENTATION: "medium",
+    TaskPhase.REVIEW: "low",
+}
+
+
 @dataclass
 class ModelStrategy:
-    planning_model: str = DEFAULT_CLAUDE_OPUS_MODEL
-    implementation_model: str = DEFAULT_CLAUDE_MODEL
-    review_model: str = DEFAULT_CLAUDE_MODEL
+    planning_model: str = ""      # resolved from tier config if empty
+    implementation_model: str = "" # resolved from tier config if empty
+    review_model: str = ""        # resolved from tier config if empty
     auto_switch: bool = True
 
 
@@ -113,12 +123,29 @@ class OpusPlanManager:
         return TaskPhase.IMPLEMENTATION
 
     def get_model_for_turn(self, messages: list[dict]) -> str:
-        """Get the appropriate model for the next turn based on auto-detection."""
+        """Get the appropriate model for the next turn based on auto-detection.
+
+        Returns the model string from ``ModelStrategy``.  When all strategy
+        fields are empty the return value is ``""``, which callers should
+        treat as "use the default model".
+        """
         if not self._strategy.auto_switch:
             return self.current_model
 
         detected = self.detect_phase(messages)
         return self.transition(detected)
+
+    def get_difficulty_for_turn(self, messages: list[dict]) -> str:
+        """Return the difficulty tier for the current turn.
+
+        This is the provider-agnostic API: callers pass the returned
+        difficulty to ``TierProviderPool.get_provider_for_difficulty()``.
+        """
+        if not self._strategy.auto_switch:
+            return PHASE_TO_DIFFICULTY[self._current_phase]
+        detected = self.detect_phase(messages)
+        self._current_phase = detected
+        return PHASE_TO_DIFFICULTY[detected]
 
     # ---- internal ---------------------------------------------------------
 

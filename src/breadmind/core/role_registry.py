@@ -19,12 +19,6 @@ class RoleDefinition:
 
 _COMMON_TOOLS = ["shell_exec", "file_read", "file_write", "web_search"]
 
-_DIFFICULTY_MODEL: dict[str, str] = {
-    "low": "haiku",
-    "medium": "sonnet",
-    "high": "opus",
-}
-
 _BUILTIN_ROLES: list[RoleDefinition] = [
     RoleDefinition(
         name="k8s_diagnostician",
@@ -215,19 +209,6 @@ class RoleRegistry:
         """Return the system prompt for a role, or an empty string if not found."""
         role = self._roles.get(role_name)
         return role.system_prompt if role is not None else ""
-
-    # ------------------------------------------------------------------
-    # Model mapping
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def difficulty_to_model(difficulty: str) -> str:
-        """Map a difficulty label to a model tier name.
-
-        Known values: "low" -> "haiku", "medium" -> "sonnet", "high" -> "opus".
-        Unknown values default to "sonnet".
-        """
-        return _DIFFICULTY_MODEL.get(difficulty, "sonnet")
 
     # ------------------------------------------------------------------
     # Summary for Planner

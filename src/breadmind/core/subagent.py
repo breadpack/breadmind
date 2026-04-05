@@ -32,6 +32,7 @@ class SubAgent:
         system_prompt: str,
         max_turns: int = 5,
         tool_executor: Callable[..., Awaitable] | None = None,
+        model_override: str | None = None,
     ) -> None:
         self._task_id = task_id
         self._description = description
@@ -41,6 +42,7 @@ class SubAgent:
         self._system_prompt = system_prompt
         self._max_turns = max_turns
         self._tool_executor = tool_executor
+        self._model_override = model_override
 
     async def run(self, context: dict[str, str] | None = None) -> SubAgentResult:
         """Execute the task and return the result."""
@@ -51,6 +53,7 @@ class SubAgent:
                 response = await self._provider.chat(
                     messages=messages,
                     tools=self._tools or None,
+                    model=self._model_override,
                 )
             except Exception as e:
                 logger.error("SubAgent %s LLM error: %s", self._task_id, e)

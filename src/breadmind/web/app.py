@@ -134,6 +134,7 @@ class WebApp:
         "_messenger_security": "messenger_security",
         "_lifecycle_manager": "lifecycle_manager",
         "_orchestrator": "orchestrator",
+        "_tier_pool": "tier_pool",
         "_bg_job_manager": "bg_job_manager",
         "_embedding_service": "embedding_service",
         "_plugin_mgr": "plugin_mgr",
