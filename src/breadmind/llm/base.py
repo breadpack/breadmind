@@ -26,6 +26,16 @@ _MODEL_PRICING: dict[str, dict[str, float]] = {
 
 
 @dataclass
+class Attachment:
+    """메시지 첨부 파일 (이미지, 파일 등)."""
+    type: str  # "image", "file"
+    path: str | None = None  # 로컬 파일 경로
+    url: str | None = None   # URL
+    data: str | None = None  # base64 encoded data
+    media_type: str = ""     # "image/png", "image/jpeg", "application/pdf"
+
+
+@dataclass
 class ToolCall:
     id: str
     name: str
@@ -35,8 +45,8 @@ class ToolCall:
 
 @dataclass
 class TokenUsage:
-    input_tokens: int
-    output_tokens: int
+    input_tokens: int = 0
+    output_tokens: int = 0
     cache_creation_input_tokens: int = 0
     cache_read_input_tokens: int = 0
 
@@ -72,7 +82,8 @@ class LLMMessage:
     tool_calls: list[ToolCall] = field(default_factory=list)
     tool_call_id: str | None = None
     name: str | None = None
-    attachments: list = field(default_factory=list)  # list[Attachment]
+    is_meta: bool = False
+    attachments: list[Attachment] = field(default_factory=list)
 
 
 @dataclass
