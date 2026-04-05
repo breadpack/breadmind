@@ -12,3 +12,6 @@ config/settings.json
 
 .playwright-mcp
 breadmind_test.log
+
+# Superpowers agent-generated docs (plans/specs)
+docs/superpowers/
