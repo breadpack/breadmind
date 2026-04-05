@@ -88,6 +88,7 @@ class ToolDefinition:
     name: str
     description: str
     parameters: dict[str, Any]  # JSON Schema
+    readonly: bool = False
 
 
 class LLMProvider(ABC):

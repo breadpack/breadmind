@@ -2,14 +2,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
-
-@dataclass
-class ToolDefinition:
-    """도구 정의."""
-    name: str
-    description: str
-    parameters: dict[str, Any]
-    readonly: bool = False
+from breadmind.llm.base import (
+    ToolCall,
+    ToolDefinition,
+)
 
 
 @dataclass
@@ -18,14 +14,6 @@ class ToolSchema:
     name: str
     deferred: bool = False
     definition: ToolDefinition | None = None
-
-
-@dataclass
-class ToolCall:
-    """에이전트 루프에서 실행할 도구 호출."""
-    id: str
-    name: str
-    arguments: dict[str, Any]
 
 
 @dataclass
