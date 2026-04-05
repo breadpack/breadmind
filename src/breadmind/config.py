@@ -4,6 +4,22 @@ import yaml
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from breadmind.constants import (
+    DEFAULT_DB_HOST,
+    DEFAULT_DB_NAME,
+    DEFAULT_DB_PORT,
+    DEFAULT_DB_USER,
+    DEFAULT_HEARTBEAT_INTERVAL,
+    DEFAULT_MODEL,
+    DEFAULT_OFFLINE_THRESHOLD,
+    DEFAULT_PROVIDER,
+    DEFAULT_REDIS_URL,
+    DEFAULT_SESSION_TIMEOUT,
+    DEFAULT_TOOL_TIMEOUT,
+    DEFAULT_WEB_HOST,
+    DEFAULT_WEB_PORT,
+    DEFAULT_WS_PORT,
+)
 from breadmind.config_types import (
     EmbeddingConfig,
     MemoryGCConfig,
@@ -26,8 +42,8 @@ _VALID_LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 @dataclass
 class WebConfig:
-    port: int = 8080
-    host: str = "127.0.0.1"
+    port: int = DEFAULT_WEB_PORT
+    host: str = DEFAULT_WEB_HOST
 
 
 @dataclass
@@ -38,18 +54,18 @@ class LoggingConfig:
 
 @dataclass
 class LLMConfig:
-    default_provider: str = "gemini"
-    default_model: str = "gemini-2.5-flash"
+    default_provider: str = DEFAULT_PROVIDER
+    default_model: str = DEFAULT_MODEL
     tool_call_max_turns: int = 20
-    tool_call_timeout_seconds: int = 30
+    tool_call_timeout_seconds: int = DEFAULT_TOOL_TIMEOUT
 
 
 @dataclass
 class DatabaseConfig:
-    host: str = "localhost"
-    port: int = 5432
-    name: str = "breadmind"
-    user: str = "breadmind"
+    host: str = DEFAULT_DB_HOST
+    port: int = DEFAULT_DB_PORT
+    name: str = DEFAULT_DB_NAME
+    user: str = DEFAULT_DB_USER
     password: str = ""
 
     @property
@@ -92,7 +108,7 @@ class SecurityConfig:
     auth_enabled: bool = False
     password_hash: str = ""  # SHA-256 hash
     api_keys: list[str] = field(default_factory=list)
-    session_timeout: int = 7200  # 2 hours
+    session_timeout: int = DEFAULT_SESSION_TIMEOUT  # 2 hours
     cors_origins: list[str] = field(default_factory=lambda: ["http://localhost:8080", "http://127.0.0.1:8080"])
     require_https: bool = False
 
@@ -101,7 +117,7 @@ class SecurityConfig:
 @dataclass
 class TaskConfig:
     """Background task system configuration (Celery + Redis)."""
-    redis_url: str = "redis://localhost:6379/0"
+    redis_url: str = DEFAULT_REDIS_URL
     max_concurrent_monitors: int = 10
     result_max_size_kb: int = 100
     completed_retention_days: int = 30
@@ -112,9 +128,9 @@ class NetworkConfig:
     """Distributed agent network configuration."""
     mode: str = "standalone"  # standalone | commander | worker
     commander_url: str = ""  # Worker: wss://commander:8081/ws/agent/self
-    ws_port: int = 8081  # Commander: WebSocket hub port
-    heartbeat_interval: int = 30  # seconds
-    offline_threshold: int = 90  # seconds without heartbeat → offline
+    ws_port: int = DEFAULT_WS_PORT  # Commander: WebSocket hub port
+    heartbeat_interval: int = DEFAULT_HEARTBEAT_INTERVAL  # seconds
+    offline_threshold: int = DEFAULT_OFFLINE_THRESHOLD  # seconds without heartbeat → offline
     ca_cert_path: str = ""
     ca_key_path: str = ""
     cert_path: str = ""
