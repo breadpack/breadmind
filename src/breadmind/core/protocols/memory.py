@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol
 from breadmind.core.protocols.prompt import PromptBlock
 from breadmind.core.protocols.provider import Message
 
@@ -24,7 +24,6 @@ class KGTriple:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@runtime_checkable
 class MemoryProtocol(Protocol):
     """메모리 읽기/쓰기/검색/압축 계약."""
     async def working_get(self, session_id: str) -> list[Message]: ...

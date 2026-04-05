@@ -1,7 +1,7 @@
 from __future__ import annotations
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol
 
 from breadmind.llm.base import (
     Attachment,
@@ -22,7 +22,6 @@ class CacheStrategy:
     config: dict[str, Any] = field(default_factory=dict)
 
 
-@runtime_checkable
 class ProviderProtocol(Protocol):
     """LLM 프로바이더 계약."""
     async def chat(

@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol
 
 
 @dataclass
@@ -27,7 +27,6 @@ class Progress:
     detail: str = ""
 
 
-@runtime_checkable
 class RuntimeProtocol(Protocol):
     """실행 환경 추상화 계약."""
     async def start(self, container: Any) -> None: ...
