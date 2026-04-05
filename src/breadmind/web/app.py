@@ -11,6 +11,7 @@ from typing import Callable
 
 from breadmind.core.metrics import get_metrics_registry, normalize_path
 
+from breadmind.web.context import AppContext
 from breadmind.web.idempotency import setup_idempotency
 from breadmind.web.rate_limiter import RateLimiter
 from breadmind.web.versioning import setup_versioning
@@ -44,17 +45,12 @@ from breadmind.web.routes.backup import setup_backup_routes
 logger = logging.getLogger(__name__)
 
 class WebApp:
-    def __init__(self, message_handler: Callable | None = None, tool_registry=None, mcp_manager=None,
-                 config=None, monitoring_engine=None, safety_config=None,
-                 agent=None, audit_logger=None, metrics_collector=None, database=None,
-                 mcp_store=None, safety_guard=None, working_memory=None, message_router=None,
-                 scheduler=None, subagent_manager=None, webhook_manager=None, auth=None,
-                 container_executor=None, swarm_manager=None,
-                 skill_store=None, performance_tracker=None, search_engine=None,
-                 token_manager=None, commander=None,
-                 messenger_security=None, lifecycle_manager=None, orchestrator=None,
-                 bg_job_manager=None, embedding_service=None,
-                 plugin_mgr=None):
+    def __init__(self, ctx: AppContext | None = None, **kwargs):
+        # Support both new (ctx) and legacy (kwargs) initialization
+        if ctx is None:
+            ctx = AppContext(**kwargs)
+        self.ctx = ctx
+
         try:
             from importlib.metadata import version as _pkg_ver
             _version = _pkg_ver("breadmind")
@@ -63,40 +59,10 @@ class WebApp:
         self.app = FastAPI(title="BreadMind", version=_version)
         # Expose self via FastAPI state so Depends() helpers can reach it
         self.app.state.app_state = self
-        self._message_handler = message_handler
-        self._tool_registry = tool_registry
-        self._mcp_manager = mcp_manager
-        self._config = config
-        self._monitoring_engine = monitoring_engine
-        self._safety_config = safety_config
-        self._agent = agent
-        self._audit_logger = audit_logger
-        self._metrics_collector = metrics_collector
-        self._db = database
-        self._mcp_store = mcp_store
-        self._safety_guard = safety_guard
-        self._working_memory = working_memory
-        self._message_router = message_router
-        self._scheduler = scheduler
-        self._subagent_manager = subagent_manager
-        self._webhook_manager = webhook_manager
-        self._auth = auth
-        self._container_executor = container_executor
-        self._swarm_manager = swarm_manager
-        self._skill_store = skill_store
-        self._performance_tracker = performance_tracker
-        self._search_engine = search_engine
-        self._token_manager = token_manager
-        self._commander = commander
-        self._messenger_security = messenger_security
-        self._lifecycle_manager = lifecycle_manager
-        self._orchestrator = orchestrator
-        self._bg_job_manager = bg_job_manager
-        self._embedding_service = embedding_service
-        self._plugin_mgr = plugin_mgr
         self._marketplace = None
 
         # CORS middleware
+        config = self._config
         if config and hasattr(config, 'security'):
             origins = config.security.cors_origins
         else:
@@ -135,6 +101,56 @@ class WebApp:
                         self._swarm_manager.import_roles(roles_data)
                 except Exception:
                     pass
+
+    # ── Backward-compatible attribute proxy to self.ctx ─────────────────
+    # Routes and dependency helpers access ``app_state._field``; this
+    # mapping keeps that contract intact while the real data lives in ctx.
+    _CTX_ATTR_MAP: dict[str, str] = {
+        "_message_handler": "message_handler",
+        "_tool_registry": "tool_registry",
+        "_mcp_manager": "mcp_manager",
+        "_config": "config",
+        "_monitoring_engine": "monitoring_engine",
+        "_safety_config": "safety_config",
+        "_agent": "agent",
+        "_audit_logger": "audit_logger",
+        "_metrics_collector": "metrics_collector",
+        "_db": "database",
+        "_mcp_store": "mcp_store",
+        "_safety_guard": "safety_guard",
+        "_working_memory": "working_memory",
+        "_message_router": "message_router",
+        "_scheduler": "scheduler",
+        "_subagent_manager": "subagent_manager",
+        "_webhook_manager": "webhook_manager",
+        "_auth": "auth",
+        "_container_executor": "container_executor",
+        "_swarm_manager": "swarm_manager",
+        "_skill_store": "skill_store",
+        "_performance_tracker": "performance_tracker",
+        "_search_engine": "search_engine",
+        "_token_manager": "token_manager",
+        "_commander": "commander",
+        "_messenger_security": "messenger_security",
+        "_lifecycle_manager": "lifecycle_manager",
+        "_orchestrator": "orchestrator",
+        "_bg_job_manager": "bg_job_manager",
+        "_embedding_service": "embedding_service",
+        "_plugin_mgr": "plugin_mgr",
+    }
+
+    def __getattr__(self, name: str):
+        ctx_field = WebApp._CTX_ATTR_MAP.get(name)
+        if ctx_field is not None:
+            return getattr(self.ctx, ctx_field)
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+    def __setattr__(self, name: str, value):
+        ctx_field = WebApp._CTX_ATTR_MAP.get(name)
+        if ctx_field is not None:
+            setattr(self.ctx, ctx_field, value)
+        else:
+            super().__setattr__(name, value)
 
     async def _on_behavior_prompt_updated(self, new_prompt: str, reason: str):
         """Broadcast behavior prompt update to connected WebSocket clients."""
