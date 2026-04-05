@@ -66,7 +66,6 @@ class CoreAgent:
         self._behavior_prompt = behavior_prompt
         self._notifications: list[str] = []
         self._behavior_tracker: object | None = None
-        self._progress_callback: object | None = None
         self._profiler = profiler
         self._prompt_builder = prompt_builder
         self._orchestrator = orchestrator
@@ -188,16 +187,13 @@ class CoreAgent:
     def set_behavior_tracker(self, tracker):
         self._behavior_tracker = tracker
 
-    def set_progress_callback(self, callback):
-        """Set async callback for progress updates: callback(status, detail)."""
-        self._progress_callback = callback
-
     async def _notify_progress(self, status: str, detail: str = ""):
-        if self._progress_callback:
-            try:
-                await self._progress_callback(status, detail)
-            except Exception:
-                pass
+        """Publish progress update via EventBus."""
+        await get_event_bus().publish_fire_and_forget(Event(
+            type=EventType.PROGRESS,
+            data={"status": status, "detail": detail},
+            source="agent",
+        ))
 
     def get_usage(self) -> dict[str, int]:
         return dict(self._total_usage)
@@ -283,8 +279,7 @@ class CoreAgent:
         # Step 1.5: Route complex tasks to Orchestrator
         if self._orchestrator and intent.complexity == "complex":
             logger.info(json.dumps({"event": "orchestrator_route", "complexity": "complex"}))
-            if self._progress_callback:
-                await self._progress_callback("orchestrator", "Complex task detected, routing to orchestrator...")
+            await self._notify_progress("orchestrator", "Complex task detected, routing to orchestrator...")
             try:
                 result = await self._orchestrator.run(message, user=user, channel=channel)
                 # Store result in working memory
@@ -435,7 +430,6 @@ class CoreAgent:
                 tool_gap_detector=self._tool_gap_detector,
                 context_builder=self._context_builder,
                 pending_approvals=self._pending_approvals,
-                notify_progress=self._notify_progress,
                 on_new_tool_detected=self._detect_new_tool,
                 _injected_provider=self._provider,
             )

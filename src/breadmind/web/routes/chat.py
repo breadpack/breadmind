@@ -172,29 +172,29 @@ def setup_chat_routes(r: APIRouter, app_state):
                                 title,
                             )
 
-                    # Set up progress callback for real-time status
-                    async def _progress(status: str, detail: str = ""):
+                    # Subscribe to EventBus for real-time progress
+                    from breadmind.core.events import get_event_bus, EventType
+
+                    async def _on_progress(data):
                         try:
                             await websocket.send_text(json.dumps({
                                 "type": "progress",
-                                "status": status,
-                                "detail": detail,
+                                "status": data.get("status", ""),
+                                "detail": data.get("detail", ""),
                                 "session_id": current_session,
                             }))
                         except Exception:
                             pass
 
-                    if app._agent and hasattr(app._agent, "set_progress_callback"):
-                        app._agent.set_progress_callback(_progress)
-
+                    bus = get_event_bus()
+                    bus.subscribe(EventType.PROGRESS, _on_progress)
                     try:
                         if asyncio.iscoroutinefunction(app._message_handler):
                             response = await app._message_handler(user_message, user="web", channel=channel)
                         else:
                             response = app._message_handler(user_message, user="web", channel=channel)
                     finally:
-                        if app._agent and hasattr(app._agent, "set_progress_callback"):
-                            app._agent.set_progress_callback(None)
+                        bus.unsubscribe(EventType.PROGRESS, _on_progress)
                 else:
                     response = "No message handler configured."
 
