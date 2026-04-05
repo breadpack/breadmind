@@ -55,12 +55,16 @@ class AutoCompactor:
         token_counter: TokenCounter | None = None,
         instruction_files: list[str] | None = None,
         on_pre_compact: Callable | None = None,
+        on_post_compact: Callable | None = None,
+        compact_instructions: str | None = None,
     ) -> None:
         self._provider = provider
         self._config = config or CompactConfig()
         self._token_counter = token_counter
         self._instruction_files = instruction_files or []
         self._on_pre_compact = on_pre_compact
+        self._on_post_compact = on_post_compact
+        self._compact_instructions = compact_instructions
         self._last_compact_level: CompactionLevel = CompactionLevel.NONE
 
     @property
@@ -173,6 +177,16 @@ class AutoCompactor:
             "Auto-compact level %d: %d tokens -> %d tokens (saved %d)",
             level, old_tokens, new_tokens, old_tokens - new_tokens,
         )
+
+        # Fire post-compact hook
+        if self._on_post_compact:
+            try:
+                if asyncio.iscoroutinefunction(self._on_post_compact):
+                    await self._on_post_compact(result, level)
+                else:
+                    self._on_post_compact(result, level)
+            except Exception:
+                logger.warning("Post-compact hook failed", exc_info=True)
 
         return result
 
@@ -290,16 +304,16 @@ class AutoCompactor:
         conversation = "\n".join(
             f"[{m.role}]: {m.content or '(empty)'}" for m in messages
         )
+        system_content = (
+            "Summarize the following conversation concisely. "
+            "Preserve key decisions, actions taken, and results. "
+            "Keep technical details (commands, paths, error messages). "
+            "Output a brief summary paragraph."
+        )
+        if self._compact_instructions:
+            system_content += f"\n\nAdditional instructions: {self._compact_instructions}"
         prompt_messages = [
-            Message(
-                role="system",
-                content=(
-                    "Summarize the following conversation concisely. "
-                    "Preserve key decisions, actions taken, and results. "
-                    "Keep technical details (commands, paths, error messages). "
-                    "Output a brief summary paragraph."
-                ),
-            ),
+            Message(role="system", content=system_content),
             Message(role="user", content=conversation),
         ]
         response = await self._provider.chat(messages=prompt_messages)

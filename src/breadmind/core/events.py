@@ -117,6 +117,22 @@ class EventType(str, Enum):
     PRE_COMPACT = "pre_compact"
     USER_PROMPT_SUBMIT = "user_prompt_submit"
     PERMISSION_REQUEST = "permission_request"
+    # Extended lifecycle events
+    INSTRUCTIONS_LOADED = "instructions_loaded"
+    POST_TOOL_USE_FAILURE = "post_tool_use_failure"
+    STOP_FAILURE = "stop_failure"
+    SUBAGENT_START_HOOK = "subagent_start_hook"
+    TASK_CREATED = "task_created"
+    TASK_COMPLETED = "task_completed"
+    TEAMMATE_IDLE = "teammate_idle"
+    CONFIG_CHANGE = "config_change"
+    CWD_CHANGED = "cwd_changed"
+    FILE_CHANGED = "file_changed"
+    POST_COMPACT = "post_compact"
+    WORKTREE_CREATE = "worktree_create"
+    WORKTREE_REMOVE = "worktree_remove"
+    NOTIFICATION = "notification"
+    ELICITATION = "elicitation"
 
 
 @dataclass
