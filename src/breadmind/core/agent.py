@@ -12,6 +12,7 @@ from breadmind.core.safety import SafetyGuard
 from breadmind.core.audit import AuditLogger
 from breadmind.core.tool_executor import ToolExecutor, ToolExecutionContext
 from breadmind.core.events import get_event_bus, Event, EventType
+from breadmind.core.conversation_manager import ConversationManager
 
 if TYPE_CHECKING:
     from breadmind.memory.working import WorkingMemory
@@ -66,6 +67,11 @@ class CoreAgent:
         self._persona: str = "professional"
         self._role: str | None = None
         self._prompt_context: object | None = None
+        self._conversation = ConversationManager(
+            working_memory=working_memory,
+            context_builder=context_builder,
+            summarizer=summarizer,
+        )
 
         # If behavior_prompt provided, rebuild system_prompt with it
         if behavior_prompt is not None:
@@ -332,11 +338,7 @@ class CoreAgent:
             try:
                 result = await self._orchestrator.run(message, user=user, channel=channel)
                 # Store result in working memory
-                if self._working_memory is not None:
-                    self._working_memory.add_message(
-                        session_id,
-                        LLMMessage(role="assistant", content=result),
-                    )
+                self._conversation.store_assistant_message(session_id, result)
                 await get_event_bus().publish_fire_and_forget(Event(
                     type=EventType.SESSION_END,
                     data={"user": user, "channel": channel, "session_id": session_id, "route": "orchestrator"},
@@ -370,39 +372,15 @@ class CoreAgent:
                 except Exception as e:
                     logger.warning("Auto credential_ref connect failed: %s", e)
 
-        # Build initial messages
-        system_msg = LLMMessage(role="system", content=self._system_prompt)
-        user_msg = LLMMessage(role="user", content=message)
-
-        if self._working_memory is not None:
-            session = self._working_memory.get_or_create_session(
-                session_id, user=user, channel=channel,
-            )
-            previous_messages = list(session.messages)
-            logger.info(json.dumps({"event": "context_build", "session": session_id, "previous_msgs": len(previous_messages)}))
-            messages = [system_msg] + previous_messages + [user_msg]
-            # Save a sanitized version of the user message to memory
-            from breadmind.storage.credential_vault import CredentialVault
-            clean_content = CredentialVault.sanitize_text(message)
-            stored_user_msg = LLMMessage(role="user", content=clean_content)
-            self._working_memory.add_message(session_id, stored_user_msg)
-        else:
-            messages = [system_msg, user_msg]
+        # Build initial messages (delegated to ConversationManager)
+        messages = self._conversation.build_messages(
+            session_id, message, self._system_prompt, user=user, channel=channel,
+        )
 
         # Step 2: Enrich context with intent-aware memory retrieval
-        if self._context_builder:
-            try:
-                enrichment = await asyncio.wait_for(
-                    self._context_builder.build_context(session_id, message, intent=intent),
-                    timeout=10,
-                )
-                # Extract only the enrichment system messages (not conversation history)
-                context_msgs = [m for m in enrichment if m.role == "system" and m.content and m.content != self._system_prompt]
-                if context_msgs:
-                    # Insert context after system prompt, before conversation history
-                    messages = [messages[0]] + context_msgs + messages[1:]
-            except Exception as e:
-                logger.warning(f"ContextBuilder enrichment failed: {e}")
+        messages = await self._conversation.enrich_context(
+            messages, session_id, message, self._system_prompt, intent=intent,
+        )
 
         # Step 3: Filter tools using intent-aware selection
         all_tools = self._tools.get_all_definitions()
@@ -413,28 +391,10 @@ class CoreAgent:
         _LOOP_THRESHOLD = 3  # same call repeated N times = loop
 
         for turn in range(self._max_turns):
-            # Apply conversation summarization if available
-            chat_messages = messages
-            if self._summarizer is not None and hasattr(self._summarizer, "summarize_if_needed"):
-                try:
-                    chat_messages = await self._summarizer.summarize_if_needed(
-                        messages, tools,
-                    )
-                except Exception:
-                    logger.exception("Summarizer error, using original messages")
-                    chat_messages = messages
-            else:
-                # Fallback: trim messages if exceeding context window
-                try:
-                    from breadmind.llm.token_counter import TokenCounter
-                    model = getattr(self._provider, "model_name", "claude-sonnet-4-6")
-                    if not TokenCounter.fits_in_context(chat_messages, tools, model):
-                        chat_messages = TokenCounter.trim_messages_to_fit(
-                            chat_messages, tools, model,
-                        )
-                        logger.warning("Trimmed messages to fit context window")
-                except Exception:
-                    logger.debug("TokenCounter check skipped due to error")
+            # Apply conversation summarization or token trimming
+            chat_messages = await self._conversation.maybe_summarize(
+                messages, tools, provider=self._provider,
+            )
 
             await self._notify_progress("thinking", "")
 
@@ -488,11 +448,7 @@ class CoreAgent:
                     prefix = "\n".join(self._notifications) + "\n\n"
                     self._notifications.clear()
                     final_content = prefix + final_content
-                if self._working_memory is not None:
-                    self._working_memory.add_message(
-                        session_id,
-                        LLMMessage(role="assistant", content=final_content),
-                    )
+                self._conversation.store_assistant_message(session_id, final_content)
                 logger.info(json.dumps({"event": "session_end", "user": user, "channel": channel}))
                 await get_event_bus().publish_fire_and_forget(Event(
                     type=EventType.SESSION_END,
@@ -525,11 +481,7 @@ class CoreAgent:
                         f"동일한 도구({loop_tool})가 같은 인자로 {_LOOP_THRESHOLD}회 반복 "
                         f"호출되어 중단합니다. 다른 방법을 시도해주세요."
                     )
-                    if self._working_memory is not None:
-                        self._working_memory.add_message(
-                            session_id,
-                            LLMMessage(role="assistant", content=loop_msg),
-                        )
+                    self._conversation.store_assistant_message(session_id, loop_msg)
                     return loop_msg
 
             # Process tool calls — add assistant message, then delegate to ToolExecutor
@@ -537,8 +489,7 @@ class CoreAgent:
                 role="assistant", content=response.content, tool_calls=response.tool_calls,
             )
             messages.append(assistant_msg)
-            if self._working_memory is not None:
-                self._working_memory.add_message(session_id, assistant_msg)
+            self._conversation.store_message(session_id, assistant_msg)
 
             exec_ctx = ToolExecutionContext(
                 user=user,
@@ -588,11 +539,7 @@ class CoreAgent:
                         pre_text = pre_text.replace("[NEED_CREDENTIALS]", "").strip()
                         form_block = f"[REQUEST_INPUT]{match.group(1)}[/REQUEST_INPUT]"
                         direct_response = f"{pre_text}\n\n{form_block}" if pre_text else form_block
-                        if self._working_memory is not None:
-                            self._working_memory.add_message(
-                                session_id,
-                                LLMMessage(role="assistant", content=direct_response),
-                            )
+                        self._conversation.store_assistant_message(session_id, direct_response)
                         return direct_response
                     break
 
