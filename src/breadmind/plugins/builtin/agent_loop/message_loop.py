@@ -34,41 +34,56 @@ class StreamEvent:
     data: Any = None
 
 
+@dataclass
+class MessageLoopConfig:
+    """Optional configuration for MessageLoopAgent."""
+    max_turns: int = 10
+    memory: Any | None = None
+    prompt_context: PromptContext | None = None
+    hook_runner: HookRunner | None = None
+    auto_compactor: AutoCompactor | None = None
+    output_limiter: OutputLimiter | None = None
+    spawner_factory: Callable[..., Spawner] | None = None
+    conversation_store: ConversationStore | None = None
+    approval_handler: ApprovalHandler | None = None
+    cost_tracker: CostTracker | None = None
+    audit_log: AuditLog | None = None
+    sanitizer: InputSanitizer | None = None
+
+
 class MessageLoopAgent:
     """기본 메시지 루프 에이전트."""
 
     def __init__(self, provider: ProviderProtocol, prompt_builder: Any,
                  tool_registry: Any, safety_guard: SafetyGuard,
-                 max_turns: int = 10, memory: Any | None = None,
-                 prompt_context: PromptContext | None = None,
-                 hook_runner: HookRunner | None = None,
-                 auto_compactor: AutoCompactor | None = None,
-                 output_limiter: OutputLimiter | None = None,
-                 spawner_factory: Callable[..., Spawner] | None = None,
-                 conversation_store: ConversationStore | None = None,
-                 approval_handler: ApprovalHandler | None = None,
-                 cost_tracker: CostTracker | None = None,
-                 audit_log: AuditLog | None = None,
-                 sanitizer: InputSanitizer | None = None) -> None:
+                 config: MessageLoopConfig | None = None,
+                 **kwargs: Any) -> None:
+        if config is None:
+            config = MessageLoopConfig(**kwargs)
+        elif kwargs:
+            raise TypeError(
+                "Cannot pass both 'config' and individual keyword arguments"
+            )
         self._provider = provider
         self._prompt_builder = prompt_builder
         self._tool_registry = tool_registry
         self._safety = safety_guard
-        self._max_turns = max_turns
-        self._memory = memory
-        self._prompt_context = prompt_context or PromptContext()
+        self._config = config
+        self._max_turns = config.max_turns
+        self._memory = config.memory
+        self._prompt_context = config.prompt_context or PromptContext()
         self._agent_id = f"agent_{generate_short_id()}"
-        self._hook_runner = hook_runner
-        self._auto_compactor = auto_compactor
-        self._output_limiter = output_limiter
-        self._spawner_factory = spawner_factory
+        self._hook_runner = config.hook_runner
+        self._auto_compactor = config.auto_compactor
+        self._output_limiter = config.output_limiter
+        self._spawner_factory = config.spawner_factory
         self._spawner: Spawner | None = None
         self._resolved_tools: set[str] = set()
-        self._conversation_store = conversation_store
-        self._approval_handler = approval_handler
-        self._cost_tracker = cost_tracker
-        self._audit_log = audit_log
-        self._sanitizer = sanitizer
+        self._conversation_store = config.conversation_store
+        self._approval_handler = config.approval_handler
+        self._cost_tracker = config.cost_tracker
+        self._audit_log = config.audit_log
+        self._sanitizer = config.sanitizer
 
     @property
     def agent_id(self) -> str:
