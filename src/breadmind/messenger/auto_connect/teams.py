@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 class TeamsAutoConnector(AutoConnector):
     platform = "teams"
 
-    async def get_setup_steps(self) -> list[SetupStep]:
+    def _get_initial_setup_steps(self) -> list[SetupStep]:
         return [
             SetupStep(
                 step_number=1,

@@ -115,9 +115,38 @@ class AutoConnector(ABC):
 
     platform: str = ""
 
+    def _has_existing_credentials(self) -> bool:
+        """기존 자격 증명이 환경 변수에 존재하는지 확인.
+
+        서브클래스에서 오버라이드하여 플랫폼별 환경 변수를 확인합니다.
+        True를 반환하면 get_setup_steps()가 검증 단계만 반환합니다.
+        기본값은 False (항상 전체 설정 단계 반환).
+        """
+        return False
+
+    def _get_verification_step(self) -> SetupStep:
+        """기존 자격 증명 검증을 위한 단일 단계 생성."""
+        return SetupStep(
+            step_number=1,
+            title="토큰 검증",
+            description="기존 토큰을 검증합니다.",
+            action_type="auto",
+            auto_executable=True,
+        )
+
     @abstractmethod
+    def _get_initial_setup_steps(self) -> list[SetupStep]:
+        """플랫폼별 초기 설정 단계를 반환."""
+
     async def get_setup_steps(self) -> list[SetupStep]:
-        """연결에 필요한 단계 목록을 반환."""
+        """연결에 필요한 단계 목록을 반환.
+
+        기존 자격 증명이 있으면 검증 단계만, 없으면 전체 설정 단계를 반환합니다.
+        특수한 로직이 필요한 경우 서브클래스에서 오버라이드할 수 있습니다.
+        """
+        if self._has_existing_credentials():
+            return [self._get_verification_step()]
+        return self._get_initial_setup_steps()
 
     async def create_bot(self, params: dict) -> CreateResult:
         """봇/앱 자동 생성 (지원하는 플랫폼만 구현)."""

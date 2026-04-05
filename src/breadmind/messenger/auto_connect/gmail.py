@@ -26,50 +26,19 @@ GMAIL_API = "https://gmail.googleapis.com/gmail/v1"
 class GmailAutoConnector(AutoConnector):
     platform = "gmail"
 
-    async def get_setup_steps(self) -> list[SetupStep]:
-        refresh_token = os.environ.get("GMAIL_REFRESH_TOKEN")
-        if refresh_token:
-            return [
-                SetupStep(
-                    step_number=1,
-                    title="Gmail 연결 검증",
-                    description="기존 OAuth 토큰을 검증합니다.",
-                    action_type="auto",
-                    auto_executable=True,
-                ),
-            ]
+    def _has_existing_credentials(self) -> bool:
+        return bool(os.environ.get("GMAIL_REFRESH_TOKEN"))
 
-        client_id = os.environ.get("GMAIL_CLIENT_ID")
-        if client_id:
-            base_url = _get_base_url()
-            redirect_uri = f"{base_url}/api/messenger/gmail/oauth-callback"
-            oauth_url = (
-                f"https://accounts.google.com/o/oauth2/v2/auth"
-                f"?client_id={client_id}"
-                f"&redirect_uri={redirect_uri}"
-                f"&response_type=code"
-                f"&scope=https://www.googleapis.com/auth/gmail.readonly%20"
-                f"https://www.googleapis.com/auth/gmail.send"
-                f"&access_type=offline"
-                f"&prompt=consent"
-            )
-            return [
-                SetupStep(
-                    step_number=1,
-                    title="Google 계정 인증",
-                    description="아래 링크를 클릭하여 Gmail 접근을 허용하세요.",
-                    action_type="oauth_redirect",
-                    action_url=oauth_url,
-                ),
-                SetupStep(
-                    step_number=2,
-                    title="연결 완료",
-                    description="OAuth 인증이 완료되면 자동으로 연결됩니다.",
-                    action_type="auto",
-                    auto_executable=True,
-                ),
-            ]
+    def _get_verification_step(self) -> SetupStep:
+        return SetupStep(
+            step_number=1,
+            title="Gmail 연결 검증",
+            description="기존 OAuth 토큰을 검증합니다.",
+            action_type="auto",
+            auto_executable=True,
+        )
 
+    def _get_initial_setup_steps(self) -> list[SetupStep]:
         return [
             SetupStep(
                 step_number=1,
@@ -118,6 +87,45 @@ class GmailAutoConnector(AutoConnector):
                 auto_executable=True,
             ),
         ]
+
+    async def get_setup_steps(self) -> list[SetupStep]:
+        """Gmail은 OAuth 중간 경로가 있어 추가 분기 로직이 필요."""
+        if self._has_existing_credentials():
+            return [self._get_verification_step()]
+
+        # Client ID가 있으면 바로 OAuth flow 가능
+        client_id = os.environ.get("GMAIL_CLIENT_ID")
+        if client_id:
+            base_url = _get_base_url()
+            redirect_uri = f"{base_url}/api/messenger/gmail/oauth-callback"
+            oauth_url = (
+                f"https://accounts.google.com/o/oauth2/v2/auth"
+                f"?client_id={client_id}"
+                f"&redirect_uri={redirect_uri}"
+                f"&response_type=code"
+                f"&scope=https://www.googleapis.com/auth/gmail.readonly%20"
+                f"https://www.googleapis.com/auth/gmail.send"
+                f"&access_type=offline"
+                f"&prompt=consent"
+            )
+            return [
+                SetupStep(
+                    step_number=1,
+                    title="Google 계정 인증",
+                    description="아래 링크를 클릭하여 Gmail 접근을 허용하세요.",
+                    action_type="oauth_redirect",
+                    action_url=oauth_url,
+                ),
+                SetupStep(
+                    step_number=2,
+                    title="연결 완료",
+                    description="OAuth 인증이 완료되면 자동으로 연결됩니다.",
+                    action_type="auto",
+                    auto_executable=True,
+                ),
+            ]
+
+        return self._get_initial_setup_steps()
 
     async def validate_credentials(self, credentials: dict) -> ValidationResult:
         refresh_token = credentials.get("refresh_token") or os.environ.get("GMAIL_REFRESH_TOKEN")

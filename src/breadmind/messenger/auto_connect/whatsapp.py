@@ -25,19 +25,19 @@ TWILIO_API = "https://api.twilio.com/2010-04-01"
 class WhatsAppAutoConnector(AutoConnector):
     platform = "whatsapp"
 
-    async def get_setup_steps(self) -> list[SetupStep]:
-        sid = os.environ.get("WHATSAPP_TWILIO_ACCOUNT_SID")
-        if sid:
-            return [
-                SetupStep(
-                    step_number=1,
-                    title="Twilio 연결 검증",
-                    description="기존 Twilio 설정을 검증합니다.",
-                    action_type="auto",
-                    auto_executable=True,
-                ),
-            ]
+    def _has_existing_credentials(self) -> bool:
+        return bool(os.environ.get("WHATSAPP_TWILIO_ACCOUNT_SID"))
 
+    def _get_verification_step(self) -> SetupStep:
+        return SetupStep(
+            step_number=1,
+            title="Twilio 연결 검증",
+            description="기존 Twilio 설정을 검증합니다.",
+            action_type="auto",
+            auto_executable=True,
+        )
+
+    def _get_initial_setup_steps(self) -> list[SetupStep]:
         return [
             SetupStep(
                 step_number=1,

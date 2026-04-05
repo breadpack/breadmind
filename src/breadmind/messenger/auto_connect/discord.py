@@ -25,19 +25,10 @@ BOT_PERMISSIONS = 274877975552  # Send Messages, Read Messages, Add Reactions, e
 class DiscordAutoConnector(AutoConnector):
     platform = "discord"
 
-    async def get_setup_steps(self) -> list[SetupStep]:
-        token = os.environ.get("DISCORD_BOT_TOKEN")
-        if token:
-            return [
-                SetupStep(
-                    step_number=1,
-                    title="토큰 검증",
-                    description="기존 토큰을 검증합니다.",
-                    action_type="auto",
-                    auto_executable=True,
-                ),
-            ]
+    def _has_existing_credentials(self) -> bool:
+        return bool(os.environ.get("DISCORD_BOT_TOKEN"))
 
+    def _get_initial_setup_steps(self) -> list[SetupStep]:
         return [
             SetupStep(
                 step_number=1,
