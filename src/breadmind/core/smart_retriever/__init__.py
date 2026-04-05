@@ -202,8 +202,8 @@ class SmartRetriever:
     async def _keyword_fallback(
         self, query: str, token_budget: int, limit: int,
     ) -> list[ScoredSkill]:
-        """Fallback to keyword matching via SkillStore."""
-        skills = await self._skill_store.find_matching_skills(
+        """Fallback to keyword matching via SkillStore (direct, no retriever)."""
+        skills = await self._skill_store.find_matching_skills_keyword(
             query, limit=limit,
         )
         scored = []

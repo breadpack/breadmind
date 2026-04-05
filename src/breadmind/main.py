@@ -629,6 +629,8 @@ async def run():
             token_manager = TokenManager(db=db)
             await token_manager.load_from_db()
 
+            swarm_manager = None
+
             # Initialize messenger auto-connect system
             from breadmind.messenger.router import MessageRouter
             message_router = MessageRouter()

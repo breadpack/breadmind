@@ -118,6 +118,23 @@ class SkillStore:
         scored.sort(key=lambda x: x[0], reverse=True)
         return [s for _, s in scored[:limit]]
 
+    async def find_matching_skills_keyword(
+        self, query: str, limit: int = 3
+    ) -> list[Skill]:
+        """Pure keyword matching without SmartRetriever (avoids recursion)."""
+        query_words = set(query.lower().split())
+        scored: list[tuple[float, Skill]] = []
+        for skill in self._skills.values():
+            kw_set = set(k.lower() for k in skill.trigger_keywords)
+            desc_words = set(skill.description.lower().split())
+            kw_matches = len(query_words & kw_set)
+            desc_matches = len(query_words & desc_words)
+            score = kw_matches * 2.0 + desc_matches
+            if score > 0:
+                scored.append((score, skill))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [s for _, s in scored[:limit]]
+
     async def load_frontmatter_only(self, name: str, description: str,
                                       file_path: str, trigger_keywords: list[str] | None = None) -> Skill:
         """Load only skill metadata (progressive disclosure). Full content loaded on demand."""

@@ -63,13 +63,13 @@ class EventBus:
     async def publish(self, event: "Event") -> None:
         key = event.type.value if isinstance(event.type, EventType) else str(event.type)
         await self.async_emit(key, event.data)
-        # Global subscribers
+        # Global subscribers — pass full Event object, not just data
         for handler in self._listeners.get("*", []):
             try:
                 if asyncio.iscoroutinefunction(handler):
-                    await handler(event.data)
+                    await handler(event)
                 else:
-                    handler(event.data)
+                    handler(event)
             except Exception as e:
                 logger.error("Global event handler error: %s", e)
 
