@@ -1,38 +1,44 @@
 # tests/test_provisioner.py
 import pytest
 from unittest.mock import AsyncMock, patch
-from breadmind.provisioning.provisioner import Provisioner, DeploymentTarget
+from breadmind.provisioning.provisioner import Provisioner, DeploymentTarget, register_strategy
 from breadmind.provisioning.strategies.base import DeployStrategy
 
-def test_detect_kubernetes_environment():
-    p = Provisioner()
-    target = DeploymentTarget(
-        host="k8s-node1",
-        access_method="kubernetes",
-        environment={"runtime": "containerd"},
-    )
-    strategy = p.select_strategy(target)
-    assert strategy.__class__.__name__ == "KubernetesStrategy"
 
-def test_detect_proxmox_environment():
+def test_unknown_access_method_raises():
     p = Provisioner()
     target = DeploymentTarget(
-        host="pve-host1",
-        access_method="proxmox",
-        environment={"type": "proxmox"},
+        host="some-host",
+        access_method="nonexistent",
+        environment={},
     )
-    strategy = p.select_strategy(target)
-    assert strategy.__class__.__name__ == "ProxmoxStrategy"
+    with pytest.raises(ValueError, match="Unknown access method"):
+        p.select_strategy(target)
 
-def test_detect_ssh_fallback():
-    p = Provisioner()
-    target = DeploymentTarget(
-        host="linux-server",
-        access_method="ssh",
-        environment={"os": "linux"},
-    )
-    strategy = p.select_strategy(target)
-    assert strategy.__class__.__name__ == "SSHStrategy"
+
+def test_register_and_select_strategy():
+    """Registered strategies can be resolved by select_strategy."""
+    register_strategy("test_dummy", "tests.test_provisioner._DummyStrategy")
+    try:
+        p = Provisioner()
+        target = DeploymentTarget(host="h1", access_method="test_dummy", environment={})
+        strategy = p.select_strategy(target)
+        assert isinstance(strategy, DeployStrategy)
+    finally:
+        from breadmind.provisioning.provisioner import _STRATEGY_REGISTRY
+        _STRATEGY_REGISTRY.pop("test_dummy", None)
+
+
+class _DummyStrategy(DeployStrategy):
+    async def deploy(self, **kwargs):
+        return {"status": "ok"}
+
+    async def remove(self, **kwargs):
+        return {"status": "removed"}
+
+    async def update(self, **kwargs):
+        return {"status": "updated"}
+
 
 @pytest.mark.asyncio
 async def test_provision_calls_strategy_deploy():

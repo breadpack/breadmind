@@ -11,11 +11,7 @@ from breadmind.provisioning.strategies.base import DeployStrategy
 
 logger = logging.getLogger(__name__)
 
-_STRATEGY_REGISTRY: dict[str, str] = {
-    "kubernetes": "breadmind.provisioning.strategies.kubernetes.KubernetesStrategy",
-    "proxmox": "breadmind.provisioning.strategies.proxmox.ProxmoxStrategy",
-    "ssh": "breadmind.provisioning.strategies.ssh.SSHStrategy",
-}
+_STRATEGY_REGISTRY: dict[str, str] = {}
 
 
 def register_strategy(name: str, class_path: str) -> None:
@@ -42,10 +38,9 @@ class Provisioner:
         method = target.access_method.lower()
         class_path = _STRATEGY_REGISTRY.get(method)
         if not class_path:
-            # Default to SSH for unknown access methods
-            class_path = _STRATEGY_REGISTRY["ssh"]
-            logger.warning(
-                "Unknown access method %r, falling back to SSH strategy", method,
+            raise ValueError(
+                f"Unknown access method {method!r}. "
+                f"Register a strategy first via register_strategy()."
             )
 
         module_path, class_name = class_path.rsplit(".", 1)
