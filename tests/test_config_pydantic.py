@@ -7,12 +7,9 @@ from breadmind.config import (
     AppConfig,
     DatabaseConfig,
     LLMConfig,
-    LoggingConfig,
     MCPConfig,
     NetworkConfig,
-    RegistryConfigItem,
     SecurityConfig,
-    TaskConfig,
     WebConfig,
 )
 from breadmind.config_types import (

@@ -1,6 +1,6 @@
 """Tests for ToolCoordinator extracted from CoreAgent."""
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from types import SimpleNamespace
 
 from breadmind.core.tool_coordinator import ToolCoordinator
