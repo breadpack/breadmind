@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from breadmind.coding.adapters.base import CodingAgentAdapter, CodingResult
 from breadmind.coding.adapters.claude_code import ClaudeCodeAdapter
-from breadmind.coding.adapters.codex import CodexAdapter
 from breadmind.coding.adapters.gemini_cli import GeminiCLIAdapter
 
 # Populated by the plugin system at boot; empty by default so that
@@ -12,7 +11,6 @@ _ADAPTERS: dict = {}
 # Hardcoded classes kept as fallback when the plugin system hasn't loaded yet.
 _FALLBACK_ADAPTERS = {
     "claude": ClaudeCodeAdapter,
-    "codex": CodexAdapter,
     "gemini": GeminiCLIAdapter,
 }
 
@@ -41,7 +39,6 @@ __all__ = [
     "CodingAgentAdapter",
     "CodingResult",
     "ClaudeCodeAdapter",
-    "CodexAdapter",
     "GeminiCLIAdapter",
     "get_adapter",
     "register_adapter",
