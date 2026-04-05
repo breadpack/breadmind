@@ -13,6 +13,7 @@ from breadmind.core.audit import AuditLogger
 from breadmind.core.tool_executor import ToolExecutor, ToolExecutionContext
 from breadmind.core.events import get_event_bus, Event, EventType
 from breadmind.core.conversation_manager import ConversationManager
+from breadmind.core.tool_coordinator import ToolCoordinator
 
 if TYPE_CHECKING:
     from breadmind.memory.working import WorkingMemory
@@ -55,7 +56,13 @@ class CoreAgent:
         self._summarizer = summarizer
         self._tool_gap_detector = tool_gap_detector
         self._context_builder = context_builder
-        self._pending_approvals: dict[str, dict] = {}
+        self._tool_coordinator = ToolCoordinator(
+            tool_registry=tool_registry,
+            safety_guard=safety_guard,
+            tool_timeout=tool_timeout,
+            audit_logger=audit_logger,
+        )
+        self._pending_approvals = self._tool_coordinator.pending_approvals
         self._behavior_prompt = behavior_prompt
         self._notifications: list[str] = []
         self._behavior_tracker: object | None = None
@@ -99,6 +106,7 @@ class CoreAgent:
         if tool_timeout is not None and tool_timeout >= 1:
             self._tool_timeout = tool_timeout
             self._tool_executor.tool_timeout = tool_timeout
+            self._tool_coordinator._tool_timeout = tool_timeout
         if chat_timeout is not None and chat_timeout >= 1:
             self._chat_timeout = chat_timeout
 
@@ -201,73 +209,15 @@ class CoreAgent:
 
     def get_pending_approvals(self) -> list[dict]:
         """Return all pending approval requests."""
-        return [
-            {"approval_id": aid, **info}
-            for aid, info in self._pending_approvals.items()
-            if info.get("status") == "pending"
-        ]
+        return self._tool_coordinator.get_pending_approvals()
 
     async def approve_tool(self, approval_id: str) -> ToolResult:
         """Approve and execute a pending tool call."""
-        approval = self._pending_approvals.get(approval_id)
-        if approval is None or approval.get("status") != "pending":
-            return ToolResult(success=False, output=f"No pending approval found: {approval_id}")
-
-        approval["status"] = "approved"
-        tool_name = approval["tool"]
-        arguments = approval["args"]
-        user = approval["user"]
-        channel = approval["channel"]
-
-        if self._audit_logger:
-            self._audit_logger.log_approval_request(user, channel, tool_name, "approved")
-
-        t0 = time.monotonic()
-        try:
-            # Check if this is a long-running task (no timeout)
-            is_long = (
-                tool_name == "code_delegate"
-                and arguments.get("long_running", False)
-            )
-            if isinstance(is_long, str):
-                is_long = is_long.lower() in ("true", "1", "yes")
-
-            if is_long:
-                logger.info("Executing approved %s with NO timeout (long_running)", tool_name)
-                result = await self._tools.execute(tool_name, arguments)
-            else:
-                timeout = self._tool_timeout
-                if tool_name == "code_delegate":
-                    timeout = max(timeout, 600)
-                result = await asyncio.wait_for(
-                    self._tools.execute(tool_name, arguments),
-                    timeout=timeout,
-                )
-        except asyncio.TimeoutError:
-            result = ToolResult(success=False, output=f"Tool execution timed out after {self._tool_timeout}s.")
-        except Exception as e:
-            logger.exception(f"Tool execution error during approval: {tool_name}")
-            result = ToolResult(success=False, output=f"Tool execution error: {e}")
-
-        duration_ms = (time.monotonic() - t0) * 1000
-        if self._audit_logger:
-            self._audit_logger.log_tool_call(
-                user, channel, tool_name, arguments,
-                result.output, result.success, duration_ms,
-            )
-
-        return result
+        return await self._tool_coordinator.approve_tool(approval_id)
 
     def deny_tool(self, approval_id: str) -> None:
         """Deny a pending tool call."""
-        approval = self._pending_approvals.get(approval_id)
-        if approval is not None:
-            user = approval.get("user", "")
-            channel = approval.get("channel", "")
-            tool_name = approval.get("tool", "")
-            approval["status"] = "denied"
-            if self._audit_logger:
-                self._audit_logger.log_approval_request(user, channel, tool_name, "denied")
+        self._tool_coordinator.deny_tool(approval_id)
 
     async def resume_after_approval(
         self, approval_id: str, result: ToolResult,
@@ -387,8 +337,7 @@ class CoreAgent:
         tools = self._filter_relevant_tools(all_tools, message, intent=intent)
 
         # Track recent tool calls for loop detection
-        _recent_tool_calls: list[tuple[str, str]] = []  # [(tool_name, args_hash), ...]
-        _LOOP_THRESHOLD = 3  # same call repeated N times = loop
+        _recent_tool_calls: list[tuple[str, str]] = []
 
         for turn in range(self._max_turns):
             # Apply conversation summarization or token trimming
@@ -463,26 +412,12 @@ class CoreAgent:
                 return final_content
 
             # Detect tool call loops (same tool+args repeated)
-            import hashlib as _hl
-            for tc in response.tool_calls:
-                args_hash = _hl.md5(
-                    json.dumps(tc.arguments, sort_keys=True, default=str).encode()
-                ).hexdigest()[:8]
-                _recent_tool_calls.append((tc.name, args_hash))
-
-            # Check if the last N calls are identical
-            if len(_recent_tool_calls) >= _LOOP_THRESHOLD:
-                last_n = _recent_tool_calls[-_LOOP_THRESHOLD:]
-                if len(set(last_n)) == 1:
-                    loop_tool = last_n[0][0]
-                    logger.warning("Tool call loop detected: %s called %d times with same args",
-                                   loop_tool, _LOOP_THRESHOLD)
-                    loop_msg = (
-                        f"동일한 도구({loop_tool})가 같은 인자로 {_LOOP_THRESHOLD}회 반복 "
-                        f"호출되어 중단합니다. 다른 방법을 시도해주세요."
-                    )
-                    self._conversation.store_assistant_message(session_id, loop_msg)
-                    return loop_msg
+            loop_msg = self._tool_coordinator.detect_loop(
+                _recent_tool_calls, response.tool_calls,
+            )
+            if loop_msg:
+                self._conversation.store_assistant_message(session_id, loop_msg)
+                return loop_msg
 
             # Process tool calls — add assistant message, then delegate to ToolExecutor
             assistant_msg = LLMMessage(
@@ -590,52 +525,7 @@ class CoreAgent:
     def _filter_relevant_tools(
         self, tools: list, message: str, max_tools: int = 30, intent=None,
     ) -> list:
-        """Filter tools to a relevant subset based on message content and intent.
-
-        Uses intent category to prioritize tools that match the user's goal,
-        then falls back to keyword overlap scoring for remaining slots.
-        """
-        ALWAYS_INCLUDE = {
-            "shell_exec", "web_search", "file_read", "file_write",
-            "browser", "mcp_search", "mcp_install", "mcp_list",
-            "skill_manage", "memory_save", "memory_search",
-            "swarm_role", "messenger_connect", "network_scan", "router_manage",
-            "task_create", "task_list", "event_create", "event_list",
-            "reminder_set",
-        }
-
-        if len(tools) <= max_tools:
-            return tools
-
-        # Add intent-hinted tools to essential set
-        intent_hints = set()
-        if intent is not None:
-            intent_hints = intent.tool_hints
-
-        essential = []
-        candidates = []
-        msg_lower = message.lower()
-
-        for t in tools:
-            if t.name in ALWAYS_INCLUDE or t.name in intent_hints:
-                essential.append(t)
-            else:
-                # Score by name/description overlap + intent bonus
-                score = 0
-                name_words = set(t.name.lower().replace("_", " ").split())
-                desc_words = set((t.description or "").lower().split())
-                msg_words = set(msg_lower.split())
-                score = len(msg_words & name_words) * 3 + len(msg_words & desc_words)
-
-                # Boost tools whose description matches intent keywords
-                if intent is not None:
-                    intent_kw_set = set(intent.keywords)
-                    score += len(intent_kw_set & name_words) * 2
-                    score += len(intent_kw_set & desc_words)
-
-                candidates.append((score, t))
-
-        candidates.sort(key=lambda x: x[0], reverse=True)
-        remaining_slots = max(0, max_tools - len(essential))
-        selected = essential + [t for _, t in candidates[:remaining_slots]]
-        return selected
+        """Filter tools to a relevant subset based on message content and intent."""
+        return self._tool_coordinator.filter_relevant_tools(
+            tools, message, max_tools=max_tools, intent=intent,
+        )
