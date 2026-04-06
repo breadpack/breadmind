@@ -423,6 +423,8 @@
     <link rel="stylesheet" href="/static/css/personal.css">
     <link rel="stylesheet" href="/static/css/glass-theme.css">
     <link rel="stylesheet" href="/static/css/chat.css">
+    <link rel="stylesheet" href="/static/css/webhook.css">
+    <link rel="stylesheet" href="/static/css/sidebar.css">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
     <script>
@@ -672,9 +674,11 @@
                     <button class="sub-tab" onclick="switchSettingsTab('agents')" id="stab-agents">Agents</button>
                     <button class="sub-tab" onclick="switchSettingsTab('system')" id="stab-system">System</button>
                     <button class="sub-tab" onclick="switchSettingsTab('integrations')" id="stab-integrations">🔗 Integrations</button>
+                    <button class="sub-tab" onclick="switchSettingsTab('webhook')" id="stab-webhook">Webhook</button>
                 </div>
                 <div id="settingsContent" style="flex:1;overflow-y:auto;padding:16px;"><div class="settings-section"><h3>Loading...</h3></div></div>
                 <div id="settings-integrations" style="display:none;flex:1;overflow-y:auto;padding:16px;"><div id="integrations-content"></div></div>
+                <div id="settings-webhook" style="display:none;flex:1;overflow-y:auto;padding:16px;"><div id="webhook-content"></div></div>
             </div>
         </div>
     </div>
@@ -1529,13 +1533,21 @@
             localStorage.setItem('breadmind_stab', tab);
             document.querySelectorAll('.sub-tab').forEach(b => b.classList.toggle('active', b.id === 'stab-' + tab));
             const integrationsPanel = document.getElementById('settings-integrations');
+            const webhookPanel = document.getElementById('settings-webhook');
             if (tab === 'integrations') {
                 document.getElementById('settingsContent').style.display = 'none';
                 integrationsPanel.style.display = '';
+                webhookPanel.style.display = 'none';
                 initIntegrationsTab();
+            } else if (tab === 'webhook') {
+                document.getElementById('settingsContent').style.display = 'none';
+                integrationsPanel.style.display = 'none';
+                webhookPanel.style.display = '';
+                if (typeof initWebhookTab === 'function') initWebhookTab();
             } else {
                 document.getElementById('settingsContent').style.display = '';
                 integrationsPanel.style.display = 'none';
+                webhookPanel.style.display = 'none';
                 document.querySelectorAll('#settingsContent .settings-section').forEach(s => {
                     s.style.display = s.dataset.stab === tab ? '' : 'none';
                 });
@@ -3371,6 +3383,7 @@
     <script src="/static/js/integrations.js"></script>
     <script src="/static/js/plugins.js?v=7"></script>
     <script src="/static/js/quick-actions.js"></script>
+    <script src="/static/js/webhook.js"></script>
     <script src="/static/js/chat.js"></script>
 </body>
 </html>

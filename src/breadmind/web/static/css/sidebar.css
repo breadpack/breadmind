@@ -1,0 +1,545 @@
+/* =============================================================================
+   BreadMind Sidebar — Layout Foundation
+   ============================================================================= */
+
+/* --- Sidebar Variables --- */
+:root {
+    --sidebar-width: 220px;
+    --sidebar-width-collapsed: 56px;
+    --sidebar-bg: rgba(12, 15, 28, 0.97);
+    --sidebar-border: rgba(255, 255, 255, 0.06);
+    --sidebar-item-height: 36px;
+    --sidebar-item-radius: 8px;
+    --sidebar-icon-size: 18px;
+}
+
+/* =============================================================================
+   App Layout
+   ============================================================================= */
+
+.app-layout {
+    display: flex;
+    flex-direction: row;
+    height: 100vh;
+    overflow: hidden;
+}
+
+/* =============================================================================
+   Sidebar
+   ============================================================================= */
+
+.app-sidebar {
+    width: var(--sidebar-width);
+    min-width: var(--sidebar-width);
+    background: var(--sidebar-bg);
+    border-right: 1px solid var(--sidebar-border);
+    display: flex;
+    flex-direction: column;
+    transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+                min-width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    overflow: hidden;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    z-index: 100;
+    flex-shrink: 0;
+}
+
+.app-sidebar.collapsed {
+    width: var(--sidebar-width-collapsed);
+    min-width: var(--sidebar-width-collapsed);
+}
+
+/* --- Sidebar Header --- */
+
+.sidebar-header {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 12px;
+    border-bottom: 1px solid var(--sidebar-border);
+    min-height: 52px;
+    flex-shrink: 0;
+}
+
+.sidebar-logo {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: var(--sidebar-icon-size);
+}
+
+.sidebar-brand {
+    flex: 1;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    background: var(--accent-gradient);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    white-space: nowrap;
+    overflow: hidden;
+    opacity: 1;
+    transition: opacity 0.2s ease, width 0.2s ease;
+}
+
+.app-sidebar.collapsed .sidebar-brand {
+    opacity: 0;
+    width: 0;
+    pointer-events: none;
+}
+
+.sidebar-toggle {
+    background: none;
+    border: none;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: var(--transition);
+    transform: rotate(0deg);
+    font-size: 16px;
+}
+
+.sidebar-toggle:hover {
+    color: var(--text-primary);
+    background: var(--glass-bg-hover);
+}
+
+.app-sidebar.collapsed .sidebar-toggle {
+    transform: rotate(180deg);
+}
+
+/* --- Sidebar Navigation --- */
+
+.sidebar-nav {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--sidebar-border) transparent;
+}
+
+.sidebar-nav::-webkit-scrollbar {
+    width: 4px;
+}
+
+.sidebar-nav::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.sidebar-nav::-webkit-scrollbar-thumb {
+    background: var(--sidebar-border);
+    border-radius: 2px;
+}
+
+/* --- Sidebar Group --- */
+
+.sidebar-group {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    margin-bottom: 4px;
+}
+
+.sidebar-group-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-tertiary);
+    padding: 6px 10px 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    transition: font-size 0.2s ease, opacity 0.2s ease, padding 0.2s ease;
+}
+
+.app-sidebar.collapsed .sidebar-group-label {
+    font-size: 0;
+    opacity: 0;
+    padding-top: 2px;
+    padding-bottom: 2px;
+}
+
+/* --- Sidebar Items --- */
+
+.sidebar-item {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    height: var(--sidebar-item-height);
+    padding: 0 10px;
+    border-radius: var(--sidebar-item-radius);
+    cursor: pointer;
+    position: relative;
+    text-decoration: none;
+    color: var(--text-secondary);
+    transition: background 0.15s ease, color 0.15s ease;
+    white-space: nowrap;
+    overflow: hidden;
+    user-select: none;
+}
+
+.sidebar-item:hover {
+    background: var(--glass-bg-hover);
+    color: var(--text-primary);
+}
+
+.sidebar-item.active {
+    background: rgba(99, 102, 241, 0.12);
+    color: var(--accent-light);
+}
+
+.sidebar-item.active::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 3px;
+    height: 20px;
+    background: var(--accent);
+    border-radius: 0 2px 2px 0;
+}
+
+/* --- Sidebar Icon --- */
+
+.sidebar-icon {
+    width: 20px;
+    min-width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: var(--sidebar-icon-size);
+    flex-shrink: 0;
+}
+
+/* --- Sidebar Label --- */
+
+.sidebar-label {
+    flex: 1;
+    font-size: 13px;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.app-sidebar.collapsed .sidebar-label {
+    display: none;
+}
+
+/* --- Sidebar Badge --- */
+
+.sidebar-badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 10px;
+    background: var(--error);
+    color: #fff;
+    line-height: 1.4;
+    flex-shrink: 0;
+}
+
+.app-sidebar.collapsed .sidebar-badge {
+    display: none;
+}
+
+/* --- Sidebar Divider --- */
+
+.sidebar-divider {
+    height: 1px;
+    background: var(--sidebar-border);
+    margin: 6px 8px;
+    flex-shrink: 0;
+}
+
+/* --- Sidebar Footer --- */
+
+.sidebar-footer {
+    padding: 10px 12px;
+    border-top: 1px solid var(--sidebar-border);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex-shrink: 0;
+    overflow: hidden;
+}
+
+.sidebar-version {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.app-sidebar.collapsed .sidebar-footer {
+    align-items: center;
+}
+
+.app-sidebar.collapsed .sidebar-version {
+    display: none;
+}
+
+/* =============================================================================
+   Collapsed Tooltips
+   ============================================================================= */
+
+.app-sidebar.collapsed .sidebar-item[data-tooltip]:hover::after {
+    content: attr(data-tooltip);
+    position: fixed;
+    left: calc(var(--sidebar-width-collapsed) + 8px);
+    background: rgba(15, 17, 32, 0.96);
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 5px 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--sidebar-border);
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 9999;
+    backdrop-filter: blur(12px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+/* =============================================================================
+   Main Content Area
+   ============================================================================= */
+
+.app-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 0;
+}
+
+/* =============================================================================
+   Pages (replaces .tab-content)
+   ============================================================================= */
+
+.page {
+    display: none;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+}
+
+.page.active {
+    display: flex;
+}
+
+/* =============================================================================
+   Page Sub-Tabs
+   ============================================================================= */
+
+.page-tabs {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--glass-border);
+    background: var(--glass-bg);
+    flex-shrink: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.page-tabs::-webkit-scrollbar {
+    display: none;
+}
+
+.page-tab {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    background: none;
+    border: none;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s ease, color 0.15s ease;
+    user-select: none;
+}
+
+.page-tab:hover {
+    background: var(--glass-bg-hover);
+    color: var(--text-primary);
+}
+
+.page-tab.active {
+    background: rgba(99, 102, 241, 0.15);
+    color: var(--accent-light);
+}
+
+/* --- Page Panel (sub-tab content) --- */
+
+.page-panel {
+    display: none;
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.page-panel.active {
+    display: block;
+}
+
+/* =============================================================================
+   Mobile Menu Button
+   ============================================================================= */
+
+.mobile-menu-btn {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-sm);
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 18px;
+    transition: var(--transition);
+    flex-shrink: 0;
+}
+
+.mobile-menu-btn:hover {
+    background: var(--glass-bg-hover);
+    color: var(--text-primary);
+}
+
+/* =============================================================================
+   Mobile Overlay
+   ============================================================================= */
+
+.mobile-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 99;
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+}
+
+/* =============================================================================
+   Responsive — Large Desktop Collapse (1200px)
+   ============================================================================= */
+
+@media (max-width: 1200px) {
+    .app-sidebar {
+        width: var(--sidebar-width-collapsed);
+        min-width: var(--sidebar-width-collapsed);
+    }
+
+    .app-sidebar .sidebar-brand {
+        opacity: 0;
+        width: 0;
+        pointer-events: none;
+    }
+
+    .app-sidebar .sidebar-group-label {
+        font-size: 0;
+        opacity: 0;
+        padding-top: 2px;
+        padding-bottom: 2px;
+    }
+
+    .app-sidebar .sidebar-label {
+        display: none;
+    }
+
+    .app-sidebar .sidebar-badge {
+        display: none;
+    }
+
+    .app-sidebar .sidebar-toggle {
+        transform: rotate(180deg);
+    }
+
+    .app-sidebar .sidebar-version {
+        display: none;
+    }
+}
+
+/* =============================================================================
+   Responsive — Mobile (768px)
+   ============================================================================= */
+
+@media (max-width: 768px) {
+    .mobile-menu-btn {
+        display: flex;
+    }
+
+    .app-sidebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        height: 100vh;
+        width: var(--sidebar-width) !important;
+        min-width: var(--sidebar-width) !important;
+        transform: translateX(-100%);
+        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        z-index: 200;
+    }
+
+    .app-sidebar.mobile-open {
+        transform: translateX(0);
+    }
+
+    .app-sidebar.mobile-open .sidebar-brand {
+        opacity: 1;
+        width: auto;
+        pointer-events: auto;
+    }
+
+    .app-sidebar.mobile-open .sidebar-group-label {
+        font-size: 10px;
+        opacity: 1;
+        padding: 6px 10px 4px;
+    }
+
+    .app-sidebar.mobile-open .sidebar-label {
+        display: block;
+    }
+
+    .app-sidebar.mobile-open .sidebar-badge {
+        display: inline-block;
+    }
+
+    .app-sidebar.mobile-open .sidebar-version {
+        display: block;
+    }
+
+    .mobile-overlay.active {
+        display: block;
+    }
+
+    .app-main {
+        width: 100%;
+    }
+}
