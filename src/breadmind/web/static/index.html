@@ -1140,77 +1140,6 @@
                 html += `<div class="section-footer"><button class="save-btn" id="btn-persona" onclick="savePersona()">Save</button></div>`;
                 html += `</div>`;
 
-                // Token Usage
-                html += `<div class="settings-section" data-stab="general"><h3>Token Usage</h3>`;
-                const u = usage.usage || {};
-                if (Object.keys(u).length > 0) {
-                    html += `<div class="usage-grid">`;
-                    if (u.input_tokens !== undefined) html += `<div class="usage-card"><div class="label">Input Tokens</div><div class="value">${u.input_tokens.toLocaleString()}</div></div>`;
-                    if (u.output_tokens !== undefined) html += `<div class="usage-card"><div class="label">Output Tokens</div><div class="value">${u.output_tokens.toLocaleString()}</div></div>`;
-                    if (u.cache_tokens !== undefined) html += `<div class="usage-card"><div class="label">Cache Tokens</div><div class="value">${u.cache_tokens.toLocaleString()}</div></div>`;
-                    if (u.total_cost !== undefined) html += `<div class="usage-card"><div class="label">Total Cost</div><div class="value">$${u.total_cost.toFixed(4)}</div></div>`;
-                    html += `</div>`;
-                } else {
-                    html += `<div class="no-data">No usage data available.</div>`;
-                }
-                html += `</div>`;
-
-                // Audit Log
-                html += `<div class="settings-section" data-stab="general"><h3>Recent Audit Log</h3>`;
-                const entries = (audit.entries || []).slice(0, 20);
-                if (entries.length > 0) {
-                    html += `<div class="audit-list">`;
-                    entries.forEach(e => {
-                        const time = e.timestamp ? new Date(e.timestamp).toLocaleString() : '';
-                        const action = e.action || e.tool_name || JSON.stringify(e);
-                        const user = e.user || '';
-                        html += `<div class="audit-entry"><span class="audit-action">${escapeHtml(String(action))}${user ? ' by ' + escapeHtml(user) : ''}</span><span class="audit-time">${time}</span></div>`;
-                    });
-                    html += `</div>`;
-                } else {
-                    html += `<div class="no-data">No audit log entries.</div>`;
-                }
-                html += `</div>`;
-
-                // Tool Metrics
-                html += `<div class="settings-section" data-stab="general"><h3>Tool Metrics</h3>`;
-                const m = metrics.metrics || {};
-                const toolEntries = Object.entries(m);
-                if (toolEntries.length > 0) {
-                    const sorted = toolEntries.sort((a, b) => (b[1].call_count || 0) - (a[1].call_count || 0)).slice(0, 10);
-                    html += `<table class="metrics-table"><thead><tr><th>Tool</th><th>Calls</th><th>Success Rate</th><th>Avg Time</th></tr></thead><tbody>`;
-                    sorted.forEach(([name, data]) => {
-                        const rate = data.call_count > 0 ? ((data.success_count || 0) / data.call_count * 100) : 0;
-                        const rateClass = rate >= 90 ? 'good' : rate >= 70 ? 'warn' : 'bad';
-                        const avgTime = data.avg_duration_ms !== undefined ? data.avg_duration_ms.toFixed(0) + 'ms' : '-';
-                        html += `<tr><td>${escapeHtml(name)}</td><td>${data.call_count || 0}</td><td class="success-rate ${rateClass}">${rate.toFixed(0)}%</td><td>${avgTime}</td></tr>`;
-                    });
-                    html += `</tbody></table>`;
-                } else {
-                    html += `<div class="no-data">No tool metrics available.</div>`;
-                }
-                html += `</div>`;
-
-                // Pending Approvals
-                html += `<div class="settings-section" data-stab="safety"><h3>Pending Approvals</h3>`;
-                const apps = approvals.approvals || [];
-                if (apps.length > 0) {
-                    apps.forEach(a => {
-                        const toolName = a.tool_name || a.name || 'Unknown';
-                        const detail = a.arguments ? JSON.stringify(a.arguments) : (a.detail || '');
-                        html += `<div class="approval-card">
-                            <div class="approval-info"><div class="approval-tool">${escapeHtml(toolName)}</div><div class="approval-detail">${escapeHtml(detail)}</div></div>
-                            <div class="approval-actions">
-                                <button class="btn-approve" onclick="handleApproval('${a.id}', 'approve')">Approve</button>
-                                <button class="btn-deny" onclick="handleApproval('${a.id}', 'deny')">Deny</button>
-                            </div>
-                        </div>`;
-                    });
-                } else {
-                    html += `<div class="no-data">No pending approvals.</div>`;
-                }
-                html += `</div>`;
-
                 // API Keys
                 const keys = apiKeys.keys || {};
                 html += `<div class="settings-section" data-stab="general"><h3>API Keys</h3>`;
@@ -3368,6 +3297,7 @@
         // Show onboarding tour for first-time visitors
         setTimeout(function() { if (typeof checkOnboarding === 'function') checkOnboarding(); }, 1000);
     </script>
+    <script src="/static/js/monitoring-page.js"></script>
     <script src="/static/js/automation.js"></script>
     <script src="/static/js/sidebar.js"></script>
     <script src="/static/js/toast.js"></script>
