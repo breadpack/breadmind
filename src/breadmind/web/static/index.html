@@ -733,15 +733,9 @@
                     <button class="sub-tab active" onclick="switchSettingsTab('general')" id="stab-general">General</button>
                     <button class="sub-tab" onclick="switchSettingsTab('prompts')" id="stab-prompts">Prompts</button>
                     <button class="sub-tab" onclick="switchSettingsTab('safety')" id="stab-safety">Safety</button>
-                    <button class="sub-tab" onclick="switchSettingsTab('messenger')" id="stab-messenger">Messenger</button>
-                    <button class="sub-tab" onclick="switchSettingsTab('agents')" id="stab-agents">Agents</button>
                     <button class="sub-tab" onclick="switchSettingsTab('system')" id="stab-system">System</button>
-                    <button class="sub-tab" onclick="switchSettingsTab('integrations')" id="stab-integrations">🔗 Integrations</button>
-                    <button class="sub-tab" onclick="switchSettingsTab('webhook')" id="stab-webhook">Webhook</button>
                 </div>
                 <div id="settingsContent" style="flex:1;overflow-y:auto;padding:16px;"><div class="settings-section"><h3>Loading...</h3></div></div>
-                <div id="settings-integrations" style="display:none;flex:1;overflow-y:auto;padding:16px;"><div id="integrations-content"></div></div>
-                <div id="settings-webhook" style="display:none;flex:1;overflow-y:auto;padding:16px;"><div id="webhook-content"></div></div>
             </div>
         </div>
     </div><!-- /.main -->
@@ -1304,11 +1298,6 @@
                 html += `<div class="section-footer"><button class="save-btn" id="btn-monitoring-rules" onclick="saveMonitoringRules()">Save</button></div>`;
                 html += `</div>`;
 
-                // Messenger Connections
-                html += `<div class="settings-section" data-stab="messenger"><h3>Messenger Connections</h3>`;
-                html += `<div id="messenger-platforms-container"><div class="no-data">Loading messenger platforms...</div></div>`;
-                html += `</div>`;
-
                 // Tool Security
                 html += `<div class="settings-section" data-stab="safety"><h3>Tool Security</h3>`;
                 html += `<div class="setting-row" style="flex-direction:column;align-items:flex-start;">
@@ -1434,26 +1423,10 @@
             _currentSettingsTab = tab;
             localStorage.setItem('breadmind_stab', tab);
             document.querySelectorAll('.sub-tab').forEach(b => b.classList.toggle('active', b.id === 'stab-' + tab));
-            const integrationsPanel = document.getElementById('settings-integrations');
-            const webhookPanel = document.getElementById('settings-webhook');
-            if (tab === 'integrations') {
-                document.getElementById('settingsContent').style.display = 'none';
-                integrationsPanel.style.display = '';
-                webhookPanel.style.display = 'none';
-                initIntegrationsTab();
-            } else if (tab === 'webhook') {
-                document.getElementById('settingsContent').style.display = 'none';
-                integrationsPanel.style.display = 'none';
-                webhookPanel.style.display = '';
-                if (typeof initWebhookTab === 'function') initWebhookTab();
-            } else {
-                document.getElementById('settingsContent').style.display = '';
-                integrationsPanel.style.display = 'none';
-                webhookPanel.style.display = 'none';
-                document.querySelectorAll('#settingsContent .settings-section').forEach(s => {
-                    s.style.display = s.dataset.stab === tab ? '' : 'none';
-                });
-            }
+            document.getElementById('settingsContent').style.display = '';
+            document.querySelectorAll('#settingsContent .settings-section').forEach(s => {
+                s.style.display = s.dataset.stab === tab ? '' : 'none';
+            });
         }
 
         async function loadPrompts() {
@@ -3297,6 +3270,7 @@
         // Show onboarding tour for first-time visitors
         setTimeout(function() { if (typeof checkOnboarding === 'function') checkOnboarding(); }, 1000);
     </script>
+    <script src="/static/js/connections.js"></script>
     <script src="/static/js/monitoring-page.js"></script>
     <script src="/static/js/automation.js"></script>
     <script src="/static/js/sidebar.js"></script>
