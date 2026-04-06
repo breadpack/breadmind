@@ -931,6 +931,12 @@
             const countEl = document.getElementById('eventCount');
             countEl.textContent = allEvents.length;
             countEl.className = crit > 0 ? 'count alert' : 'count';
+            var sidebarBadge = document.getElementById('sidebar-event-count');
+            if (sidebarBadge) {
+                var count = allEvents.length;
+                sidebarBadge.textContent = count;
+                sidebarBadge.style.display = count > 0 ? '' : 'none';
+            }
         }
 
         function filterEvents(severity, btn) {

@@ -26,7 +26,7 @@
 
     // Expose refresh function for WebSocket-triggered updates
     window.refreshPersonalTab = function() {
-        const personalTab = document.getElementById('tab-personal');
+        const personalTab = document.getElementById('page-assistant');
         if (personalTab && personalTab.style.display !== 'none') {
             loadView(currentView);
         }
@@ -131,7 +131,7 @@
                 <p>새 일정을 추가하거나 Google Calendar을 연결하세요</p>
                 <div class="empty-actions">
                     <button class="btn-primary" onclick="document.getElementById('personal-add-btn').click()">+ 일정 추가</button>
-                    <button class="btn-secondary" onclick="switchTab('settings'); setTimeout(()=>switchSettingsTab('integrations'),100);">서비스 연결</button>
+                    <button class="btn-secondary" onclick="switchPage('connections');">서비스 연결</button>
                 </div>
                 <p class="empty-hint">채팅: <code>/event 회의 --at 15:00</code></p>
             </div>`;
@@ -374,7 +374,7 @@
     // Auto-refresh when browser tab regains focus
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden) {
-            const personalTab = document.getElementById('tab-personal');
+            const personalTab = document.getElementById('page-assistant');
             if (personalTab && personalTab.style.display !== 'none') {
                 loadView(currentView);
             }

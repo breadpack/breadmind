@@ -128,7 +128,7 @@
                 </ul>
                 <div class="modal-actions">
                     <button class="btn-secondary" onclick="closeModal()">닫기</button>
-                    <button class="btn-primary" onclick="closeModal(); switchTab('personal');">비서 탭으로 이동</button>
+                    <button class="btn-primary" onclick="closeModal(); switchPage('assistant');">비서 탭으로 이동</button>
                 </div>
             </div>
         `;

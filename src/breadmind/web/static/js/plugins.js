@@ -180,7 +180,7 @@
     };
 
     window.pluginToggle = function(view, btn) {
-        document.querySelectorAll('#tab-plugins .store-toggle button').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('#page-plugins .store-toggle button').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         document.getElementById('plugin-categories').style.display = view === 'browse' ? '' : 'none';
         document.getElementById('plugin-results').style.display = 'none';
