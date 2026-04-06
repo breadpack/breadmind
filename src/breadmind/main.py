@@ -688,6 +688,74 @@ async def run():
                 )
                 logger.info("Commander mode initialized")
 
+            # Initialize webhook automation system
+            from breadmind.web.webhook import WebhookManager
+            webhook_manager = WebhookManager()
+            webhook_manager.set_message_handler(agent.handle_message)
+
+            webhook_automation_store = None
+            webhook_rule_engine = None
+            webhook_pipeline_executor = None
+            try:
+                from breadmind.webhook.store import WebhookAutomationStore
+                from breadmind.webhook.rule_engine import RuleEngine
+                from breadmind.webhook.pipeline_executor import PipelineExecutor
+                from breadmind.webhook.models import ActionType
+                from breadmind.webhook.actions import (
+                    AgentActionHandler, ToolActionHandler, HttpActionHandler,
+                    NotifyActionHandler, TransformActionHandler,
+                )
+
+                webhook_automation_store = WebhookAutomationStore(db=db)
+                webhook_rule_engine = RuleEngine()
+
+                action_handlers = {
+                    ActionType.SEND_TO_AGENT: AgentActionHandler(message_handler=agent.handle_message),
+                    ActionType.CALL_TOOL: ToolActionHandler(tool_registry=registry),
+                    ActionType.HTTP_REQUEST: HttpActionHandler(),
+                    ActionType.NOTIFY: NotifyActionHandler(message_router=message_router),
+                    ActionType.TRANSFORM: TransformActionHandler(),
+                }
+                webhook_pipeline_executor = PipelineExecutor(action_handlers=action_handlers)
+
+                webhook_manager.set_automation(
+                    store=webhook_automation_store,
+                    rule_engine=webhook_rule_engine,
+                    pipeline_executor=webhook_pipeline_executor,
+                )
+
+                # Load persisted rules and pipelines from DB
+                await webhook_automation_store.load()
+
+                # Load persisted webhook endpoints from DB
+                if db:
+                    try:
+                        endpoints_data = await db.get_setting("webhook_endpoints")
+                        if endpoints_data:
+                            from breadmind.web.webhook import WebhookEndpoint
+                            for ep_data in endpoints_data:
+                                ep = WebhookEndpoint(
+                                    id=ep_data["id"],
+                                    name=ep_data["name"],
+                                    path=ep_data["path"],
+                                    event_type=ep_data.get("event_type", "generic"),
+                                    action=ep_data.get("action", "Webhook: {payload}"),
+                                    enabled=ep_data.get("enabled", True),
+                                    secret=ep_data.get("secret", ""),
+                                    fallback_strategy=ep_data.get("fallback_strategy", "forward_to_agent"),
+                                    fallback_pipeline_id=ep_data.get("fallback_pipeline_id", ""),
+                                    permission_level=ep_data.get("permission_level", "standard"),
+                                )
+                                webhook_manager.add_endpoint(ep)
+                    except Exception as e:
+                        logger.debug("No persisted webhook endpoints: %s", e)
+
+                logger.info("Webhook automation initialized (%d rules, %d pipelines)",
+                    len(webhook_automation_store.list_rules()),
+                    len(webhook_automation_store.list_pipelines()))
+            except Exception as e:
+                logger.warning("Webhook automation not available: %s", e)
+
             # Periodic flush of expansion data
             async def _flush_expansion_data():
                 while True:
@@ -818,6 +886,10 @@ async def run():
                 bg_job_manager=bg_job_manager,
                 embedding_service=memory_components.get("embedding_service"),
                 plugin_mgr=plugin_mgr,
+                webhook_manager=webhook_manager,
+                webhook_automation_store=webhook_automation_store,
+                webhook_rule_engine=webhook_rule_engine,
+                webhook_pipeline_executor=webhook_pipeline_executor,
             )
             # Expose personal assistant components to web routes
             if memory_components.get("adapter_registry"):
