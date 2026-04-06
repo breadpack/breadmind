@@ -52,6 +52,9 @@ class AppContext:
     # Messaging & Routing
     message_router: Any = None
     webhook_manager: Any = None
+    webhook_automation_store: Any = None
+    webhook_rule_engine: Any = None
+    webhook_pipeline_executor: Any = None
     messenger_security: Any = None
     lifecycle_manager: Any = None
     orchestrator: Any = None

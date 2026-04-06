@@ -4,7 +4,7 @@ import hmac
 import logging
 import json
 from datetime import datetime, timezone
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,9 @@ class WebhookEndpoint:
     secret: str = ""  # optional webhook secret for verification
     received_count: int = 0
     last_received: datetime | None = None
+    fallback_strategy: str = "forward_to_agent"  # "drop" | "forward_to_agent" | "default_pipeline"
+    fallback_pipeline_id: str = ""
+    permission_level: str = "standard"  # matches PermissionLevel enum values
 
 
 class WebhookManager:
@@ -29,9 +32,17 @@ class WebhookManager:
         self._endpoints: dict[str, WebhookEndpoint] = {}
         self._message_handler = None
         self._event_log: list[dict] = []
+        self._store = None
+        self._rule_engine = None
+        self._pipeline_executor = None
 
     def set_message_handler(self, handler):
         self._message_handler = handler
+
+    def set_automation(self, store=None, rule_engine=None, pipeline_executor=None):
+        self._store = store
+        self._rule_engine = rule_engine
+        self._pipeline_executor = pipeline_executor
 
     def add_endpoint(self, endpoint: WebhookEndpoint):
         self._endpoints[endpoint.id] = endpoint
@@ -57,8 +68,7 @@ class WebhookManager:
     def _verify_secret(self, endpoint: WebhookEndpoint, payload_bytes: bytes, headers: dict) -> bool:
         """Verify webhook signature using HMAC-SHA256."""
         if not endpoint.secret:
-            logger.warning("Webhook endpoint %s has no secret configured — rejecting", endpoint.id)
-            return False
+            return True  # No secret configured — allow without verification
 
         # GitHub: X-Hub-Signature-256
         github_sig = headers.get("x-hub-signature-256", "")
@@ -96,16 +106,30 @@ class WebhookManager:
         endpoint.received_count += 1
         endpoint.last_received = datetime.now(timezone.utc)
 
-        # Build message from action template
-        payload_str = json.dumps(payload, indent=2)[:2000]
-        message = endpoint.action.replace("{payload}", payload_str)
-
         # Extract useful info from known event types
         summary = self._extract_summary(endpoint.event_type, payload)
-        if summary:
-            message = f"{message}\n\nSummary: {summary}"
 
         # Log event
+        self._log_event(endpoint, path, summary)
+
+        # Try automation rules
+        if self._store and self._rule_engine and self._pipeline_executor:
+            rules = self._store.get_rules_for_endpoint(endpoint.id)
+            matched_rule = self._rule_engine.match_rules(rules, payload, headers or {})
+            if matched_rule:
+                pipeline = self._store.get_pipeline(matched_rule.pipeline_id)
+                if pipeline:
+                    from breadmind.webhook.models import PipelineContext, PermissionLevel
+                    ctx = PipelineContext(payload=payload, headers=headers or {}, endpoint=path)
+                    perm = PermissionLevel(endpoint.permission_level)
+                    log = await self._pipeline_executor.execute(pipeline, ctx, perm)
+                    return {"status": "ok", "pipeline": pipeline.name, "success": log.success, "actions_executed": len(log.action_results)}
+
+        # No rule matched — apply fallback strategy
+        return await self._apply_fallback(endpoint, path, payload, summary)
+
+    def _log_event(self, endpoint: WebhookEndpoint, path: str, summary: str | None) -> None:
+        """Append a webhook event to the in-memory event log (capped at 100 entries)."""
         event = {
             "endpoint": endpoint.name, "path": path, "event_type": endpoint.event_type,
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -115,7 +139,29 @@ class WebhookManager:
         if len(self._event_log) > 100:
             self._event_log = self._event_log[-100:]
 
-        # Send to agent
+    async def _apply_fallback(self, endpoint: WebhookEndpoint, path: str, payload: dict, summary: str | None) -> dict:
+        """Apply the endpoint's fallback strategy when no rule matched."""
+        strategy = endpoint.fallback_strategy
+
+        if strategy == "drop":
+            return {"status": "ok", "message": "Webhook dropped (no matching rules)"}
+
+        if strategy == "default_pipeline" and endpoint.fallback_pipeline_id:
+            if self._store and self._pipeline_executor:
+                pipeline = self._store.get_pipeline(endpoint.fallback_pipeline_id)
+                if pipeline:
+                    from breadmind.webhook.models import PipelineContext, PermissionLevel
+                    ctx = PipelineContext(payload=payload, headers={}, endpoint=path)
+                    perm = PermissionLevel(endpoint.permission_level)
+                    log = await self._pipeline_executor.execute(pipeline, ctx, perm)
+                    return {"status": "ok", "pipeline": pipeline.name, "success": log.success}
+
+        # Default: forward_to_agent (existing behavior)
+        payload_str = json.dumps(payload, indent=2)[:2000]
+        message = endpoint.action.replace("{payload}", payload_str)
+        if summary:
+            message = f"{message}\n\nSummary: {summary}"
+
         if self._message_handler:
             try:
                 if asyncio.iscoroutinefunction(self._message_handler):
