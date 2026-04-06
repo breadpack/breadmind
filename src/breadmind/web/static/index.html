@@ -212,10 +212,11 @@
         .store-search input { flex:1; background:#1a2332; border:1px solid #2d3748; color:#e2e8f0; padding:10px 16px; border-radius:8px; font-size:14px; }
         .store-search button { background:#3b82f6; color:white; border:none; padding:10px 20px; border-radius:8px; cursor:pointer; }
 
-        #page-explore { display:none; padding:20px; }
-        #page-explore.active { display:flex; flex-direction:column; flex:1; overflow:hidden; }
-        #page-skills { display:none; padding:20px; }
-        #page-skills.active { display:flex; flex-direction:column; flex:1; overflow:hidden; }
+        .page-tabs { display:flex; gap:4px; padding:12px 20px 0; border-bottom:1px solid #1e293b; flex-shrink:0; }
+        .page-tab { background:none; border:none; color:#64748b; padding:8px 16px; cursor:pointer; font-size:14px; border-bottom:2px solid transparent; margin-bottom:-1px; transition:color 0.2s,border-color 0.2s; }
+        .page-tab:hover { color:#e2e8f0; }
+        .page-tab.active { color:#3b82f6; border-bottom-color:#3b82f6; }
+        .page-panel { display:flex; flex-direction:column; flex:1; overflow:hidden; padding:20px; min-height:0; }
 
         .store-content { display:flex; gap:16px; flex:1; overflow:hidden; min-height:0; }
         .store-left { width:45%; overflow-y:auto; min-height:0; }
@@ -627,79 +628,87 @@
                 </div>
             </div>
         </div>
-        <!-- MCP Store Tab -->
+        <!-- Explore Page (MCP + Skills + Plugins) -->
         <div class="page" id="page-explore" style="flex-direction:column;">
-            <div class="store-search">
-                <input type="text" id="mcp-search-input" placeholder="Search MCP servers..." />
-                <button onclick="searchMCP()">Search</button>
+            <div class="page-tabs">
+                <button class="page-tab active" data-subtab="mcp" onclick="switchPageTab('explore','mcp')">MCP Servers</button>
+                <button class="page-tab" data-subtab="skills" onclick="switchPageTab('explore','skills')">Skills</button>
+                <button class="page-tab" data-subtab="plugins" onclick="switchPageTab('explore','plugins')">Plugins</button>
             </div>
-            <div class="store-content">
-                <div class="store-left">
+            <!-- MCP Servers panel -->
+            <div class="page-panel" id="subtab-explore-mcp">
+                <div class="store-search">
+                    <input type="text" id="mcp-search-input" placeholder="Search MCP servers..." />
+                    <button onclick="searchMCP()">Search</button>
+                </div>
+                <div class="store-content">
+                    <div class="store-left">
+                        <div class="store-toggle">
+                            <button class="active" onclick="showStoreSection('results')">Search Results</button>
+                            <button onclick="showStoreSection('installed')">Installed</button>
+                        </div>
+                        <div class="store-toggle" id="source-filter" style="margin-bottom:8px;">
+                            <button class="cat-btn active" onclick="filterSource('', this)">All</button>
+                            <button class="cat-btn" onclick="filterSource('mcp_registry', this)">✅ Verified</button>
+                            <button class="cat-btn" onclick="filterSource('clawhub', this)">🐾 ClawHub</button>
+                        </div>
+                        <div id="store-categories"></div>
+                        <div id="store-results"></div>
+                        <div id="store-installed" style="display:none"></div>
+                    </div>
+                    <div class="store-right" id="install-panel">
+                        <h3>Install Assistant</h3>
+                        <div id="install-messages">
+                            <div class="install-welcome">Select a server to install</div>
+                        </div>
+                        <div id="install-actions" style="display:none"></div>
+                    </div>
+                </div>
+            </div>
+            <!-- Skills panel -->
+            <div class="page-panel" id="subtab-explore-skills" style="display:none">
+                <div class="store-search">
+                    <input type="text" id="skill-search-input" placeholder="Search AI skills..." />
+                    <button onclick="searchSkills()">Search</button>
+                </div>
+                <div class="store-content">
+                    <div class="store-left">
+                        <div id="skill-categories"></div>
+                        <div id="skill-results"></div>
+                    </div>
+                    <div class="store-right">
+                        <h3>Skill Details</h3>
+                        <div id="skill-detail">
+                            <div class="install-welcome">Select a skill to view details</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- Plugins panel -->
+            <div class="page-panel" id="subtab-explore-plugins" style="display:none">
+                <div style="padding:16px 16px 8px 16px;display:flex;gap:8px;">
+                    <input type="text" id="plugin-search-input" placeholder="플러그인 검색..." style="flex:1;background:#1a2332;border:1px solid #2d3748;color:#e2e8f0;padding:10px 16px;border-radius:8px;font-size:14px;" onkeydown="if(event.key==='Enter')searchPlugins()">
+                    <button onclick="searchPlugins()" style="background:#3b82f6;color:white;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;">Search</button>
+                </div>
+                <div style="padding:4px 16px 8px 16px;">
                     <div class="store-toggle">
-                        <button class="active" onclick="showStoreSection('results')">Search Results</button>
-                        <button onclick="showStoreSection('installed')">Installed</button>
-                    </div>
-                    <div class="store-toggle" id="source-filter" style="margin-bottom:8px;">
-                        <button class="cat-btn active" onclick="filterSource('', this)">All</button>
-                        <button class="cat-btn" onclick="filterSource('mcp_registry', this)">✅ Verified</button>
-                        <button class="cat-btn" onclick="filterSource('clawhub', this)">🐾 ClawHub</button>
-                    </div>
-                    <div id="store-categories"></div>
-                    <div id="store-results"></div>
-                    <div id="store-installed" style="display:none"></div>
-                </div>
-                <div class="store-right" id="install-panel">
-                    <h3>Install Assistant</h3>
-                    <div id="install-messages">
-                        <div class="install-welcome">Select a server to install</div>
-                    </div>
-                    <div id="install-actions" style="display:none"></div>
-                </div>
-            </div>
-        </div>
-        <!-- Skill Store Tab -->
-        <div class="page" id="page-skills" style="display:none;flex-direction:column;">
-            <div class="store-search">
-                <input type="text" id="skill-search-input" placeholder="Search AI skills..." />
-                <button onclick="searchSkills()">Search</button>
-            </div>
-            <div class="store-content">
-                <div class="store-left">
-                    <div id="skill-categories"></div>
-                    <div id="skill-results"></div>
-                </div>
-                <div class="store-right">
-                    <h3>Skill Details</h3>
-                    <div id="skill-detail">
-                        <div class="install-welcome">Select a skill to view details</div>
+                        <button class="active" onclick="pluginToggle('browse',this)">Browse</button>
+                        <button onclick="pluginToggle('installed',this)">Installed</button>
                     </div>
                 </div>
-            </div>
-        </div>
-        <!-- Plugin Store Tab -->
-        <div class="page" id="page-plugins" style="display:none;flex-direction:column;">
-            <div style="padding:16px 16px 8px 16px;display:flex;gap:8px;">
-                <input type="text" id="plugin-search-input" placeholder="플러그인 검색..." style="flex:1;background:#1a2332;border:1px solid #2d3748;color:#e2e8f0;padding:10px 16px;border-radius:8px;font-size:14px;" onkeydown="if(event.key==='Enter')searchPlugins()">
-                <button onclick="searchPlugins()" style="background:#3b82f6;color:white;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;">Search</button>
-            </div>
-            <div style="padding:4px 16px 8px 16px;">
-                <div class="store-toggle">
-                    <button class="active" onclick="pluginToggle('browse',this)">Browse</button>
-                    <button onclick="pluginToggle('installed',this)">Installed</button>
+                <div id="plugin-browse-panel" style="flex:1;overflow-y:auto;padding:0 16px 16px 16px;">
+                    <div id="plugin-categories"></div>
+                    <div id="plugin-results" style="display:none;"></div>
+                    <div id="plugin-installed" style="display:none;"></div>
                 </div>
-            </div>
-            <div id="plugin-browse-panel" style="flex:1;overflow-y:auto;padding:0 16px 16px 16px;">
-                <div id="plugin-categories"></div>
-                <div id="plugin-results" style="display:none;"></div>
-                <div id="plugin-installed" style="display:none;"></div>
-            </div>
-            <div id="plugin-detail-panel" style="display:none;position:fixed;right:16px;top:120px;bottom:16px;width:400px;background:#0f1923;border:1px solid #1e293b;border-radius:12px;padding:16px;overflow-y:auto;z-index:10;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-                    <h3 style="color:#e2e8f0;margin:0;font-size:15px;">Plugin Details</h3>
-                    <button onclick="document.getElementById('plugin-detail-panel').style.display='none'" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:18px;">✕</button>
-                </div>
-                <div id="plugin-detail">
-                    <p style="color:#64748b;">플러그인을 선택하면 상세 정보가 표시됩니다.</p>
+                <div id="plugin-detail-panel" style="display:none;position:fixed;right:16px;top:120px;bottom:16px;width:400px;background:#0f1923;border:1px solid #1e293b;border-radius:12px;padding:16px;overflow-y:auto;z-index:10;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                        <h3 style="color:#e2e8f0;margin:0;font-size:15px;">Plugin Details</h3>
+                        <button onclick="document.getElementById('plugin-detail-panel').style.display='none'" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:18px;">✕</button>
+                    </div>
+                    <div id="plugin-detail">
+                        <p style="color:#64748b;">플러그인을 선택하면 상세 정보가 표시됩니다.</p>
+                    </div>
                 </div>
             </div>
         </div>
@@ -3045,6 +3054,27 @@
             messages.innerHTML += '<div class="install-msg system">Executing fix: ' + escapeHtml(fixCommand) + '</div>';
             messages.innerHTML += '<div class="install-msg info">Please run manually: ' + escapeHtml(fixCommand) + '</div>';
         }
+
+        function initExplorePage() {
+            var saved = localStorage.getItem('breadmind_ptab_explore') || 'mcp';
+            switchPageTab('explore', saved);
+            if (saved === 'mcp') { if (typeof loadFeatured === 'function') loadFeatured(); if (typeof loadInstalledServers === 'function') loadInstalledServers(); }
+            else if (saved === 'skills') { if (typeof loadSkillsFeatured === 'function') loadSkillsFeatured(); }
+            else if (saved === 'plugins') { if (typeof loadPluginsFeatured === 'function') loadPluginsFeatured(); if (typeof loadPluginsInstalled === 'function') loadPluginsInstalled(); }
+        }
+
+        // Extend switchPageTab for Explore data loading
+        (function() {
+            var _origSPT = window.switchPageTab;
+            window.switchPageTab = function(pageId, tabName) {
+                if (typeof _origSPT === 'function') _origSPT(pageId, tabName);
+                if (pageId === 'explore') {
+                    if (tabName === 'mcp') { if (typeof loadFeatured === 'function') loadFeatured(); if (typeof loadInstalledServers === 'function') loadInstalledServers(); }
+                    else if (tabName === 'skills') { if (typeof loadSkillsFeatured === 'function') loadSkillsFeatured(); }
+                    else if (tabName === 'plugins') { if (typeof loadPluginsFeatured === 'function') loadPluginsFeatured(); if (typeof loadPluginsInstalled === 'function') loadPluginsInstalled(); }
+                }
+            };
+        })();
 
         async function loadFeatured(sourceFilter) {
             var sf = sourceFilter !== undefined ? sourceFilter : _currentSourceFilter;
