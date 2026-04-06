@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
@@ -71,32 +72,38 @@ class PipelineAction:
     action_type: ActionType
     config: dict[str, Any] = field(default_factory=dict)
     on_failure: FailureStrategy = FailureStrategy.STOP
+    max_retries: int = 0
+    fallback_action_id: str | None = None
     capture_response: bool = False
     response_variable: str = ""
     timeout: int = 30
-    max_retries: int = 0
+    id: str = field(default_factory=_new_id)
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "id": self.id,
             "action_type": self.action_type.value,
             "config": self.config,
             "on_failure": self.on_failure.value,
+            "max_retries": self.max_retries,
+            "fallback_action_id": self.fallback_action_id,
             "capture_response": self.capture_response,
             "response_variable": self.response_variable,
             "timeout": self.timeout,
-            "max_retries": self.max_retries,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PipelineAction:
         return cls(
+            id=data.get("id", _new_id()),
             action_type=ActionType(data["action_type"]),
             config=data.get("config", {}),
             on_failure=FailureStrategy(data.get("on_failure", FailureStrategy.STOP.value)),
+            max_retries=data.get("max_retries", 0),
+            fallback_action_id=data.get("fallback_action_id"),
             capture_response=data.get("capture_response", False),
             response_variable=data.get("response_variable", ""),
             timeout=data.get("timeout", 30),
-            max_retries=data.get("max_retries", 0),
         )
 
 
@@ -106,32 +113,33 @@ class Pipeline:
 
     name: str
     actions: list[PipelineAction] = field(default_factory=list)
-    id: str = field(default_factory=_new_id)
-    enabled: bool = True
     description: str = ""
-    permission_level: PermissionLevel = PermissionLevel.STANDARD
+    enabled: bool = True
+    id: str = field(default_factory=_new_id)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "name": self.name,
             "description": self.description,
-            "enabled": self.enabled,
-            "permission_level": self.permission_level.value,
             "actions": [a.to_dict() for a in self.actions],
+            "enabled": self.enabled,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Pipeline:
         return cls(
-            id=data["id"],
+            id=data.get("id", _new_id()),
             name=data["name"],
             description=data.get("description", ""),
-            enabled=data.get("enabled", True),
-            permission_level=PermissionLevel(
-                data.get("permission_level", PermissionLevel.STANDARD.value)
-            ),
             actions=[PipelineAction.from_dict(a) for a in data.get("actions", [])],
+            enabled=data.get("enabled", True),
+            created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.now(timezone.utc),
+            updated_at=datetime.fromisoformat(data["updated_at"]) if "updated_at" in data else datetime.now(timezone.utc),
         )
 
 
@@ -144,9 +152,10 @@ class WebhookRule:
     condition: str
     priority: int
     pipeline_id: str
-    id: str = field(default_factory=_new_id)
     enabled: bool = True
-    description: str = ""
+    id: str = field(default_factory=_new_id)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -157,20 +166,22 @@ class WebhookRule:
             "priority": self.priority,
             "pipeline_id": self.pipeline_id,
             "enabled": self.enabled,
-            "description": self.description,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> WebhookRule:
         return cls(
-            id=data["id"],
+            id=data.get("id", _new_id()),
             name=data["name"],
             endpoint_id=data["endpoint_id"],
             condition=data["condition"],
             priority=data["priority"],
             pipeline_id=data["pipeline_id"],
             enabled=data.get("enabled", True),
-            description=data.get("description", ""),
+            created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.now(timezone.utc),
+            updated_at=datetime.fromisoformat(data["updated_at"]) if "updated_at" in data else datetime.now(timezone.utc),
         )
 
 
@@ -182,4 +193,4 @@ class PipelineContext:
     headers: dict[str, str]
     endpoint: str
     steps: dict[str, Any] = field(default_factory=dict)
-    metadata: dict[str, Any] = field(default_factory=dict)
+    secrets: dict[str, str] = field(default_factory=dict)
