@@ -165,3 +165,8 @@ def get_commander(request: Request):
 def get_credential_vault(request: Request):
     """Get credential vault instance."""
     return getattr(request.app.state, 'credential_vault', None)
+
+
+def get_webhook_automation_store(request: Request):
+    """Get webhook automation store instance."""
+    return getattr(request.app.state.app_state, '_webhook_automation_store', None)

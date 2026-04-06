@@ -41,6 +41,7 @@ from breadmind.web.routes.plugins import router as plugins_router
 from breadmind.web.routes.upload import router as upload_router
 from breadmind.web.routes.export import setup_export_routes
 from breadmind.web.routes.backup import setup_backup_routes
+from breadmind.web.routes.webhook_automation import setup_webhook_automation_routes
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +139,9 @@ class WebApp:
         "_bg_job_manager": "bg_job_manager",
         "_embedding_service": "embedding_service",
         "_plugin_mgr": "plugin_mgr",
+        "_webhook_automation_store": "webhook_automation_store",
+        "_webhook_rule_engine": "webhook_rule_engine",
+        "_webhook_pipeline_executor": "webhook_pipeline_executor",
     }
 
     def __getattr__(self, name: str):
@@ -392,6 +396,7 @@ class WebApp:
         app.include_router(upload_router)
         setup_export_routes(app, self)
         setup_backup_routes(app, self)
+        setup_webhook_automation_routes(app, self)
 
         # --- Prometheus metrics endpoint (outside versioning) ---
 
