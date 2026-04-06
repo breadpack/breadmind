@@ -1375,83 +1375,6 @@
                 html += `<div class="section-footer"><button class="save-btn" id="btn-monitoring-rules" onclick="saveMonitoringRules()">Save</button></div>`;
                 html += `</div>`;
 
-                // Scheduler
-                html += `<div class="settings-section" data-stab="agents">`;
-                html += `<h3>Scheduler</h3>`;
-                html += `<h4 style="color:#94a3b8;font-size:13px;margin:0 0 8px;">Cron Jobs</h4>`;
-                html += `<div id="cron-jobs-list"></div>`;
-                html += `<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">`;
-                html += `<input type="text" id="cron-name" class="setting-input" placeholder="Job name" style="width:120px;" />`;
-                html += `<input type="text" id="cron-schedule" class="setting-input" placeholder="0 9 * * 1 (cron)" style="width:140px;" />`;
-                html += `<input type="text" id="cron-task" class="setting-input" placeholder="Message to agent" style="flex:1;" />`;
-                html += `<button class="save-btn" onclick="addCronJob()">Add</button>`;
-                html += `</div>`;
-                html += `<h4 style="color:#94a3b8;font-size:13px;margin:16px 0 8px;">Heartbeats</h4>`;
-                html += `<div id="heartbeats-list"></div>`;
-                html += `<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">`;
-                html += `<input type="text" id="hb-name" class="setting-input" placeholder="Name" style="width:120px;" />`;
-                html += `<input type="number" id="hb-interval" class="setting-input" placeholder="30" style="width:80px;" min="1" />`;
-                html += `<span style="color:#64748b;font-size:12px;line-height:32px;">min</span>`;
-                html += `<input type="text" id="hb-task" class="setting-input" placeholder="Message to agent" style="flex:1;" />`;
-                html += `<button class="save-btn" onclick="addHeartbeat()">Add</button>`;
-                html += `</div>`;
-                html += `</div>`;
-
-                // Sub-agents
-                html += `<div class="settings-section" data-stab="agents">`;
-                html += `<h3>Sub-agents</h3>`;
-                html += `<div id="subagent-status" style="color:#94a3b8;font-size:12px;margin-bottom:8px;"></div>`;
-                html += `<div id="subagent-tasks-list"></div>`;
-                html += `<div style="display:flex;gap:8px;margin-top:8px;">`;
-                html += `<input type="text" id="subagent-task" class="setting-input" placeholder="Task to delegate..." style="flex:1;" />`;
-                html += `<button class="save-btn" onclick="spawnSubagent()">Spawn</button>`;
-                html += `</div>`;
-                html += `</div>`;
-
-                // Agent Swarms
-                html += `<div class="settings-section" data-stab="agents">`;
-                html += `<h3>Agent Swarms</h3>`;
-                html += `<div id="swarm-status" style="color:#94a3b8;font-size:12px;margin-bottom:8px;"></div>`;
-                html += `<div id="swarm-list"></div>`;
-                html += `<div style="display:flex;gap:8px;margin-top:8px;">`;
-                html += `<input type="text" id="swarm-goal" class="setting-input" placeholder="Goal for the swarm team..." style="flex:1;" />`;
-                html += `<button class="save-btn" onclick="spawnSwarm()">Launch Swarm</button>`;
-                html += `</div>`;
-                html += `<div id="swarm-roles" style="margin-top:8px;"></div>`;
-                html += `</div>`;
-
-                // Container Isolation
-                html += `<div class="settings-section" data-stab="agents">`;
-                html += `<h3>Container Isolation</h3>`;
-                html += `<div id="container-status" style="color:#94a3b8;font-size:12px;margin-bottom:8px;">Checking Docker...</div>`;
-                html += `<div id="container-list"></div>`;
-                html += `<div style="display:flex;gap:8px;margin-top:8px;">`;
-                html += `<input type="text" id="container-cmd" class="setting-input" placeholder="Command to run in container..." style="flex:1;" />`;
-                html += `<button class="save-btn" onclick="runContainer()">Run</button>`;
-                html += `</div>`;
-                html += `<div id="container-output" style="display:none;margin-top:8px;background:#0f172a;border:1px solid #334155;border-radius:6px;padding:8px;font-family:monospace;font-size:12px;max-height:200px;overflow-y:auto;white-space:pre-wrap;"></div>`;
-                html += `</div>`;
-
-                // Webhooks
-                html += `<div class="settings-section" data-stab="agents">`;
-                html += `<h3>Webhooks</h3>`;
-                html += `<div id="webhook-endpoints-list"></div>`;
-                html += `<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">`;
-                html += `<input type="text" id="wh-name" class="setting-input" placeholder="Name" style="width:100px;" />`;
-                html += `<input type="text" id="wh-path" class="setting-input" placeholder="github-pr" style="width:100px;" />`;
-                html += `<select id="wh-type" class="setting-select" style="width:100px;">`;
-                html += `<option value="generic">Generic</option>`;
-                html += `<option value="github">GitHub</option>`;
-                html += `<option value="gitlab">GitLab</option>`;
-                html += `<option value="ci">CI/CD</option>`;
-                html += `</select>`;
-                html += `<input type="text" id="wh-action" class="setting-input" placeholder="Agent message ({payload})" style="flex:1;" />`;
-                html += `<button class="save-btn" onclick="addWebhook()">Add</button>`;
-                html += `</div>`;
-                html += `<h4 style="color:#94a3b8;font-size:13px;margin:12px 0 8px;">Recent Events</h4>`;
-                html += `<div id="webhook-events-list" style="max-height:200px;overflow-y:auto;"></div>`;
-                html += `</div>`;
-
                 // Messenger Connections
                 html += `<div class="settings-section" data-stab="messenger"><h3>Messenger Connections</h3>`;
                 html += `<div id="messenger-platforms-container"><div class="no-data">Loading messenger platforms...</div></div>`;
@@ -3445,6 +3368,7 @@
         // Show onboarding tour for first-time visitors
         setTimeout(function() { if (typeof checkOnboarding === 'function') checkOnboarding(); }, 1000);
     </script>
+    <script src="/static/js/automation.js"></script>
     <script src="/static/js/sidebar.js"></script>
     <script src="/static/js/toast.js"></script>
     <script src="/static/js/onboarding.js"></script>
