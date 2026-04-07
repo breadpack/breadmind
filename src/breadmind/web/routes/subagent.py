@@ -35,7 +35,8 @@ async def list_roles(request: Request):
             "domain": r.domain,
             "task_type": r.task_type,
             "description": r.description,
-            "dedicated_tools": r.dedicated_tools,
+            "tools": r.tools,
+            "tool_mode": r.tool_mode,
         }
         for r in role_registry.list_roles()
     ]

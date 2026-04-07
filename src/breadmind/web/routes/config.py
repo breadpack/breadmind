@@ -696,8 +696,11 @@ def setup_config_routes(r: APIRouter, app_state):
             await app._db.set_setting("custom_prompts", custom)
 
         # Persist swarm roles if updated
-        if (data.get("swarm_roles") or data.get("roles")) and app._swarm_manager:
-            await app._persist_swarm_roles()
+        if (data.get("swarm_roles") or data.get("roles")) and app._swarm_manager and app._db:
+            try:
+                await app._db.set_setting("swarm_roles", app._swarm_manager.export_roles())
+            except Exception:
+                logger.exception("Failed to persist swarm roles")
 
         response = JSONResponse(content={"status": "ok"})
         if deprecation_used:
