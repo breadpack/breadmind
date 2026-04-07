@@ -33,6 +33,21 @@
         if (typeof showToast === 'function') showToast(msg, type || 'info');
     }
 
+    function parseProgress(raw) {
+        if (!raw) return { percentage: 0, message: '' };
+        if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch { return { percentage: 0, message: '' }; } }
+        return { percentage: raw.percentage || 0, message: raw.message || '', totalSteps: raw.total_steps || 0, lastStep: raw.last_completed_step || 0 };
+    }
+
+    function formatJobTime(iso) {
+        if (!iso) return '';
+        try {
+            const d = new Date(iso);
+            const pad = n => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        } catch { return ''; }
+    }
+
     // ── Tab definitions ──────────────────────────────────────────────────
 
     const TABS = [
@@ -71,11 +86,11 @@
 
         container.innerHTML = tabsHtml + panelsHtml;
 
-        // Restore last tab — manually toggle display since switchPageTab may use '' which won't override CSS
+        // Restore last tab — defer to next tick so DOM is fully updated
         let saved = 'webhooks';
         try { saved = localStorage.getItem(STORAGE_KEY) || 'webhooks'; } catch (e) {}
         activateAutomationTab(saved);
-        loadAutomationTab(saved);
+        setTimeout(function() { loadAutomationTab(saved); }, 0);
     };
 
     // ── Tab activation (explicit display toggle, no CSS dependency) ─────
@@ -380,14 +395,35 @@
             html += '<div class="wh-list" style="margin-top:8px;">';
             for (const j of codingJobs) {
                 const statusClass = j.status === 'completed' ? 'enabled' : j.status === 'failed' ? 'disabled' : 'enabled';
+                const title = j.project || j.title || j.name || j.id;
+                const progress = parseProgress(j.progress);
+                const createdAt = formatJobTime(j.created_at);
+
+                let metaParts = [];
+                if (j.job_type) metaParts.push(`<span>Type: <strong>${esc(j.job_type)}</strong></span>`);
+                if (j.platform) metaParts.push(`<span>Platform: <strong>${esc(j.platform)}</strong></span>`);
+                if (createdAt) metaParts.push(`<span>Created: <strong>${esc(createdAt)}</strong></span>`);
+                if (j.phases) metaParts.push(`<span>Phases: <strong>${esc(Array.isArray(j.phases) ? j.phases.join(', ') : j.phases)}</strong></span>`);
+
                 html += `<div class="wh-card" style="margin-bottom:8px;">
                     <div class="wh-card-header">
-                        <div class="wh-card-title">${esc(j.project || j.name || j.id)}</div>
+                        <div class="wh-card-title">${esc(title)}</div>
                         <div class="wh-card-actions">
                             <span class="wh-badge ${statusClass}"><span class="wh-badge-dot"></span>${esc(j.status || 'unknown')}</span>
                         </div>
                     </div>
-                    ${j.phases ? `<div class="wh-card-meta"><span>Phases: ${esc(Array.isArray(j.phases) ? j.phases.join(', ') : j.phases)}</span></div>` : ''}
+                    ${j.description ? `<div style="color:var(--text-secondary,#94a3b8);font-size:12px;padding:2px 0 4px;">${esc(j.description)}</div>` : ''}
+                    ${metaParts.length ? `<div class="wh-card-meta">${metaParts.join('')}</div>` : ''}
+                    ${progress.percentage > 0 ? `<div style="margin-top:6px;">
+                        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-tertiary,#64748b);margin-bottom:2px;">
+                            <span>${esc(progress.message || 'Progress')}</span>
+                            <span>${progress.percentage}%</span>
+                        </div>
+                        <div style="height:4px;background:rgba(255,255,255,0.06);border-radius:2px;overflow:hidden;">
+                            <div style="height:100%;width:${Math.min(progress.percentage, 100)}%;background:var(--accent,#6366f1);border-radius:2px;transition:width 0.3s;"></div>
+                        </div>
+                    </div>` : ''}
+                    ${j.error ? `<div style="color:var(--error,#ef4444);font-size:12px;margin-top:4px;">${esc(j.error)}</div>` : ''}
                 </div>`;
             }
             html += '</div>';
@@ -403,13 +439,37 @@
             html += '<div class="wh-list" style="margin-top:8px;">';
             for (const j of bgJobs) {
                 const statusClass = j.status === 'completed' ? 'enabled' : j.status === 'failed' ? 'disabled' : 'enabled';
+                const title = j.title || j.name || j.id;
+                const progress = parseProgress(j.progress);
+                const createdAt = formatJobTime(j.created_at);
+                const updatedAt = formatJobTime(j.updated_at);
+
+                let metaParts = [];
+                if (j.job_type) metaParts.push(`<span>Type: <strong>${esc(j.job_type)}</strong></span>`);
+                if (j.platform) metaParts.push(`<span>Platform: <strong>${esc(j.platform)}</strong></span>`);
+                if (createdAt) metaParts.push(`<span>Created: <strong>${esc(createdAt)}</strong></span>`);
+                if (updatedAt) metaParts.push(`<span>Updated: <strong>${esc(updatedAt)}</strong></span>`);
+
                 html += `<div class="wh-card" style="margin-bottom:8px;">
                     <div class="wh-card-header">
-                        <div class="wh-card-title">${esc(j.name || j.id)}</div>
+                        <div class="wh-card-title">${esc(title)}</div>
                         <div class="wh-card-actions">
                             <span class="wh-badge ${statusClass}"><span class="wh-badge-dot"></span>${esc(j.status || 'unknown')}</span>
                         </div>
                     </div>
+                    ${j.description ? `<div style="color:var(--text-secondary,#94a3b8);font-size:12px;padding:2px 0 4px;">${esc(j.description)}</div>` : ''}
+                    ${metaParts.length ? `<div class="wh-card-meta">${metaParts.join('')}</div>` : ''}
+                    ${progress.percentage > 0 ? `<div style="margin-top:6px;">
+                        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-tertiary,#64748b);margin-bottom:2px;">
+                            <span>${esc(progress.message || 'Progress')}</span>
+                            <span>${progress.percentage}%</span>
+                        </div>
+                        <div style="height:4px;background:rgba(255,255,255,0.06);border-radius:2px;overflow:hidden;">
+                            <div style="height:100%;width:${Math.min(progress.percentage, 100)}%;background:var(--accent,#6366f1);border-radius:2px;transition:width 0.3s;"></div>
+                        </div>
+                    </div>` : ''}
+                    ${j.error ? `<div style="color:var(--error,#ef4444);font-size:12px;margin-top:4px;">${esc(j.error)}</div>` : ''}
+                    ${j.result ? `<div style="color:var(--success,#22c55e);font-size:12px;margin-top:4px;">Result: ${esc(typeof j.result === 'string' ? j.result : JSON.stringify(j.result))}</div>` : ''}
                 </div>`;
             }
             html += '</div>';
