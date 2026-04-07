@@ -56,14 +56,6 @@ class LoggingConfig(BaseModel):
     format: str = "json"
 
 
-class ModelTierEntry(BaseModel):
-    """Provider + model override for a difficulty tier (empty = use default)."""
-    model_config = ConfigDict(extra="ignore", validate_assignment=True)
-
-    provider: str = ""
-    model: str = ""
-
-
 class LLMConfig(BaseModel):
     model_config = ConfigDict(extra="ignore", validate_assignment=True)
 
@@ -71,10 +63,6 @@ class LLMConfig(BaseModel):
     default_model: str = DEFAULT_MODEL
     tool_call_max_turns: int = 20
     tool_call_timeout_seconds: int = DEFAULT_TOOL_TIMEOUT
-    # Per-difficulty tier overrides (empty = use default provider/model)
-    tier_low: ModelTierEntry = Field(default_factory=ModelTierEntry)
-    tier_medium: ModelTierEntry = Field(default_factory=ModelTierEntry)
-    tier_high: ModelTierEntry = Field(default_factory=ModelTierEntry)
 
 
 class DatabaseConfig(BaseModel):
@@ -392,15 +380,6 @@ async def apply_db_settings(config: AppConfig, db) -> dict:
                 config.llm.tool_call_max_turns = llm_settings["tool_call_max_turns"]
             if "tool_call_timeout_seconds" in llm_settings:
                 config.llm.tool_call_timeout_seconds = llm_settings["tool_call_timeout_seconds"]
-            tiers = llm_settings.get("tiers", {})
-            for level in ("low", "medium", "high"):
-                tier_data = tiers.get(level, {})
-                if tier_data:
-                    tier_entry = getattr(config.llm, f"tier_{level}")
-                    if "provider" in tier_data:
-                        tier_entry.provider = tier_data["provider"]
-                    if "model" in tier_data:
-                        tier_entry.model = tier_data["model"]
 
         mcp_settings = await db.get_setting("mcp")
         if mcp_settings:

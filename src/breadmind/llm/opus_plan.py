@@ -3,10 +3,6 @@
 Uses a strong model for planning/architecture and a fast model for
 implementation and review, optimising cost and latency while keeping
 quality high for critical thinking steps.
-
-The strategy is provider-agnostic: model names are resolved from the
-application's tier configuration (LLMConfig.tier_high / tier_medium /
-tier_low) rather than being hardcoded to a specific provider.
 """
 
 from __future__ import annotations
@@ -21,13 +17,6 @@ class TaskPhase(str, Enum):
     IMPLEMENTATION = "implementation"
     REVIEW = "review"
 
-
-# Maps task phases to difficulty tiers used by TierProviderPool
-PHASE_TO_DIFFICULTY: dict[TaskPhase, str] = {
-    TaskPhase.PLANNING: "high",
-    TaskPhase.IMPLEMENTATION: "medium",
-    TaskPhase.REVIEW: "low",
-}
 
 
 @dataclass
@@ -136,16 +125,17 @@ class OpusPlanManager:
         return self.transition(detected)
 
     def get_difficulty_for_turn(self, messages: list[dict]) -> str:
-        """Return the difficulty tier for the current turn.
-
-        This is the provider-agnostic API: callers pass the returned
-        difficulty to ``TierProviderPool.get_provider_for_difficulty()``.
-        """
+        """Return the difficulty tier for the current turn."""
+        _phase_to_difficulty = {
+            TaskPhase.PLANNING: "high",
+            TaskPhase.IMPLEMENTATION: "medium",
+            TaskPhase.REVIEW: "low",
+        }
         if not self._strategy.auto_switch:
-            return PHASE_TO_DIFFICULTY[self._current_phase]
+            return _phase_to_difficulty[self._current_phase]
         detected = self.detect_phase(messages)
         self._current_phase = detected
-        return PHASE_TO_DIFFICULTY[detected]
+        return _phase_to_difficulty[detected]
 
     # ---- internal ---------------------------------------------------------
 
