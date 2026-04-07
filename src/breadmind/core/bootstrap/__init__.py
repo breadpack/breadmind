@@ -101,20 +101,16 @@ async def init_core_services(config, db, provider, safety_cfg, vault=None):
     from breadmind.core.role_registry import RoleRegistry
     from breadmind.core.result_evaluator import ResultEvaluator
     from breadmind.core.orchestrator import Orchestrator
-    from breadmind.llm.tier_pool import TierProviderPool
 
     role_registry = RoleRegistry()
+    await role_registry.load_from_db(db)
     container.register("role_registry", role_registry)
-
-    tier_pool = TierProviderPool(default_provider=provider, config=config.llm)
-    container.register("tier_pool", tier_pool)
 
     orchestrator = Orchestrator(
         provider=provider,
         role_registry=role_registry,
         evaluator=ResultEvaluator(),
         tool_registry=registry,
-        tier_pool=tier_pool,
     )
     container.register("orchestrator", orchestrator)
 

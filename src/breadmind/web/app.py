@@ -92,16 +92,6 @@ class WebApp:
             if tracker is not None:
                 tracker._on_prompt_updated = self._on_behavior_prompt_updated
 
-        # Restore swarm roles from DB on startup
-        @self.app.on_event("startup")
-        async def _restore_swarm_roles():
-            if self._swarm_manager and self._db:
-                try:
-                    roles_data = await self._db.get_setting("swarm_roles")
-                    if roles_data:
-                        self._swarm_manager.import_roles(roles_data)
-                except Exception:
-                    pass
 
     # ── Backward-compatible attribute proxy to self.ctx ─────────────────
     # Routes and dependency helpers access ``app_state._field``; this
@@ -126,7 +116,6 @@ class WebApp:
         "_webhook_manager": "webhook_manager",
         "_auth": "auth",
         "_container_executor": "container_executor",
-        "_swarm_manager": "swarm_manager",
         "_skill_store": "skill_store",
         "_performance_tracker": "performance_tracker",
         "_search_engine": "search_engine",
@@ -135,7 +124,6 @@ class WebApp:
         "_messenger_security": "messenger_security",
         "_lifecycle_manager": "lifecycle_manager",
         "_orchestrator": "orchestrator",
-        "_tier_pool": "tier_pool",
         "_bg_job_manager": "bg_job_manager",
         "_embedding_service": "embedding_service",
         "_plugin_mgr": "plugin_mgr",
@@ -416,14 +404,6 @@ class WebApp:
         static_dir = Path(__file__).parent / "static"
         if static_dir.exists():
             app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
-
-    async def _persist_swarm_roles(self):
-        """Save all swarm roles to DB."""
-        if self._db and self._swarm_manager:
-            try:
-                await self._db.set_setting("swarm_roles", self._swarm_manager.export_roles())
-            except Exception:
-                pass
 
     async def broadcast(self, message: str):
         async with self._lock:

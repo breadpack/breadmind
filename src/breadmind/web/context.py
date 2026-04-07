@@ -58,7 +58,6 @@ class AppContext:
     messenger_security: Any = None
     lifecycle_manager: Any = None
     orchestrator: Any = None
-    tier_pool: Any = None
 
     # Auth
     auth: Any = None
@@ -115,5 +114,4 @@ class AppContext:
             swarm_manager=components.swarm_manager,
             plugin_mgr=components.plugin_mgr,
             bg_job_manager=components.bg_job_manager,
-            tier_pool=_resolve("tier_pool"),
         )

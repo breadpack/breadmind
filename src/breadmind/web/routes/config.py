@@ -319,10 +319,6 @@ def setup_config_routes(r: APIRouter, app_state):
                     from breadmind.llm.factory import create_provider as _create_provider
                     new_provider = _create_provider(app._config)
                     await app._agent.update_provider(new_provider)
-                    # Update tier pool default provider
-                    tier_pool = getattr(app, "_tier_pool", None)
-                    if tier_pool:
-                        tier_pool.update_default_provider(new_provider)
                 except Exception as e:
                     logger.warning(f"Failed to hot-swap provider: {e}")
             if max_turns is not None:
@@ -943,10 +939,5 @@ def setup_config_routes(r: APIRouter, app_state):
                 })
             except Exception as e:
                 logger.warning(f"Failed to persist tier settings to DB: {e}")
-
-        # Hot-swap tier pool
-        tier_pool = getattr(app, "_tier_pool", None)
-        if tier_pool and app._config:
-            tier_pool.update_config(app._config.llm)
 
         return {"status": "ok", "persisted": app._db is not None}
