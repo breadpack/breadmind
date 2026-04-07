@@ -3270,8 +3270,7 @@
         // connect() and loadSessions() are now handled by chat.js init()
         if (typeof loadSidebarAssistant === 'function') loadSidebarAssistant();
 
-        // Initialize sidebar navigation
-        if (typeof initSidebar === 'function') initSidebar();
+        // initSidebar is called after sidebar.js loads (see script tags below)
 
         // Show onboarding tour for first-time visitors
         setTimeout(function() { if (typeof checkOnboarding === 'function') checkOnboarding(); }, 1000);
@@ -3280,6 +3279,7 @@
     <script src="/static/js/monitoring-page.js"></script>
     <script src="/static/js/automation.js"></script>
     <script src="/static/js/sidebar.js"></script>
+    <script>if (typeof initSidebar === 'function') initSidebar();</script>
     <script src="/static/js/toast.js"></script>
     <script src="/static/js/onboarding.js"></script>
     <script src="/static/js/personal.js"></script>
