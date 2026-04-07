@@ -94,17 +94,23 @@
 
         const savedTab = localStorage.getItem(PTAB_KEY) || 'integrations';
 
+        // Make container a flex column so panels stretch
+        root.style.display = 'flex';
+        root.style.flexDirection = 'column';
+        root.style.flex = '1';
+        root.style.overflow = 'hidden';
+
         root.innerHTML = `
-            <div class="page-tab-bar" style="padding:16px 16px 0;">
+            <div class="page-tabs">
                 <button class="page-tab" data-subtab="integrations" onclick="switchConnectionsTab('integrations')">Integrations</button>
                 <button class="page-tab" data-subtab="messenger" onclick="switchConnectionsTab('messenger')">Messenger</button>
             </div>
 
-            <div class="connections-panel" id="subtab-connections-integrations" style="flex:1;overflow-y:auto;padding:16px;">
+            <div class="connections-panel page-panel" id="subtab-connections-integrations">
                 <div id="integrations-content"></div>
             </div>
 
-            <div class="connections-panel" id="subtab-connections-messenger" style="display:none;flex:1;overflow-y:auto;padding:16px;">
+            <div class="connections-panel page-panel" id="subtab-connections-messenger" style="display:none;">
                 <div id="messenger-connections-content"></div>
             </div>`;
 

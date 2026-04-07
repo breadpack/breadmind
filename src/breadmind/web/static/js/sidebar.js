@@ -102,7 +102,7 @@
         // Toggle display on panels
         pageEl.querySelectorAll('.page-panel').forEach(function(panel) {
             var isTarget = panel.id === 'subtab-' + pageId + '-' + tabName;
-            panel.style.display = isTarget ? '' : 'none';
+            panel.style.display = isTarget ? 'block' : 'none';
         });
 
         try {

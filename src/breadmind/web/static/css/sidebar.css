@@ -415,14 +415,10 @@
 /* --- Page Panel (sub-tab content) --- */
 
 .page-panel {
-    display: none;
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
-}
-
-.page-panel.active {
-    display: block;
+    padding: 16px;
 }
 
 /* =============================================================================

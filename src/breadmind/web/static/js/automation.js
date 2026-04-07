@@ -49,29 +49,48 @@
         const container = document.getElementById('automation-content');
         if (!container) return;
 
+        // Make container a flex column so panels stretch
+        container.style.display = 'flex';
+        container.style.flexDirection = 'column';
+        container.style.flex = '1';
+        container.style.overflow = 'hidden';
+
         // Build tab bar
-        let tabsHtml = '<div class="page-tabs" style="display:flex;gap:4px;padding:12px 16px 0;border-bottom:1px solid var(--border-color,#334155);flex-wrap:wrap;">';
+        let tabsHtml = '<div class="page-tabs">';
         for (const t of TABS) {
-            tabsHtml += `<button class="page-tab" data-subtab="${t.id}" onclick="switchPageTab('automation','${t.id}')" style="padding:6px 14px;border:none;background:transparent;color:var(--text-secondary,#94a3b8);cursor:pointer;border-bottom:2px solid transparent;font-size:13px;">${t.label}</button>`;
+            tabsHtml += `<button class="page-tab" data-subtab="${t.id}" onclick="switchPageTab('automation','${t.id}')">${t.label}</button>`;
         }
         tabsHtml += '</div>';
 
-        // Build panels
-        let panelsHtml = '<div class="page-panels" style="flex:1;overflow:hidden;">';
+        // Build panels (no wrapper div — direct children for flex layout)
+        let panelsHtml = '';
         for (const t of TABS) {
             const content = t.id === 'webhooks' ? '<div id="webhook-content"></div>' : '';
-            panelsHtml += `<div class="page-panel" id="subtab-automation-${t.id}" style="display:none;height:100%;overflow-y:auto;padding:16px;">${content}</div>`;
+            panelsHtml += `<div class="page-panel" id="subtab-automation-${t.id}" style="display:none;">${content}</div>`;
         }
-        panelsHtml += '</div>';
 
         container.innerHTML = tabsHtml + panelsHtml;
 
-        // Restore last tab
+        // Restore last tab — manually toggle display since switchPageTab may use '' which won't override CSS
         let saved = 'webhooks';
         try { saved = localStorage.getItem(STORAGE_KEY) || 'webhooks'; } catch (e) {}
-        switchPageTab('automation', saved);
+        activateAutomationTab(saved);
         loadAutomationTab(saved);
     };
+
+    // ── Tab activation (explicit display toggle, no CSS dependency) ─────
+
+    function activateAutomationTab(tabName) {
+        const container = document.getElementById('automation-content');
+        if (!container) return;
+        container.querySelectorAll('.page-tab').forEach(function(btn) {
+            btn.classList.toggle('active', btn.dataset.subtab === tabName);
+        });
+        container.querySelectorAll('.page-panel').forEach(function(panel) {
+            panel.style.display = panel.id === 'subtab-automation-' + tabName ? 'block' : 'none';
+        });
+        try { localStorage.setItem(STORAGE_KEY, tabName); } catch (e) {}
+    }
 
     // ── Hook switchPageTab ───────────────────────────────────────────────
 
@@ -80,6 +99,7 @@
         window.switchPageTab = function (pageId, tabName) {
             if (typeof _orig === 'function') _orig(pageId, tabName);
             if (pageId === 'automation') {
+                activateAutomationTab(tabName);
                 loadAutomationTab(tabName);
             }
         };
