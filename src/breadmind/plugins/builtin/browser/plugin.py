@@ -41,6 +41,15 @@ class BrowserPlugin(BaseToolPlugin):
                 }
 
             self._engine = BrowserEngine(**kwargs)
+            # Initialize vision layer if LLM provider is available
+            llm_provider = None
+            try:
+                llm_provider = container.get("llm_provider")
+            except Exception:
+                llm_provider = getattr(container, "llm_provider", None)
+            if llm_provider:
+                self._engine.init_vision(llm_provider)
+                logger.info("Browser vision layer initialized")
             self._tools = self._engine.get_tool_functions()
             logger.info("BrowserEngine initialized with %d tools", len(self._tools))
         except ImportError:

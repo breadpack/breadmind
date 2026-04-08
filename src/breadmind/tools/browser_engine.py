@@ -12,6 +12,8 @@ from breadmind.tools.browser_a11y import A11yExtractor
 from breadmind.tools.browser_network import NetworkMonitor
 from breadmind.tools.browser_engine_actions import dispatch_action
 from breadmind.tools.browser_engine_tools import build_tool_functions
+from breadmind.tools.browser_page_analyzer import PageAnalyzer
+from breadmind.tools.browser_vision import VisionBrowser
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +47,14 @@ class BrowserEngine:
         self._network_monitors: dict[str, NetworkMonitor] = {}
         self._a11y_extractors: dict[str, A11yExtractor] = {}
         self._default_timeout = default_timeout_ms
+        self._page_analyzer: Any = None
+        self._vision_browser: Any = None
+
+    def init_vision(self, llm_provider: Any) -> None:
+        """Initialize vision layer with an LLM provider."""
+        self._page_analyzer = PageAnalyzer(llm_provider, self)
+        self._vision_browser = VisionBrowser(self._page_analyzer, self)
+        logger.info("Browser vision layer initialized")
 
     # ------------------------------------------------------------------
     # Session resolution helpers
@@ -330,8 +340,11 @@ class BrowserEngine:
     # ------------------------------------------------------------------
 
     def get_tool_functions(self) -> list[Callable]:
-        """Return 6 tool-decorated functions for LLM tool-calling."""
-        return build_tool_functions(self)
+        """Return tool functions for registration in ToolRegistry."""
+        tools = build_tool_functions(self)
+        if self._vision_browser:
+            tools.extend(self._vision_browser.get_tool_functions())
+        return tools
 
     # ------------------------------------------------------------------
     # Cleanup
