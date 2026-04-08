@@ -14,6 +14,8 @@ from breadmind.tools.browser_engine_actions import dispatch_action
 from breadmind.tools.browser_engine_tools import build_tool_functions
 from breadmind.tools.browser_page_analyzer import PageAnalyzer
 from breadmind.tools.browser_vision import VisionBrowser
+from breadmind.tools.browser_macro_tools import MacroTools
+from breadmind.tools.browser_macro_store import MacroStore
 
 logger = logging.getLogger(__name__)
 
@@ -49,12 +51,20 @@ class BrowserEngine:
         self._default_timeout = default_timeout_ms
         self._page_analyzer: Any = None
         self._vision_browser: Any = None
+        self._macro_store: MacroStore | None = None
+        self._macro_tools: MacroTools | None = None
 
     def init_vision(self, llm_provider: Any) -> None:
         """Initialize vision layer with an LLM provider."""
         self._page_analyzer = PageAnalyzer(llm_provider, self)
         self._vision_browser = VisionBrowser(self._page_analyzer, self)
         logger.info("Browser vision layer initialized")
+
+    def init_macros(self, macro_store: MacroStore, db: Any = None) -> None:
+        """Initialize macro system."""
+        self._macro_store = macro_store
+        self._macro_tools = MacroTools(macro_store, self, db=db)
+        logger.info("Browser macro system initialized")
 
     # ------------------------------------------------------------------
     # Session resolution helpers
@@ -163,6 +173,8 @@ class BrowserEngine:
             return "[error] url is required"
         try:
             sess = await self._resolve_session_or_create(session)
+            if self._macro_tools and self._macro_tools.is_recording:
+                self._macro_tools.record_step("browser_navigate", {"url": url})
             page = sess.page
             resp = await page.goto(url, wait_until=wait_until, timeout=self._default_timeout)
             title = await page.title()
@@ -185,6 +197,8 @@ class BrowserEngine:
         """Dispatch browser actions to the appropriate handler functions."""
         if not action:
             return "[error] action is required"
+        if self._macro_tools and self._macro_tools.is_recording:
+            self._macro_tools.record_step("browser_action", {"action": action, **kwargs})
         try:
             sess = await self._resolve_session_or_create(session)
             result = await dispatch_action(
@@ -212,6 +226,8 @@ class BrowserEngine:
         """Capture a screenshot of the current page or a specific element."""
         try:
             sess = await self._resolve_session_or_create(session)
+            if self._macro_tools and self._macro_tools.is_recording:
+                self._macro_tools.record_step("browser_screenshot", {"session": session, "full_page": full_page})
             page = sess.page
 
             if selector:
@@ -344,6 +360,8 @@ class BrowserEngine:
         tools = build_tool_functions(self)
         if self._vision_browser:
             tools.extend(self._vision_browser.get_tool_functions())
+        if self._macro_tools:
+            tools.extend(self._macro_tools.get_tool_functions())
         return tools
 
     # ------------------------------------------------------------------

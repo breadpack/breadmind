@@ -50,6 +50,17 @@ class BrowserPlugin(BaseToolPlugin):
             if llm_provider:
                 self._engine.init_vision(llm_provider)
                 logger.info("Browser vision layer initialized")
+            # Initialize macro system
+            from breadmind.tools.browser_macro_store import MacroStore as _MacroStore
+            macro_store = _MacroStore()
+            db = None
+            try:
+                db = container.get("db")
+            except Exception:
+                db = getattr(container, "db", None)
+            if db:
+                await macro_store.load(db)
+            self._engine.init_macros(macro_store, db=db)
             self._tools = self._engine.get_tool_functions()
             logger.info("BrowserEngine initialized with %d tools", len(self._tools))
         except ImportError:
