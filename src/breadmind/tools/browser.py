@@ -177,6 +177,21 @@ async def _close_browser() -> None:
     _playwright_instance = _browser = _context = _page = None
 
 
+async def get_cdp_session(page) -> Any:
+    """Get CDP session from a Playwright page for direct protocol access."""
+    return await page.context.new_cdp_session(page)
+
+
+def get_active_page() -> Any | None:
+    """Return the current active page, or None."""
+    return _page
+
+
+def get_active_context() -> Any | None:
+    """Return the current browser context, or None."""
+    return _context
+
+
 # ---------------------------------------------------------------------------
 # Tool definitions
 # ---------------------------------------------------------------------------
