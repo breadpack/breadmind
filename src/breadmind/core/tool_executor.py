@@ -13,6 +13,10 @@ from typing import TYPE_CHECKING
 from breadmind.llm.base import LLMMessage, ToolCall
 from breadmind.tools.registry import ToolRegistry
 from breadmind.core.safety import SafetyGuard, SafetyResult
+from breadmind.tools.browser_screenshot import (
+    is_browser_tool,
+    process_tool_result as process_browser_result,
+)
 
 if TYPE_CHECKING:
     from breadmind.core.audit import AuditLogger
@@ -213,6 +217,12 @@ class ToolExecutor:
                 role="tool", content=output,
                 tool_call_id=tc.id, name=tc.name,
             )
+            # Extract screenshots/PDFs from browser tool results into Attachments
+            if is_browser_tool(tc.name):
+                cleaned, attachments = process_browser_result(tool_msg.content or "")
+                if attachments:
+                    tool_msg.content = cleaned
+                    tool_msg.attachments = attachments
             messages.append(tool_msg)
             if ctx.working_memory is not None:
                 from breadmind.storage.credential_vault import CredentialVault
