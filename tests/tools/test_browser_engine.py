@@ -13,6 +13,10 @@ def engine():
     e._network_monitors = {}
     e._a11y_extractors = {}
     e._default_timeout = 10000
+    e._page_analyzer = None
+    e._vision_browser = None
+    e._macro_store = None
+    e._macro_tools = None
     return e
 
 
@@ -104,6 +108,8 @@ async def test_get_tool_definitions():
     e._default_timeout = 10000
     e._page_analyzer = None
     e._vision_browser = None
+    e._macro_store = None
+    e._macro_tools = None
     tools = e.get_tool_functions()
     names = [f.__name__ for f in tools]
     assert "browser_session" in names
