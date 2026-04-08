@@ -1,7 +1,7 @@
 {
   "name": "browser",
-  "version": "0.1.0",
-  "description": "Web browser automation tool (Playwright/CDP)",
+  "version": "0.2.0",
+  "description": "Browser automation engine with session management, advanced actions, network monitoring, and accessibility tree",
   "x-breadmind": {
     "priority": 20,
     "enabled_by_default": false,
