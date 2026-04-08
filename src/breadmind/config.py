@@ -152,6 +152,20 @@ class NetworkConfig(BaseModel):
     offline_queue_max_mb: int = 100
 
 
+class BrowserConfig(BaseModel):
+    """Browser automation engine configuration."""
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
+    headless: str = "auto"  # "auto" | "true" | "false"
+    max_sessions: int = 5
+    max_tabs_per_session: int = 10
+    idle_timeout_seconds: int = 300
+    default_timeout_ms: int = 10000
+    viewport_width: int = 1280
+    viewport_height: int = 900
+    locale: str = "ko-KR"
+
+
 class AppConfig(BaseModel):
     model_config = ConfigDict(extra="ignore", validate_assignment=True)
 
@@ -162,6 +176,7 @@ class AppConfig(BaseModel):
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     task: TaskConfig = Field(default_factory=TaskConfig)
     network: NetworkConfig = Field(default_factory=NetworkConfig)
+    browser: BrowserConfig = Field(default_factory=BrowserConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     timeouts: TimeoutsConfig = Field(default_factory=TimeoutsConfig)
     retry: RetryConfig = Field(default_factory=RetryConfig)
