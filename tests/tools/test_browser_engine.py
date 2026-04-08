@@ -102,6 +102,8 @@ async def test_get_tool_definitions():
     e._network_monitors = {}
     e._a11y_extractors = {}
     e._default_timeout = 10000
+    e._page_analyzer = None
+    e._vision_browser = None
     tools = e.get_tool_functions()
     names = [f.__name__ for f in tools]
     assert "browser_session" in names
