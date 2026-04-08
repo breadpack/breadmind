@@ -11,6 +11,7 @@
         monitoring: function() { if (typeof initMonitoringPage === 'function') initMonitoringPage(); },
         explore: function() { if (typeof initExplorePage === 'function') initExplorePage(); },
         connections: function() { if (typeof initConnectionsPage === 'function') initConnectionsPage(); },
+        browser: function() { if (typeof initBrowserPage === 'function') initBrowserPage(); },
         settings: function() { if (typeof loadSettings === 'function') loadSettings(); },
     };
 

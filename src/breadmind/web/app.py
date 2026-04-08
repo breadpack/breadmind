@@ -16,6 +16,7 @@ from breadmind.web.idempotency import setup_idempotency
 from breadmind.web.rate_limiter import RateLimiter
 from breadmind.web.versioning import setup_versioning
 from breadmind.web.routes import (
+    setup_browser_routes,
     setup_chat_routes,
     setup_config_routes,
     setup_container_routes,
@@ -385,6 +386,7 @@ class WebApp:
         setup_export_routes(app, self)
         setup_backup_routes(app, self)
         setup_webhook_automation_routes(app, self)
+        setup_browser_routes(app, self)
 
         # --- Prometheus metrics endpoint (outside versioning) ---
 

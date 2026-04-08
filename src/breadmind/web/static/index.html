@@ -425,6 +425,7 @@
     <link rel="stylesheet" href="/static/css/glass-theme.css">
     <link rel="stylesheet" href="/static/css/chat.css">
     <link rel="stylesheet" href="/static/css/webhook.css">
+    <link rel="stylesheet" href="/static/css/browser.css">
     <link rel="stylesheet" href="/static/css/sidebar.css?v=3">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
@@ -521,6 +522,9 @@
                 </a>
                 <a class="sidebar-item" data-page="explore" data-tooltip="Explore">
                     <span class="sidebar-icon">🏪</span><span class="sidebar-label">Explore</span>
+                </a>
+                <a class="sidebar-item" data-page="browser" data-tooltip="Browser">
+                    <span class="sidebar-icon">🌐</span><span class="sidebar-label">Browser</span>
                 </a>
                 <a class="sidebar-item" data-page="connections" data-tooltip="Connections">
                     <span class="sidebar-icon">🔌</span><span class="sidebar-label">Connections</span>
@@ -715,6 +719,16 @@
         <!-- Automation Page -->
         <div class="page" id="page-automation" style="display:none;flex-direction:column;">
             <div id="automation-content"></div>
+        </div>
+
+        <!-- Browser Page -->
+        <div class="page" id="page-browser" style="display:none;flex-direction:column;">
+            <div class="page-tabs">
+                <button class="page-tab active" data-subtab="sessions" onclick="switchBrowserTab('sessions')">Sessions</button>
+                <button class="page-tab" data-subtab="live" onclick="switchBrowserTab('live')">Live View</button>
+            </div>
+            <div class="page-panel" id="subtab-browser-sessions"></div>
+            <div class="page-panel" id="subtab-browser-live" style="display:none"></div>
         </div>
 
         <!-- Connections Page -->
@@ -3282,6 +3296,7 @@
     <script src="/static/js/integrations.js"></script>
     <script src="/static/js/plugins.js?v=7"></script>
     <script src="/static/js/quick-actions.js"></script>
+    <script src="/static/js/browser-page.js"></script>
     <script src="/static/js/webhook.js"></script>
     <script src="/static/js/chat.js"></script>
 </body>
