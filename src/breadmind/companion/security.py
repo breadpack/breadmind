@@ -9,6 +9,12 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Capability flags that control groups of tools
+_DEFAULT_CAPABILITIES: dict[str, bool] = {
+    "window_mgmt": True,
+    "input_control": False,
+}
+
 # Default permission policy: what's allowed out of the box
 _DEFAULT_PERMISSIONS: dict[str, Any] = {
     "companion_system_info": True,
@@ -19,6 +25,20 @@ _DEFAULT_PERMISSIONS: dict[str, Any] = {
     "companion_open_url": True,
     "companion_file_list": True,
     "companion_file_read": True,
+    # Window management (read-only listing is safe)
+    "companion_window_list": True,
+    "companion_window_focus": True,
+    "companion_window_move": True,
+    "companion_window_minimize": True,
+    "companion_window_maximize": True,
+    "companion_window_close": False,
+    "companion_window_screenshot": True,
+    # Input control (keyboard/mouse is sensitive, denied by default)
+    "companion_type_text": False,
+    "companion_press_key": False,
+    "companion_mouse_move": False,
+    "companion_mouse_click": False,
+    "companion_mouse_scroll": False,
     # Denied by default (destructive or sensitive)
     "companion_clipboard_read": False,
     "companion_clipboard_write": False,
@@ -30,6 +50,30 @@ _DEFAULT_PERMISSIONS: dict[str, Any] = {
 _CONFIRMATION_REQUIRED = {
     "companion_power",
     "companion_process_kill",
+    "companion_window_close",
+    "companion_type_text",
+    "companion_press_key",
+    "companion_mouse_click",
+}
+
+# Mapping from capability flags to tool names they control
+_CAPABILITY_TOOL_MAP: dict[str, list[str]] = {
+    "window_mgmt": [
+        "companion_window_list",
+        "companion_window_focus",
+        "companion_window_move",
+        "companion_window_minimize",
+        "companion_window_maximize",
+        "companion_window_close",
+        "companion_window_screenshot",
+    ],
+    "input_control": [
+        "companion_type_text",
+        "companion_press_key",
+        "companion_mouse_move",
+        "companion_mouse_click",
+        "companion_mouse_scroll",
+    ],
 }
 
 
@@ -44,7 +88,16 @@ class PermissionManager:
     ) -> None:
         self._permissions: dict[str, Any] = dict(_DEFAULT_PERMISSIONS)
         if capabilities:
-            self._permissions.update(capabilities)
+            # Apply capability group flags first (e.g. input_control=True enables all input tools)
+            for cap_name, tools in _CAPABILITY_TOOL_MAP.items():
+                if cap_name in capabilities:
+                    enabled = bool(capabilities[cap_name])
+                    for tool_name in tools:
+                        self._permissions[tool_name] = enabled
+            # Then apply per-tool overrides
+            for key, value in capabilities.items():
+                if key not in _CAPABILITY_TOOL_MAP:
+                    self._permissions[key] = value
         self._allowed_paths = [Path(p).resolve() for p in (allowed_paths or [])]
         self._denied_paths = [Path(p).resolve() for p in (denied_paths or [])]
 

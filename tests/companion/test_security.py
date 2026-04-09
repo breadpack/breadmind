@@ -73,3 +73,48 @@ def test_requires_confirmation():
     assert pm.requires_confirmation("companion_power") is True
     assert pm.requires_confirmation("companion_process_kill") is True
     assert pm.requires_confirmation("companion_system_info") is False
+
+
+def test_requires_confirmation_new_tools():
+    pm = PermissionManager()
+    assert pm.requires_confirmation("companion_window_close") is True
+    assert pm.requires_confirmation("companion_type_text") is True
+    assert pm.requires_confirmation("companion_press_key") is True
+    assert pm.requires_confirmation("companion_mouse_click") is True
+
+
+def test_input_control_default_disabled():
+    pm = PermissionManager()
+    assert pm.is_allowed("companion_type_text") is False
+    assert pm.is_allowed("companion_press_key") is False
+    assert pm.is_allowed("companion_mouse_move") is False
+    assert pm.is_allowed("companion_mouse_click") is False
+    assert pm.is_allowed("companion_mouse_scroll") is False
+
+
+def test_window_mgmt_default_enabled():
+    pm = PermissionManager()
+    assert pm.is_allowed("companion_window_list") is True
+    assert pm.is_allowed("companion_window_focus") is True
+    assert pm.is_allowed("companion_window_move") is True
+    assert pm.is_allowed("companion_window_minimize") is True
+    assert pm.is_allowed("companion_window_maximize") is True
+    assert pm.is_allowed("companion_window_screenshot") is True
+    # window_close is excluded from default window_mgmt enable
+    assert pm.is_allowed("companion_window_close") is False
+
+
+def test_input_control_capability_enables_all():
+    pm = PermissionManager(capabilities={"input_control": True})
+    assert pm.is_allowed("companion_type_text") is True
+    assert pm.is_allowed("companion_press_key") is True
+    assert pm.is_allowed("companion_mouse_move") is True
+    assert pm.is_allowed("companion_mouse_click") is True
+    assert pm.is_allowed("companion_mouse_scroll") is True
+
+
+def test_window_mgmt_capability_disables_all():
+    pm = PermissionManager(capabilities={"window_mgmt": False})
+    assert pm.is_allowed("companion_window_list") is False
+    assert pm.is_allowed("companion_window_focus") is False
+    assert pm.is_allowed("companion_window_move") is False

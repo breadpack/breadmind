@@ -95,6 +95,78 @@ class MockPlatformAdapter(PlatformAdapter):
         if action not in ("sleep", "shutdown", "lock"):
             raise ValueError(f"Unknown power action: {action}")
 
+    # --- Window Management ---
+
+    async def get_window_list(self) -> list[dict]:
+        return [
+            {
+                "hwnd": 12345,
+                "title": "Test Window",
+                "app_name": "test.exe",
+                "x": 0, "y": 0, "width": 800, "height": 600,
+                "is_focused": True,
+            },
+            {
+                "hwnd": 67890,
+                "title": "Background Window",
+                "app_name": "bg.exe",
+                "x": 100, "y": 100, "width": 640, "height": 480,
+                "is_focused": False,
+            },
+        ]
+
+    async def focus_window(self, window_id: int | str) -> bool:
+        return int(window_id) != 99999
+
+    async def move_window(
+        self,
+        window_id: int | str,
+        x: int,
+        y: int,
+        width: int | None = None,
+        height: int | None = None,
+    ) -> bool:
+        return int(window_id) != 99999
+
+    async def minimize_window(self, window_id: int | str) -> bool:
+        return int(window_id) != 99999
+
+    async def maximize_window(self, window_id: int | str) -> bool:
+        return int(window_id) != 99999
+
+    async def close_window(self, window_id: int | str) -> bool:
+        return int(window_id) != 99999
+
+    # --- Keyboard & Mouse ---
+
+    async def type_text(self, text: str, interval: float = 0.0) -> None:
+        pass
+
+    async def press_key(self, key: str, modifiers: list[str] | None = None) -> None:
+        pass
+
+    async def mouse_move(self, x: int, y: int) -> None:
+        pass
+
+    async def mouse_click(
+        self, x: int, y: int, button: str = "left", clicks: int = 1
+    ) -> None:
+        pass
+
+    async def mouse_scroll(
+        self, x: int, y: int, direction: str = "down", amount: int = 3
+    ) -> None:
+        pass
+
+    async def capture_window_screenshot(self, window_id: int | str) -> bytes:
+        # Return minimal valid PNG bytes (1x1 pixel)
+        return (
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
+            b"\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00"
+            b"\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00"
+            b"\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
+        )
+
 
 @pytest.fixture
 def mock_adapter() -> MockPlatformAdapter:

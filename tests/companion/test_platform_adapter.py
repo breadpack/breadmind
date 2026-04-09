@@ -97,3 +97,74 @@ async def test_power_action_valid(adapter):
 async def test_power_action_invalid(adapter):
     with pytest.raises(ValueError):
         await adapter.power_action("explode")
+
+
+# --- Window Management ---
+
+
+async def test_window_list(adapter):
+    windows = await adapter.get_window_list()
+    assert len(windows) > 0
+    win = windows[0]
+    for key in ("title", "app_name", "x", "y", "width", "height", "is_focused"):
+        assert key in win
+    assert isinstance(win["is_focused"], bool)
+
+
+async def test_focus_window(adapter):
+    result = await adapter.focus_window(12345)
+    assert result is True
+
+
+async def test_focus_window_failure(adapter):
+    result = await adapter.focus_window(99999)
+    assert result is False
+
+
+async def test_move_window(adapter):
+    result = await adapter.move_window(12345, 100, 200, 800, 600)
+    assert result is True
+
+
+async def test_minimize_window(adapter):
+    result = await adapter.minimize_window(12345)
+    assert result is True
+
+
+async def test_maximize_window(adapter):
+    result = await adapter.maximize_window(12345)
+    assert result is True
+
+
+async def test_close_window(adapter):
+    result = await adapter.close_window(12345)
+    assert result is True
+
+
+# --- Keyboard & Mouse ---
+
+
+async def test_type_text(adapter):
+    await adapter.type_text("hello world")
+
+
+async def test_press_key(adapter):
+    await adapter.press_key("enter", modifiers=["ctrl"])
+
+
+async def test_mouse_move(adapter):
+    await adapter.mouse_move(100, 200)
+
+
+async def test_mouse_click(adapter):
+    await adapter.mouse_click(100, 200, button="left", clicks=2)
+
+
+async def test_mouse_scroll(adapter):
+    await adapter.mouse_scroll(100, 200, direction="down", amount=3)
+
+
+async def test_capture_window_screenshot(adapter):
+    data = await adapter.capture_window_screenshot(12345)
+    assert isinstance(data, bytes)
+    assert len(data) > 0

@@ -194,6 +194,175 @@ async def companion_file_list(
         return {"error": str(e)}
 
 
+async def companion_window_list(
+    platform_adapter: PlatformAdapter,
+    permissions: PermissionManager,
+    args: dict[str, Any],
+) -> dict:
+    """List all visible windows."""
+    windows = await platform_adapter.get_window_list()
+    return {"windows": windows, "count": len(windows)}
+
+
+async def companion_window_focus(
+    platform_adapter: PlatformAdapter,
+    permissions: PermissionManager,
+    args: dict[str, Any],
+) -> dict:
+    """Focus a window by ID."""
+    window_id = args.get("window_id")
+    if window_id is None:
+        return {"error": "window_id is required"}
+    success = await platform_adapter.focus_window(window_id)
+    return {"window_id": window_id, "focused": success}
+
+
+async def companion_window_move(
+    platform_adapter: PlatformAdapter,
+    permissions: PermissionManager,
+    args: dict[str, Any],
+) -> dict:
+    """Move/resize a window."""
+    window_id = args.get("window_id")
+    if window_id is None:
+        return {"error": "window_id is required"}
+    x = args.get("x")
+    y = args.get("y")
+    if x is None or y is None:
+        return {"error": "x and y are required"}
+    width = args.get("width")
+    height = args.get("height")
+    success = await platform_adapter.move_window(window_id, int(x), int(y), width, height)
+    return {"window_id": window_id, "moved": success}
+
+
+async def companion_window_minimize(
+    platform_adapter: PlatformAdapter,
+    permissions: PermissionManager,
+    args: dict[str, Any],
+) -> dict:
+    """Minimize a window."""
+    window_id = args.get("window_id")
+    if window_id is None:
+        return {"error": "window_id is required"}
+    success = await platform_adapter.minimize_window(window_id)
+    return {"window_id": window_id, "minimized": success}
+
+
+async def companion_window_maximize(
+    platform_adapter: PlatformAdapter,
+    permissions: PermissionManager,
+    args: dict[str, Any],
+) -> dict:
+    """Maximize a window."""
+    window_id = args.get("window_id")
+    if window_id is None:
+        return {"error": "window_id is required"}
+    success = await platform_adapter.maximize_window(window_id)
+    return {"window_id": window_id, "maximized": success}
+
+
+async def companion_window_close(
+    platform_adapter: PlatformAdapter,
+    permissions: PermissionManager,
+    args: dict[str, Any],
+) -> dict:
+    """Close a window."""
+    window_id = args.get("window_id")
+    if window_id is None:
+        return {"error": "window_id is required"}
+    success = await platform_adapter.close_window(window_id)
+    return {"window_id": window_id, "closed": success}
+
+
+async def companion_window_screenshot(
+    platform_adapter: PlatformAdapter,
+    permissions: PermissionManager,
+    args: dict[str, Any],
+) -> dict:
+    """Capture a screenshot of a specific window."""
+    window_id = args.get("window_id")
+    if window_id is None:
+        return {"error": "window_id is required"}
+    png_bytes = await platform_adapter.capture_window_screenshot(window_id)
+    encoded = base64.b64encode(png_bytes).decode("ascii")
+    return {"image_base64": encoded, "format": "png", "size_bytes": len(png_bytes)}
+
+
+async def companion_type_text(
+    platform_adapter: PlatformAdapter,
+    permissions: PermissionManager,
+    args: dict[str, Any],
+) -> dict:
+    """Type text at the current cursor position."""
+    text = args.get("text", "")
+    if not text:
+        return {"error": "text is required"}
+    interval = float(args.get("interval", 0.0))
+    await platform_adapter.type_text(text, interval=interval)
+    return {"typed": True, "length": len(text)}
+
+
+async def companion_press_key(
+    platform_adapter: PlatformAdapter,
+    permissions: PermissionManager,
+    args: dict[str, Any],
+) -> dict:
+    """Press a key combination."""
+    key = args.get("key", "")
+    if not key:
+        return {"error": "key is required"}
+    modifiers = args.get("modifiers")
+    await platform_adapter.press_key(key, modifiers=modifiers)
+    return {"pressed": True, "key": key, "modifiers": modifiers or []}
+
+
+async def companion_mouse_move(
+    platform_adapter: PlatformAdapter,
+    permissions: PermissionManager,
+    args: dict[str, Any],
+) -> dict:
+    """Move mouse cursor to coordinates."""
+    x = args.get("x")
+    y = args.get("y")
+    if x is None or y is None:
+        return {"error": "x and y are required"}
+    await platform_adapter.mouse_move(int(x), int(y))
+    return {"moved": True, "x": int(x), "y": int(y)}
+
+
+async def companion_mouse_click(
+    platform_adapter: PlatformAdapter,
+    permissions: PermissionManager,
+    args: dict[str, Any],
+) -> dict:
+    """Click at a screen position."""
+    x = args.get("x")
+    y = args.get("y")
+    if x is None or y is None:
+        return {"error": "x and y are required"}
+    button = args.get("button", "left")
+    clicks = int(args.get("clicks", 1))
+    await platform_adapter.mouse_click(int(x), int(y), button=button, clicks=clicks)
+    return {"clicked": True, "x": int(x), "y": int(y), "button": button, "clicks": clicks}
+
+
+async def companion_mouse_scroll(
+    platform_adapter: PlatformAdapter,
+    permissions: PermissionManager,
+    args: dict[str, Any],
+) -> dict:
+    """Scroll at a screen position."""
+    x = args.get("x")
+    y = args.get("y")
+    if x is None or y is None:
+        return {"error": "x and y are required"}
+    direction = args.get("direction", "down")
+    amount = int(args.get("amount", 3))
+    await platform_adapter.mouse_scroll(int(x), int(y), direction=direction, amount=amount)
+    return {"scrolled": True, "x": int(x), "y": int(y), "direction": direction, "amount": amount}
+
+
 def get_all_tools() -> dict[str, Any]:
     """Return a dict of all companion tool functions keyed by name."""
     return {
@@ -209,4 +378,16 @@ def get_all_tools() -> dict[str, Any]:
         "companion_power": companion_power,
         "companion_file_read": companion_file_read,
         "companion_file_list": companion_file_list,
+        "companion_window_list": companion_window_list,
+        "companion_window_focus": companion_window_focus,
+        "companion_window_move": companion_window_move,
+        "companion_window_minimize": companion_window_minimize,
+        "companion_window_maximize": companion_window_maximize,
+        "companion_window_close": companion_window_close,
+        "companion_window_screenshot": companion_window_screenshot,
+        "companion_type_text": companion_type_text,
+        "companion_press_key": companion_press_key,
+        "companion_mouse_move": companion_mouse_move,
+        "companion_mouse_click": companion_mouse_click,
+        "companion_mouse_scroll": companion_mouse_scroll,
     }

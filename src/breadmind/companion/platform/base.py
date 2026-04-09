@@ -67,3 +67,66 @@ class PlatformAdapter(ABC):
     @abstractmethod
     async def power_action(self, action: str) -> None:
         """Execute power action: sleep, shutdown, lock."""
+
+    # --- Window Management ---
+
+    @abstractmethod
+    async def get_window_list(self) -> list[dict]:
+        """Return list of visible windows: {hwnd/id, title, app_name, x, y, width, height, is_focused}."""
+
+    @abstractmethod
+    async def focus_window(self, window_id: int | str) -> bool:
+        """Bring a window to the foreground."""
+
+    @abstractmethod
+    async def move_window(
+        self,
+        window_id: int | str,
+        x: int,
+        y: int,
+        width: int | None = None,
+        height: int | None = None,
+    ) -> bool:
+        """Move/resize a window."""
+
+    @abstractmethod
+    async def minimize_window(self, window_id: int | str) -> bool:
+        """Minimize a window."""
+
+    @abstractmethod
+    async def maximize_window(self, window_id: int | str) -> bool:
+        """Maximize a window."""
+
+    @abstractmethod
+    async def close_window(self, window_id: int | str) -> bool:
+        """Close a window."""
+
+    # --- Keyboard & Mouse ---
+
+    @abstractmethod
+    async def type_text(self, text: str, interval: float = 0.0) -> None:
+        """Type text as keyboard input at the current cursor position."""
+
+    @abstractmethod
+    async def press_key(self, key: str, modifiers: list[str] | None = None) -> None:
+        """Press a key combo. key: 'enter', 'tab', 'a', 'f5', etc. modifiers: ['ctrl', 'alt', 'shift']."""
+
+    @abstractmethod
+    async def mouse_move(self, x: int, y: int) -> None:
+        """Move mouse cursor to absolute screen coordinates."""
+
+    @abstractmethod
+    async def mouse_click(
+        self, x: int, y: int, button: str = "left", clicks: int = 1
+    ) -> None:
+        """Click at coordinates. button: 'left', 'right', 'middle'."""
+
+    @abstractmethod
+    async def mouse_scroll(
+        self, x: int, y: int, direction: str = "down", amount: int = 3
+    ) -> None:
+        """Scroll at coordinates. direction: 'up', 'down'."""
+
+    @abstractmethod
+    async def capture_window_screenshot(self, window_id: int | str) -> bytes:
+        """Capture a specific window as PNG bytes."""
