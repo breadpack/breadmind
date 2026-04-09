@@ -428,6 +428,26 @@ class LinuxAdapter(PlatformAdapter):
         btn = "5" if direction == "down" else "4"
         await self._run_cmd("xdotool", "click", "--repeat", str(amount), btn)
 
+    async def mouse_drag(
+        self, from_x: int, from_y: int, to_x: int, to_y: int,
+        button: str = "left", duration: float = 0.5,
+    ) -> None:
+        if not shutil.which("xdotool"):
+            raise RuntimeError("Mouse drag requires xdotool")
+        button_map = {"left": "1", "right": "3"}
+        btn = button_map.get(button, "1")
+        # Move to start, press, move to end, release
+        await self._run_cmd("xdotool", "mousemove", str(from_x), str(from_y))
+        await self._run_cmd("xdotool", "mousedown", btn)
+        # Interpolate for smooth drag
+        steps = max(int(duration * 30), 3)
+        for i in range(1, steps + 1):
+            t = i / steps
+            cx = int(from_x + (to_x - from_x) * t)
+            cy = int(from_y + (to_y - from_y) * t)
+            await self._run_cmd("xdotool", "mousemove", str(cx), str(cy))
+        await self._run_cmd("xdotool", "mouseup", btn)
+
     async def capture_window_screenshot(self, window_id: int | str) -> bytes:
         import tempfile
         import os

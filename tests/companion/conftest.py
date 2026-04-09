@@ -158,6 +158,12 @@ class MockPlatformAdapter(PlatformAdapter):
     ) -> None:
         pass
 
+    async def mouse_drag(
+        self, from_x: int, from_y: int, to_x: int, to_y: int,
+        button: str = "left", duration: float = 0.5,
+    ) -> None:
+        pass
+
     async def capture_window_screenshot(self, window_id: int | str) -> bytes:
         # Return minimal valid PNG bytes (1x1 pixel)
         return (

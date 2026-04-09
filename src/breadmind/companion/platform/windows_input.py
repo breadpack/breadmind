@@ -177,3 +177,55 @@ async def send_mouse_scroll(direction: str = "down", amount: int = 3) -> None:
     await asyncio.get_event_loop().run_in_executor(
         None, lambda: ctypes.windll.user32.SendInput(1, inputs, ctypes.sizeof(INPUT))
     )
+
+
+async def send_mouse_drag(
+    from_x: int,
+    from_y: int,
+    to_x: int,
+    to_y: int,
+    button: str = "left",
+    duration: float = 0.5,
+) -> None:
+    """Drag from one screen position to another using SendInput."""
+    import time as _time
+
+    user32 = ctypes.windll.user32
+    button_map = {
+        "left": (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
+        "right": (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
+    }
+    down_flag, up_flag = button_map.get(button, button_map["left"])
+
+    # Move to start, press button
+    await asyncio.get_event_loop().run_in_executor(
+        None, lambda: user32.SetCursorPos(from_x, from_y)
+    )
+    await asyncio.sleep(0.05)
+
+    inp_down = (INPUT * 1)()
+    inp_down[0].type = INPUT_MOUSE
+    inp_down[0].union.mi.dwFlags = down_flag
+    await asyncio.get_event_loop().run_in_executor(
+        None, lambda: user32.SendInput(1, inp_down, ctypes.sizeof(INPUT))
+    )
+
+    # Interpolate movement
+    steps = max(int(duration * 60), 5)  # ~60 fps
+    sleep_per_step = duration / steps
+    for i in range(1, steps + 1):
+        t = i / steps
+        cx = int(from_x + (to_x - from_x) * t)
+        cy = int(from_y + (to_y - from_y) * t)
+        await asyncio.get_event_loop().run_in_executor(
+            None, lambda _x=cx, _y=cy: user32.SetCursorPos(_x, _y)
+        )
+        await asyncio.sleep(sleep_per_step)
+
+    # Release button
+    inp_up = (INPUT * 1)()
+    inp_up[0].type = INPUT_MOUSE
+    inp_up[0].union.mi.dwFlags = up_flag
+    await asyncio.get_event_loop().run_in_executor(
+        None, lambda: user32.SendInput(1, inp_up, ctypes.sizeof(INPUT))
+    )

@@ -363,6 +363,32 @@ async def companion_mouse_scroll(
     return {"scrolled": True, "x": int(x), "y": int(y), "direction": direction, "amount": amount}
 
 
+async def companion_mouse_drag(
+    platform_adapter: PlatformAdapter,
+    permissions: PermissionManager,
+    args: dict[str, Any],
+) -> dict:
+    """Drag from one position to another."""
+    from_x = args.get("from_x")
+    from_y = args.get("from_y")
+    to_x = args.get("to_x")
+    to_y = args.get("to_y")
+    if any(v is None for v in (from_x, from_y, to_x, to_y)):
+        return {"error": "from_x, from_y, to_x, to_y are required"}
+    button = args.get("button", "left")
+    duration = float(args.get("duration", 0.5))
+    await platform_adapter.mouse_drag(
+        int(from_x), int(from_y), int(to_x), int(to_y),
+        button=button, duration=duration,
+    )
+    return {
+        "dragged": True,
+        "from": {"x": int(from_x), "y": int(from_y)},
+        "to": {"x": int(to_x), "y": int(to_y)},
+        "button": button,
+    }
+
+
 def get_all_tools() -> dict[str, Any]:
     """Return a dict of all companion tool functions keyed by name."""
     return {
@@ -390,4 +416,5 @@ def get_all_tools() -> dict[str, Any]:
         "companion_mouse_move": companion_mouse_move,
         "companion_mouse_click": companion_mouse_click,
         "companion_mouse_scroll": companion_mouse_scroll,
+        "companion_mouse_drag": companion_mouse_drag,
     }

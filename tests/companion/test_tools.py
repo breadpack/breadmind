@@ -10,6 +10,7 @@ from breadmind.companion.tools import (
     companion_file_list,
     companion_file_read,
     companion_mouse_click,
+    companion_mouse_drag,
     companion_mouse_move,
     companion_mouse_scroll,
     companion_network_info,
@@ -142,7 +143,7 @@ async def test_get_all_tools():
     assert "companion_window_list" in tools
     assert "companion_type_text" in tools
     assert "companion_mouse_click" in tools
-    assert len(tools) == 24
+    assert len(tools) == 25
 
 
 # --- Window Management Tools ---
@@ -234,6 +235,20 @@ async def test_mouse_scroll(adapter, perms):
     result = await companion_mouse_scroll(adapter, perms, {"x": 100, "y": 200, "direction": "up"})
     assert result["scrolled"] is True
     assert result["direction"] == "up"
+
+
+async def test_mouse_drag(adapter, perms):
+    result = await companion_mouse_drag(adapter, perms, {
+        "from_x": 100, "from_y": 200, "to_x": 300, "to_y": 400
+    })
+    assert result["dragged"] is True
+    assert result["from"] == {"x": 100, "y": 200}
+    assert result["to"] == {"x": 300, "y": 400}
+
+
+async def test_mouse_drag_missing_coords(adapter, perms):
+    result = await companion_mouse_drag(adapter, perms, {"from_x": 100})
+    assert "error" in result
 
 
 # --- Permission Denied for Input Control ---

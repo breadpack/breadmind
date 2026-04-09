@@ -16,6 +16,7 @@ from breadmind.companion.platform.base import PlatformAdapter
 from breadmind.companion.platform.windows_input import (
     send_key_combo,
     send_mouse_click,
+    send_mouse_drag,
     send_mouse_scroll,
     send_unicode_char,
 )
@@ -366,6 +367,12 @@ class WindowsAdapter(PlatformAdapter):
     ) -> None:
         await self.mouse_move(x, y)
         await send_mouse_scroll(direction, amount)
+
+    async def mouse_drag(
+        self, from_x: int, from_y: int, to_x: int, to_y: int,
+        button: str = "left", duration: float = 0.5,
+    ) -> None:
+        await send_mouse_drag(from_x, from_y, to_x, to_y, button, duration)
 
     async def capture_window_screenshot(self, window_id: int | str) -> bytes:
         user32 = ctypes.windll.user32

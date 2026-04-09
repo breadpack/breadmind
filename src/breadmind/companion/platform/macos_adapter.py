@@ -472,6 +472,20 @@ class MacOSAdapter(PlatformAdapter):
         except RuntimeError:
             logger.warning("Scroll via AppleScript failed; scrolling may not be supported")
 
+    async def mouse_drag(
+        self, from_x: int, from_y: int, to_x: int, to_y: int,
+        button: str = "left", duration: float = 0.5,
+    ) -> None:
+        if not shutil.which("cliclick"):
+            raise RuntimeError("Mouse drag requires cliclick: brew install cliclick")
+        # cliclick dd = drag down (press), dm = drag move, du = drag up
+        proc = await asyncio.create_subprocess_exec(
+            "cliclick", f"dd:{from_x},{from_y}", f"du:{to_x},{to_y}",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await proc.communicate()
+
     async def capture_window_screenshot(self, window_id: int | str) -> bytes:
         import tempfile
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:

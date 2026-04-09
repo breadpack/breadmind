@@ -39,6 +39,7 @@ _DEFAULT_PERMISSIONS: dict[str, Any] = {
     "companion_mouse_move": False,
     "companion_mouse_click": False,
     "companion_mouse_scroll": False,
+    "companion_mouse_drag": False,
     # Denied by default (destructive or sensitive)
     "companion_clipboard_read": False,
     "companion_clipboard_write": False,
@@ -54,6 +55,7 @@ _CONFIRMATION_REQUIRED = {
     "companion_type_text",
     "companion_press_key",
     "companion_mouse_click",
+    "companion_mouse_drag",
 }
 
 # Mapping from capability flags to tool names they control
@@ -73,6 +75,7 @@ _CAPABILITY_TOOL_MAP: dict[str, list[str]] = {
         "companion_mouse_move",
         "companion_mouse_click",
         "companion_mouse_scroll",
+        "companion_mouse_drag",
     ],
 }
 
