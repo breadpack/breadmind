@@ -3,7 +3,7 @@ import json
 import logging
 from fastapi import FastAPI, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from typing import Callable
@@ -178,7 +178,8 @@ class WebApp:
             path = request.url.path
             # Skip auth for certain paths
             skip_paths = ["/api/auth/", "/health", "/api/webhook/receive/", "/api/workers/install-script",
-                         "/credential-input/", "/api/vault/submit-external/"]
+                         "/credential-input/", "/api/vault/submit-external/",
+                         "/sw.js", "/manifest.json", "/offline.html"]
             if any(path.startswith(p) for p in skip_paths):
                 return await call_next(request)
 
@@ -274,6 +275,26 @@ class WebApp:
                 https_url = request.url.replace(scheme="https")
                 return RedirectResponse(url=str(https_url), status_code=301)
             return await call_next(request)
+
+        # --- PWA routes ---
+
+        static_dir = Path(__file__).parent / "static"
+
+        @app.get("/manifest.json")
+        async def manifest():
+            return FileResponse(static_dir / "manifest.json", media_type="application/manifest+json")
+
+        @app.get("/sw.js")
+        async def service_worker():
+            return FileResponse(
+                static_dir / "sw.js",
+                media_type="application/javascript",
+                headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"},
+            )
+
+        @app.get("/offline.html")
+        async def offline():
+            return FileResponse(static_dir / "offline.html", media_type="text/html")
 
         # --- Index route ---
 
