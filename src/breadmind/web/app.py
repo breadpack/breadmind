@@ -4,7 +4,7 @@ import logging
 import time
 from fastapi import FastAPI, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from typing import Callable
@@ -43,6 +43,7 @@ from breadmind.web.routes.upload import router as upload_router
 from breadmind.web.routes.export import setup_export_routes
 from breadmind.web.routes.backup import setup_backup_routes
 from breadmind.web.routes.webhook_automation import setup_webhook_automation_routes
+from breadmind.web.routes.pwa import setup_pwa_routes, send_push
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +171,18 @@ class WebApp:
             self._events = self._events[-100:]
         # Broadcast to connected WebSocket clients
         await self.broadcast_event(event_dict)
+        # Send push notification for warning/critical events
+        if event.severity in ("warning", "critical"):
+            try:
+                await send_push(
+                    self._db,
+                    title=f"[{event.severity.upper()}] {event.source}",
+                    body=f"{event.target}: {event.condition}",
+                    url="/#monitoring",
+                    tag=f"monitor-{event.severity}",
+                )
+            except Exception:
+                pass
 
     async def broadcast_event(self, event_dict):
         async with self._lock:
@@ -253,7 +266,8 @@ class WebApp:
             # Skip auth for certain paths
             skip_paths = ["/api/auth/", "/health", "/metrics",
                          "/api/webhook/receive/", "/api/workers/install-script",
-                         "/credential-input/", "/api/vault/submit-external/"]
+                         "/credential-input/", "/api/vault/submit-external/",
+                         "/sw.js", "/manifest.json", "/offline.html"]
             if any(path.startswith(p) for p in skip_paths):
                 return await call_next(request)
 
@@ -350,6 +364,26 @@ class WebApp:
                 return RedirectResponse(url=str(https_url), status_code=301)
             return await call_next(request)
 
+        # --- PWA routes ---
+
+        static_dir = Path(__file__).parent / "static"
+
+        @app.get("/manifest.json")
+        async def manifest():
+            return FileResponse(static_dir / "manifest.json", media_type="application/manifest+json")
+
+        @app.get("/sw.js")
+        async def service_worker():
+            return FileResponse(
+                static_dir / "sw.js",
+                media_type="application/javascript",
+                headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"},
+            )
+
+        @app.get("/offline.html")
+        async def offline():
+            return FileResponse(static_dir / "offline.html", media_type="text/html")
+
         # --- Index route ---
 
         @app.get("/", response_class=HTMLResponse)
@@ -387,6 +421,7 @@ class WebApp:
         setup_backup_routes(app, self)
         setup_webhook_automation_routes(app, self)
         setup_browser_routes(app, self)
+        setup_pwa_routes(app, self)
 
         # --- Prometheus metrics endpoint (outside versioning) ---
 

@@ -4,6 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BreadMind</title>
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#6366f1">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+    <link rel="stylesheet" href="/static/css/pwa.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; height: 100vh; height: 100dvh; overflow: hidden; margin: 0; }
@@ -1096,6 +1102,49 @@
             } catch(e) { flashBtn(btn, false); showToast('Network error', 'error'); }
         }
 
+        async function togglePushNotifications(enabled) {
+            var statusEl = document.getElementById('push-status');
+            var toggle = document.getElementById('push-toggle');
+            if (!window.BreadMindPush) {
+                if (statusEl) statusEl.textContent = 'Not supported';
+                if (toggle) toggle.checked = false;
+                return;
+            }
+            if (enabled) {
+                if (statusEl) statusEl.textContent = 'Requesting permission...';
+                var ok = await window.BreadMindPush.requestPermission();
+                if (ok) {
+                    if (statusEl) statusEl.textContent = 'Enabled';
+                } else {
+                    if (statusEl) statusEl.textContent = 'Permission denied';
+                    if (toggle) toggle.checked = false;
+                }
+            } else {
+                await window.BreadMindPush.unsubscribe();
+                if (statusEl) statusEl.textContent = 'Disabled';
+            }
+        }
+
+        function initPushToggle() {
+            if (!window.BreadMindPush) return;
+            var state = window.BreadMindPush.getState();
+            var toggle = document.getElementById('push-toggle');
+            var statusEl = document.getElementById('push-status');
+            if (!toggle || !statusEl) return;
+            if (!state.supported) {
+                statusEl.textContent = 'Not supported in this browser';
+                toggle.disabled = true;
+            } else if (state.subscribed) {
+                toggle.checked = true;
+                statusEl.textContent = 'Enabled';
+            } else if (state.permission === 'denied') {
+                statusEl.textContent = 'Blocked by browser';
+                toggle.disabled = true;
+            } else {
+                statusEl.textContent = 'Disabled';
+            }
+        }
+
         function loadSettings() {
             Promise.all([
                 fetch('/api/config').then(r => r.json()).catch(() => ({})),
@@ -1252,6 +1301,16 @@
                     <input type="text" id="market-url" placeholder="URL (optional)" class="setting-input" style="flex:1;" />
                     <button class="save-btn" onclick="addMarket()">Add</button>
                 </div>`;
+                html += `</div>`;
+
+                // Push Notifications
+                html += `<div class="settings-section" data-stab="general"><h3>Notifications</h3>`;
+                html += `<div class="setting-row"><span class="setting-label">Push Notifications</span>`;
+                html += `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;">`;
+                html += `<input type="checkbox" id="push-toggle" onchange="togglePushNotifications(this.checked)" />`;
+                html += `<span id="push-status" style="font-size:12px;color:#94a3b8;">Checking...</span>`;
+                html += `</label></div>`;
+                html += `<div style="font-size:11px;color:#64748b;margin-top:4px;">Receive alerts for warning and critical monitoring events even when the tab is closed.</div>`;
                 html += `</div>`;
 
                 // Safety Rules (editable)
@@ -1429,6 +1488,7 @@
                 checkForUpdate();
                 loadPrompts();
                 renderEmbeddingSettings(embeddingData);
+                setTimeout(initPushToggle, 100);
                 switchSettingsTab(_currentSettingsTab || 'general');
             });
         }
@@ -3299,5 +3359,9 @@
     <script src="/static/js/browser-page.js"></script>
     <script src="/static/js/webhook.js"></script>
     <script src="/static/js/chat.js"></script>
+    <script src="/static/js/pwa-register.js"></script>
+    <script src="/static/js/push-manager.js"></script>
+    <script src="/static/js/bottom-nav.js"></script>
+    <script src="/static/js/device-apis.js"></script>
 </body>
 </html>
