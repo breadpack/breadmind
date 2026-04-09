@@ -1,0 +1,75 @@
+"""Tests for PermissionManager and path sandboxing."""
+
+from __future__ import annotations
+
+import os
+import tempfile
+from pathlib import Path
+
+import pytest
+
+from breadmind.companion.security import PermissionManager
+
+
+def test_default_permissions():
+    pm = PermissionManager()
+    assert pm.is_allowed("companion_system_info") is True
+    assert pm.is_allowed("companion_screenshot") is True
+    assert pm.is_allowed("companion_clipboard_read") is False
+    assert pm.is_allowed("companion_power") is False
+
+
+def test_custom_capabilities():
+    pm = PermissionManager(capabilities={
+        "companion_clipboard_read": True,
+        "companion_power": True,
+    })
+    assert pm.is_allowed("companion_clipboard_read") is True
+    assert pm.is_allowed("companion_power") is True
+
+
+def test_unknown_tool_denied():
+    pm = PermissionManager()
+    assert pm.is_allowed("nonexistent_tool") is False
+
+
+def test_path_no_restrictions():
+    pm = PermissionManager()
+    assert pm.check_path("/tmp/somefile.txt") is True
+
+
+def test_path_allowed_paths():
+    pm = PermissionManager(allowed_paths=["/tmp/allowed"])
+    assert pm.check_path("/tmp/allowed/file.txt") is True
+    assert pm.check_path("/etc/passwd") is False
+
+
+def test_path_denied_paths():
+    pm = PermissionManager(denied_paths=["/etc"])
+    assert pm.check_path("/etc/passwd") is False
+    assert pm.check_path("/tmp/safe.txt") is True
+
+
+def test_path_denied_takes_priority():
+    pm = PermissionManager(
+        allowed_paths=["/home"],
+        denied_paths=["/home/secret"],
+    )
+    assert pm.check_path("/home/user/file.txt") is True
+    assert pm.check_path("/home/secret/key.pem") is False
+
+
+def test_path_traversal_blocked():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        allowed = Path(tmpdir) / "allowed"
+        allowed.mkdir()
+        pm = PermissionManager(allowed_paths=[str(allowed)])
+        # Traversal should resolve and fail
+        assert pm.check_path(str(allowed / ".." / "etc" / "passwd")) is False
+
+
+def test_requires_confirmation():
+    pm = PermissionManager()
+    assert pm.requires_confirmation("companion_power") is True
+    assert pm.requires_confirmation("companion_process_kill") is True
+    assert pm.requires_confirmation("companion_system_info") is False

@@ -35,6 +35,7 @@ from breadmind.web.routes.oauth import router as oauth_router
 from breadmind.web.routes.infrastructure import router as infra_router
 from breadmind.web.routes.personal import router as personal_router
 from breadmind.web.routes.workers import setup_worker_routes
+from breadmind.web.routes.companions import setup_companion_routes
 from breadmind.web.routes.credential_input import setup_credential_input_routes
 from breadmind.web.routes.bg_jobs import setup_bg_job_routes
 from breadmind.web.routes.coding_jobs import register_coding_job_routes
@@ -407,6 +408,7 @@ class WebApp:
         setup_settings_routes(app, self)
         setup_messenger_routes(app, self)
         setup_worker_routes(app, self)
+        setup_companion_routes(app, self)
         setup_chat_routes(app, self)
         setup_credential_input_routes(app, self)
         setup_bg_job_routes(app, self)
