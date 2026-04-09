@@ -99,7 +99,9 @@ def create_provider(config: Any) -> LLMProvider:
     return info.cls()
 
 
-# --- Provider 자동 등록 (Single Source of Truth) ---
+# --- Provider auto-registration (Single Source of Truth) ---
+
+# Core providers (always available)
 from breadmind.llm.claude import ClaudeProvider  # noqa: E402
 from breadmind.llm.gemini import GeminiProvider  # noqa: E402
 from breadmind.llm.grok import GrokProvider  # noqa: E402
@@ -167,3 +169,70 @@ class AuthRotator:
     def active_count(self) -> int:
         now = time.time()
         return sum(1 for p in self._profiles if now >= p.cooldown_until)
+
+
+# --- OpenAI-compatible providers (always available — uses openai SDK) ---
+
+from breadmind.llm.openai_provider import OpenAIProvider  # noqa: E402
+from breadmind.llm.deepseek import DeepSeekProvider  # noqa: E402
+from breadmind.llm.openrouter import OpenRouterProvider  # noqa: E402
+from breadmind.llm.mistral import MistralProvider  # noqa: E402
+from breadmind.llm.together import TogetherProvider  # noqa: E402
+from breadmind.llm.groq_provider import GroqProvider  # noqa: E402
+from breadmind.llm.azure_openai import AzureOpenAIProvider  # noqa: E402
+
+register_provider("openai", OpenAIProvider, "OPENAI_API_KEY",
+                   display_name="OpenAI",
+                   models=["gpt-4o", "gpt-4o-mini", "o1", "o1-mini", "o3-mini"],
+                   signup_url="https://platform.openai.com/api-keys")
+register_provider("deepseek", DeepSeekProvider, "DEEPSEEK_API_KEY",
+                   display_name="DeepSeek",
+                   models=["deepseek-chat", "deepseek-reasoner"],
+                   signup_url="https://platform.deepseek.com/api_keys")
+register_provider("openrouter", OpenRouterProvider, "OPENROUTER_API_KEY",
+                   display_name="OpenRouter (300+ models)",
+                   models=["openai/gpt-4o", "anthropic/claude-sonnet-4-6",
+                           "google/gemini-2.5-flash", "meta-llama/llama-3.1-405b"],
+                   signup_url="https://openrouter.ai/keys")
+register_provider("mistral", MistralProvider, "MISTRAL_API_KEY",
+                   display_name="Mistral AI",
+                   models=["mistral-large-latest", "mistral-medium-latest",
+                           "mistral-small-latest", "codestral-latest"],
+                   signup_url="https://console.mistral.ai/api-keys")
+register_provider("together", TogetherProvider, "TOGETHER_API_KEY",
+                   display_name="Together AI",
+                   models=["meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
+                           "mistralai/Mixtral-8x7B-Instruct-v0.1"],
+                   free_tier=True,
+                   signup_url="https://api.together.xyz/settings/api-keys")
+register_provider("groq", GroqProvider, "GROQ_API_KEY",
+                   display_name="Groq (Fast Inference)",
+                   models=["llama-3.3-70b-versatile", "llama-3.1-8b-instant",
+                           "mixtral-8x7b-32768"],
+                   free_tier=True,
+                   signup_url="https://console.groq.com/keys")
+register_provider("azure_openai", AzureOpenAIProvider, "AZURE_OPENAI_API_KEY",
+                   display_name="Azure OpenAI",
+                   models=["gpt-4o", "gpt-4o-mini"],
+                   signup_url="https://portal.azure.com/")
+
+# Optional providers (graceful degradation if dependency missing)
+try:
+    from breadmind.llm.bedrock import BedrockProvider  # noqa: E402
+    register_provider("bedrock", BedrockProvider, "AWS_ACCESS_KEY_ID",
+                       display_name="AWS Bedrock",
+                       models=["anthropic.claude-sonnet-4-6-20250514-v1:0",
+                               "amazon.nova-pro-v1:0",
+                               "meta.llama3-1-70b-instruct-v1:0"],
+                       signup_url="https://console.aws.amazon.com/bedrock/")
+except ImportError:
+    pass
+
+try:
+    from breadmind.llm.litellm_provider import LiteLLMProvider  # noqa: E402
+    register_provider("litellm", LiteLLMProvider, "LITELLM_API_KEY",
+                       display_name="LiteLLM (Proxy/Library)",
+                       models=["gpt-4o", "claude-sonnet-4-6"],
+                       signup_url="https://docs.litellm.ai/")
+except ImportError:
+    pass
