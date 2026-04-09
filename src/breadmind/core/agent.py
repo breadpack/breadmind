@@ -16,6 +16,7 @@ from breadmind.core.events import get_event_bus, Event, EventType
 if TYPE_CHECKING:
     from breadmind.memory.working import WorkingMemory
     from breadmind.core.tool_gap import ToolGapDetector
+    from breadmind.llm.cost_router import CostRouter
 
 logger = logging.getLogger("breadmind.agent")
 
@@ -38,8 +39,10 @@ class CoreAgent:
         behavior_prompt: str | None = None,
         profiler: object | None = None,
         prompt_builder: object | None = None,
+        cost_router: CostRouter | None = None,
     ):
         self._provider = provider
+        self._cost_router = cost_router
         self._tools = tool_registry
         self._guard = safety_guard
         self._tool_executor = ToolExecutor(tool_registry, safety_guard, tool_timeout)
@@ -398,12 +401,25 @@ class CoreAgent:
 
             await self._notify_progress("thinking", "")
 
+            # Cost-optimized model selection (when enabled)
+            _routed_provider: str | None = None
+            _routed_model: str | None = None
+            if self._cost_router and self._cost_router.enabled:
+                _routed_provider, _routed_model = self._cost_router.select_model(
+                    category=intent.category,
+                    complexity="moderate",  # default; future: derive from message
+                    urgency=intent.urgency,
+                    needs_tools=bool(tools),
+                    needs_thinking=think_budget is not None and think_budget > 0,
+                )
+
             t0 = time.monotonic()
             try:
                 response = await asyncio.wait_for(
                     self._provider.chat(
                         messages=chat_messages,
                         tools=tools or None,
+                        model=_routed_model,
                         think_budget=think_budget,
                     ),
                     timeout=self._chat_timeout,
@@ -417,6 +433,26 @@ class CoreAgent:
 
             duration_ms = (time.monotonic() - t0) * 1000
             self._accumulate_usage(response)
+
+            # Record result to cost router
+            if self._cost_router and _routed_provider and _routed_model and response.usage:
+                cost_usd = 0.0
+                try:
+                    cost_usd = self._cost_router.registry.estimate_cost(
+                        _routed_model,
+                        response.usage.input_tokens,
+                        response.usage.output_tokens,
+                    )
+                except Exception:
+                    pass
+                self._cost_router.record_result(
+                    provider=_routed_provider,
+                    model=_routed_model,
+                    intent=intent.category.value,
+                    success=response.stop_reason != "error",
+                    cost=cost_usd,
+                    latency_ms=duration_ms,
+                )
 
             # Log LLM call
             model_name = getattr(self._provider, "model", "unknown")
