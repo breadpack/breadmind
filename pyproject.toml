@@ -47,6 +47,9 @@ browser = [
 embeddings = [
     "sentence-transformers>=3.0.0",
 ]
+pwa = [
+    "pywebpush>=2.0.0",
+]
 
 [project.scripts]
 breadmind = "breadmind.main:main"

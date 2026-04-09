@@ -31,6 +31,7 @@ from breadmind.web.routes.workers import setup_worker_routes
 from breadmind.web.routes.credential_input import setup_credential_input_routes
 from breadmind.web.routes.bg_jobs import setup_bg_job_routes
 from breadmind.web.routes.plugins import router as plugins_router
+from breadmind.web.routes.pwa import setup_pwa_routes, send_push
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +152,18 @@ class WebApp:
             self._events = self._events[-100:]
         # Broadcast to connected WebSocket clients
         await self.broadcast_event(event_dict)
+        # Send push notification for warning/critical events
+        if event.severity in ("warning", "critical"):
+            try:
+                await send_push(
+                    self._db,
+                    title=f"[{event.severity.upper()}] {event.source}",
+                    body=f"{event.target}: {event.condition}",
+                    url="/#monitoring",
+                    tag=f"monitor-{event.severity}",
+                )
+            except Exception:
+                pass
 
     async def broadcast_event(self, event_dict):
         async with self._lock:
@@ -327,6 +340,7 @@ class WebApp:
         app.include_router(personal_router)
         app.include_router(infra_router)
         app.include_router(plugins_router)
+        setup_pwa_routes(app, self)
 
         # --- Static files (JS, CSS) ---
         static_dir = Path(__file__).parent / "static"

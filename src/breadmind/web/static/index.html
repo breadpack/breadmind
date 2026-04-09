@@ -1221,6 +1221,49 @@
             } catch(e) { flashBtn(btn, false); showToast('Network error', 'error'); }
         }
 
+        async function togglePushNotifications(enabled) {
+            var statusEl = document.getElementById('push-status');
+            var toggle = document.getElementById('push-toggle');
+            if (!window.BreadMindPush) {
+                if (statusEl) statusEl.textContent = 'Not supported';
+                if (toggle) toggle.checked = false;
+                return;
+            }
+            if (enabled) {
+                if (statusEl) statusEl.textContent = 'Requesting permission...';
+                var ok = await window.BreadMindPush.requestPermission();
+                if (ok) {
+                    if (statusEl) statusEl.textContent = 'Enabled';
+                } else {
+                    if (statusEl) statusEl.textContent = 'Permission denied';
+                    if (toggle) toggle.checked = false;
+                }
+            } else {
+                await window.BreadMindPush.unsubscribe();
+                if (statusEl) statusEl.textContent = 'Disabled';
+            }
+        }
+
+        function initPushToggle() {
+            if (!window.BreadMindPush) return;
+            var state = window.BreadMindPush.getState();
+            var toggle = document.getElementById('push-toggle');
+            var statusEl = document.getElementById('push-status');
+            if (!toggle || !statusEl) return;
+            if (!state.supported) {
+                statusEl.textContent = 'Not supported in this browser';
+                toggle.disabled = true;
+            } else if (state.subscribed) {
+                toggle.checked = true;
+                statusEl.textContent = 'Enabled';
+            } else if (state.permission === 'denied') {
+                statusEl.textContent = 'Blocked by browser';
+                toggle.disabled = true;
+            } else {
+                statusEl.textContent = 'Disabled';
+            }
+        }
+
         function loadSettings() {
             Promise.all([
                 fetch('/api/config').then(r => r.json()).catch(() => ({})),
@@ -1448,6 +1491,16 @@
                     <input type="text" id="market-url" placeholder="URL (optional)" class="setting-input" style="flex:1;" />
                     <button class="save-btn" onclick="addMarket()">Add</button>
                 </div>`;
+                html += `</div>`;
+
+                // Push Notifications
+                html += `<div class="settings-section" data-stab="general"><h3>Notifications</h3>`;
+                html += `<div class="setting-row"><span class="setting-label">Push Notifications</span>`;
+                html += `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;">`;
+                html += `<input type="checkbox" id="push-toggle" onchange="togglePushNotifications(this.checked)" />`;
+                html += `<span id="push-status" style="font-size:12px;color:#94a3b8;">Checking...</span>`;
+                html += `</label></div>`;
+                html += `<div style="font-size:11px;color:#64748b;margin-top:4px;">Receive alerts for warning and critical monitoring events even when the tab is closed.</div>`;
                 html += `</div>`;
 
                 // Safety Rules (editable)
@@ -1707,6 +1760,7 @@
                 checkForUpdate();
                 loadPrompts();
                 renderEmbeddingSettings(embeddingData);
+                setTimeout(initPushToggle, 100);
                 switchSettingsTab(_currentSettingsTab || 'general');
             });
         }
