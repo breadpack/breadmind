@@ -21,8 +21,60 @@ class Step:
 
 
 @dataclass
+class DAGMutation:
+    added: list[dict] = field(default_factory=list)
+    removed: list[str] = field(default_factory=list)
+    modified: list[dict] = field(default_factory=list)
+
+
+@dataclass
 class DAG:
     steps: list[Step]
+
+    def apply_mutation(self, mutation: "DAGMutation") -> "DAG":
+        """Return a new DAG with the mutation applied.
+
+        Raises DAGValidationError if the result is invalid (cycle, missing
+        dependency, duplicate id, or reference to a non-existent step to
+        modify).
+        """
+        new_steps = list(self.steps)
+
+        # Remove
+        removed_set = set(mutation.removed)
+        new_steps = [s for s in new_steps if s.id not in removed_set]
+
+        # Modify (replace by id)
+        by_id = {s.id: i for i, s in enumerate(new_steps)}
+        for mod in mutation.modified:
+            sid = mod["id"]
+            if sid not in by_id:
+                raise DAGValidationError(f"cannot modify missing step '{sid}'")
+            new_steps[by_id[sid]] = Step(
+                id=mod["id"],
+                title=mod["title"],
+                tool=mod.get("tool"),
+                args=dict(mod.get("args", {})),
+                depends_on=list(mod.get("depends_on", [])),
+                timeout_seconds=int(mod.get("timeout_seconds", 300)),
+                max_attempts=int(mod.get("max_attempts", 3)),
+            )
+
+        # Add
+        for add in mutation.added:
+            new_steps.append(Step(
+                id=add["id"],
+                title=add["title"],
+                tool=add.get("tool"),
+                args=dict(add.get("args", {})),
+                depends_on=list(add.get("depends_on", [])),
+                timeout_seconds=int(add.get("timeout_seconds", 300)),
+                max_attempts=int(add.get("max_attempts", 3)),
+            ))
+
+        new_dag = DAG(steps=new_steps)
+        new_dag.validate()
+        return new_dag
 
     def _by_id(self) -> dict[str, Step]:
         return {s.id: s for s in self.steps}

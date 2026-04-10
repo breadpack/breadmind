@@ -160,6 +160,37 @@ class FlowEngine:
                         actor=FlowActor.ENGINE,
                     )
                 )
+        elif etype == EventType.DAG_MUTATED:
+            if st.dag is None or st.finalized:
+                return
+            from breadmind.flow.dag import DAGMutation, DAGValidationError
+            mutation = DAGMutation(
+                added=list(event.payload.get("added", [])),
+                removed=list(event.payload.get("removed", [])),
+                modified=list(event.payload.get("modified", [])),
+            )
+            try:
+                new_dag = st.dag.apply_mutation(mutation)
+            except DAGValidationError as exc:
+                await self._bus.publish(
+                    FlowEvent(
+                        flow_id=event.flow_id,
+                        seq=0,
+                        event_type=EventType.DAG_MUTATION_REJECTED,
+                        payload={"reason": str(exc), "mutation": event.payload},
+                        actor=FlowActor.ENGINE,
+                    )
+                )
+                return
+
+            removed_set = set(mutation.removed)
+            st.completed -= removed_set
+            st.failed -= removed_set
+            st.queued -= removed_set
+            st.running -= removed_set
+
+            st.dag = new_dag
+            await self._schedule_next(event.flow_id, st)
         elif etype == EventType.STEP_QUEUED:
             sid = event.payload["step_id"]
             st.queued.add(sid)

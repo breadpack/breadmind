@@ -185,6 +185,164 @@ async def test_engine_does_not_finalize_on_step_failed_alone(test_db):
         await bus.stop()
 
 
+async def test_engine_applies_dag_mutation_adding_step(test_db):
+    """Mutation adds a new step depending on an existing one; engine schedules it when ready."""
+    import asyncio
+    from uuid import uuid4
+    store = FlowEventStore(test_db)
+    bus = FlowEventBus(store=store, redis=None)
+    await bus.start()
+    dispatcher = FakeDispatcher()
+    engine = FlowEngine(bus=bus, dispatcher=dispatcher)
+    await engine.start()
+    try:
+        flow_id = uuid4()
+        await bus.publish(FlowEvent(
+            flow_id=flow_id, seq=0,
+            event_type=EventType.FLOW_CREATED,
+            payload={"title": "T", "description": "", "user_id": "u", "origin": "chat"},
+            actor=FlowActor.AGENT,
+        ))
+        dag = DAG(steps=[Step(id="a", title="A", tool="noop", args={}, depends_on=[])])
+        await bus.publish(FlowEvent(
+            flow_id=flow_id, seq=0,
+            event_type=EventType.DAG_PROPOSED,
+            payload={"steps": dag.to_payload()},
+            actor=FlowActor.AGENT,
+        ))
+        await asyncio.sleep(0.1)
+        await bus.publish(FlowEvent(
+            flow_id=flow_id, seq=0,
+            event_type=EventType.STEP_STARTED,
+            payload={"step_id": "a", "started_at": "x"},
+            actor=FlowActor.WORKER,
+        ))
+        await bus.publish(FlowEvent(
+            flow_id=flow_id, seq=0,
+            event_type=EventType.DAG_MUTATED,
+            payload={"added": [{"id": "b", "title": "B", "tool": "noop", "args": {}, "depends_on": ["a"]}]},
+            actor=FlowActor.AGENT,
+        ))
+        await asyncio.sleep(0.1)
+        await bus.publish(FlowEvent(
+            flow_id=flow_id, seq=0,
+            event_type=EventType.STEP_COMPLETED,
+            payload={"step_id": "a", "result": {}, "duration_ms": 10},
+            actor=FlowActor.WORKER,
+        ))
+        await asyncio.sleep(0.2)
+
+        dispatched_ids = [c[1] for c in dispatcher.calls]
+        assert "a" in dispatched_ids
+        assert "b" in dispatched_ids, f"expected 'b' to be dispatched after mutation; got {dispatched_ids}"
+    finally:
+        await engine.stop()
+        await bus.stop()
+
+
+async def test_engine_rejects_invalid_mutation(test_db):
+    """Mutation introducing a cycle is rejected with DAG_MUTATION_REJECTED event."""
+    import asyncio
+    from uuid import uuid4
+    store = FlowEventStore(test_db)
+    bus = FlowEventBus(store=store, redis=None)
+    await bus.start()
+    dispatcher = FakeDispatcher()
+    engine = FlowEngine(bus=bus, dispatcher=dispatcher)
+    await engine.start()
+    try:
+        flow_id = uuid4()
+        await bus.publish(FlowEvent(
+            flow_id=flow_id, seq=0,
+            event_type=EventType.FLOW_CREATED,
+            payload={"title": "T", "description": "", "user_id": "u", "origin": "chat"},
+            actor=FlowActor.AGENT,
+        ))
+        await bus.publish(FlowEvent(
+            flow_id=flow_id, seq=0,
+            event_type=EventType.DAG_PROPOSED,
+            payload={"steps": [
+                {"id": "a", "title": "A", "tool": "t", "args": {}, "depends_on": []},
+                {"id": "b", "title": "B", "tool": "t", "args": {}, "depends_on": ["a"]},
+            ]},
+            actor=FlowActor.AGENT,
+        ))
+        await asyncio.sleep(0.1)
+
+        await bus.publish(FlowEvent(
+            flow_id=flow_id, seq=0,
+            event_type=EventType.DAG_MUTATED,
+            payload={"modified": [{"id": "a", "title": "A", "tool": "t", "args": {}, "depends_on": ["b"]}]},
+            actor=FlowActor.AGENT,
+        ))
+        await asyncio.sleep(0.15)
+
+        events = await bus.replay(flow_id)
+        types = [e.event_type.value for e in events]
+        assert "dag_mutation_rejected" in types
+    finally:
+        await engine.stop()
+        await bus.stop()
+
+
+async def test_engine_mutation_remove_step_clears_state(test_db):
+    """Removing a failed step via mutation also clears it from _FlowState.failed."""
+    import asyncio
+    from uuid import uuid4
+    store = FlowEventStore(test_db)
+    bus = FlowEventBus(store=store, redis=None)
+    await bus.start()
+    dispatcher = FakeDispatcher()
+    engine = FlowEngine(bus=bus, dispatcher=dispatcher)
+    await engine.start()
+    try:
+        flow_id = uuid4()
+        await bus.publish(FlowEvent(
+            flow_id=flow_id, seq=0,
+            event_type=EventType.FLOW_CREATED,
+            payload={"title": "T", "description": "", "user_id": "u", "origin": "chat"},
+            actor=FlowActor.AGENT,
+        ))
+        await bus.publish(FlowEvent(
+            flow_id=flow_id, seq=0,
+            event_type=EventType.DAG_PROPOSED,
+            payload={"steps": [
+                {"id": "bad", "title": "Bad", "tool": "t", "args": {}, "depends_on": []},
+                {"id": "good", "title": "Good", "tool": "t", "args": {}, "depends_on": []},
+            ]},
+            actor=FlowActor.AGENT,
+        ))
+        await asyncio.sleep(0.1)
+        await bus.publish(FlowEvent(
+            flow_id=flow_id, seq=0,
+            event_type=EventType.STEP_FAILED,
+            payload={"step_id": "bad", "error": "err", "attempt": 1},
+            actor=FlowActor.WORKER,
+        ))
+        await asyncio.sleep(0.1)
+        await bus.publish(FlowEvent(
+            flow_id=flow_id, seq=0,
+            event_type=EventType.DAG_MUTATED,
+            payload={"removed": ["bad"]},
+            actor=FlowActor.AGENT,
+        ))
+        await asyncio.sleep(0.1)
+        await bus.publish(FlowEvent(
+            flow_id=flow_id, seq=0,
+            event_type=EventType.STEP_COMPLETED,
+            payload={"step_id": "good", "result": {}, "duration_ms": 10},
+            actor=FlowActor.WORKER,
+        ))
+        await asyncio.sleep(0.2)
+
+        async with test_db.acquire() as conn:
+            row = await conn.fetchrow("SELECT status FROM flows WHERE id = $1", flow_id)
+        assert row["status"] == "completed"
+    finally:
+        await engine.stop()
+        await bus.stop()
+
+
 async def test_engine_finalizes_on_escalation_raised(test_db):
     """ESCALATION_RAISED should trigger FLOW_FAILED publication."""
     store = FlowEventStore(test_db)

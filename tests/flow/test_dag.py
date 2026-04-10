@@ -53,6 +53,35 @@ def test_detects_missing_dependency():
         ]).validate()
 
 
+def test_dag_apply_mutation_add():
+    from breadmind.flow.dag import DAGMutation
+    dag = DAG(steps=[Step(id="a", title="A", tool="t", args={}, depends_on=[])])
+    mutated = dag.apply_mutation(DAGMutation(added=[{"id": "b", "title": "B", "tool": "t", "args": {}, "depends_on": ["a"]}]))
+    assert len(mutated.steps) == 2
+    assert mutated.topological_order() == ["a", "b"]
+
+
+def test_dag_apply_mutation_remove():
+    from breadmind.flow.dag import DAGMutation
+    dag = DAG(steps=[
+        Step(id="a", title="A", tool="t", args={}, depends_on=[]),
+        Step(id="b", title="B", tool="t", args={}, depends_on=[]),
+    ])
+    mutated = dag.apply_mutation(DAGMutation(removed=["a"]))
+    assert len(mutated.steps) == 1
+    assert mutated.steps[0].id == "b"
+
+
+def test_dag_apply_mutation_cycle_raises():
+    from breadmind.flow.dag import DAGMutation
+    dag = DAG(steps=[
+        Step(id="a", title="A", tool="t", args={}, depends_on=[]),
+        Step(id="b", title="B", tool="t", args={}, depends_on=["a"]),
+    ])
+    with pytest.raises(DAGValidationError):
+        dag.apply_mutation(DAGMutation(modified=[{"id": "a", "title": "A", "tool": "t", "args": {}, "depends_on": ["b"]}]))
+
+
 def test_detects_duplicate_step_id():
     with pytest.raises(DAGValidationError):
         DAG(steps=[
