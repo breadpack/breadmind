@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from breadmind.sdui.spec import UISpec
-from breadmind.sdui.views import chat_view, flow_list_view, flow_detail_view
+from breadmind.sdui.views import chat_view, flow_list_view, flow_detail_view, monitoring_view
 
 
 class UISpecProjector:
@@ -24,4 +24,6 @@ class UISpecProjector:
             return await flow_list_view.build(self._db, **params)
         if view_key == "flow_detail_view":
             return await flow_detail_view.build(self._db, **params)
+        if view_key == "monitoring_view":
+            return await monitoring_view.build(self._db, **params)
         raise ValueError(f"unknown view_key: {view_key}")
