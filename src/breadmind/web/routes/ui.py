@@ -21,6 +21,7 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from breadmind.sdui.actions import ActionHandler
 from breadmind.sdui.patches import diff_specs
 from breadmind.sdui.projector import UISpecProjector
 from breadmind.sdui.spec import UISpec
@@ -38,7 +39,9 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
 
     The web app factory does not currently expose a startup hook, so we
     build these singletons on first use and stash them on ``app.state``.
-    Subsequent connections reuse the same instances.
+    Subsequent connections reuse the same instances. The
+    :class:`ActionHandler` is constructed alongside so that the ``action``
+    branch of ``handle_ws_ui`` always finds it populated.
     """
     projector = getattr(app.state, "uispec_projector", None)
     flow_bus = getattr(app.state, "flow_event_bus", None)
@@ -73,6 +76,7 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
         projector = UISpecProjector(db=database, bus=flow_bus)
         app.state.flow_event_bus = flow_bus
         app.state.uispec_projector = projector
+        app.state.sdui_action_handler = ActionHandler(bus=flow_bus)
         return projector, flow_bus
 
 
