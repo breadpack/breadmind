@@ -29,8 +29,11 @@ def test_ready_steps_partial():
         Step(id="b", title="B", tool="t", args={}, depends_on=[]),
         Step(id="c", title="C", tool="t", args={}, depends_on=["a", "b"]),
     ])
+    # With only 'a' completed, 'b' still has no deps so it's ready.
+    # 'c' is not ready because 'b' is not yet completed.
     ready = dag.ready_steps(completed={"a"})
-    assert ready == []
+    assert set(ready) == {"b"}
+    # With both a and b completed, c is ready.
     ready = dag.ready_steps(completed={"a", "b"})
     assert ready == ["c"]
 

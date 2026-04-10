@@ -77,11 +77,6 @@ class DAG:
         for s in self.steps:
             if s.id in completed:
                 continue
-            if not s.depends_on:
-                # Root steps are only "ready" before any progress has been made.
-                if not completed:
-                    ready.append(s.id)
-                continue
             if all(dep in completed for dep in s.depends_on):
                 ready.append(s.id)
         return ready
