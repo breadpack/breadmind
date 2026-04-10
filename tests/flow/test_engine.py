@@ -136,3 +136,90 @@ async def test_engine_completes_flow_when_all_done(test_db):
     finally:
         await engine.stop()
         await bus.stop()
+
+
+async def test_engine_does_not_finalize_on_step_failed_alone(test_db):
+    """STEP_FAILED without escalation should not finalize the flow; the
+    engine defers finalization to the recovery controller via
+    ESCALATION_RAISED."""
+    store = FlowEventStore(test_db)
+    bus = FlowEventBus(store=store, redis=None)
+    await bus.start()
+    dispatcher = FakeDispatcher()
+    engine = FlowEngine(bus=bus, dispatcher=dispatcher)
+    await engine.start()
+    try:
+        flow_id = uuid4()
+        await bus.publish(FlowEvent(
+            flow_id=flow_id, seq=0,
+            event_type=EventType.FLOW_CREATED,
+            payload={"title": "T", "description": "", "user_id": "u", "origin": "chat"},
+            actor=FlowActor.AGENT,
+        ))
+        dag = DAG(steps=[Step(id="a", title="A", tool="noop", args={}, depends_on=[])])
+        await bus.publish(FlowEvent(
+            flow_id=flow_id, seq=0,
+            event_type=EventType.DAG_PROPOSED,
+            payload={"steps": dag.to_payload()},
+            actor=FlowActor.AGENT,
+        ))
+        await asyncio.sleep(0.1)
+        await bus.publish(FlowEvent(
+            flow_id=flow_id, seq=0,
+            event_type=EventType.STEP_FAILED,
+            payload={"step_id": "a", "error": "ConnectionError", "attempt": 1},
+            actor=FlowActor.WORKER,
+        ))
+        await asyncio.sleep(0.2)
+
+        async with test_db.acquire() as conn:
+            row = await conn.fetchrow("SELECT status FROM flows WHERE id = $1", flow_id)
+        # Flow should be in a non-terminal state (neither completed nor failed).
+        assert row["status"] not in ("completed", "failed", "escalated")
+
+        events = await bus.replay(flow_id)
+        types = [e.event_type.value for e in events]
+        assert "flow_failed" not in types
+    finally:
+        await engine.stop()
+        await bus.stop()
+
+
+async def test_engine_finalizes_on_escalation_raised(test_db):
+    """ESCALATION_RAISED should trigger FLOW_FAILED publication."""
+    store = FlowEventStore(test_db)
+    bus = FlowEventBus(store=store, redis=None)
+    await bus.start()
+    dispatcher = FakeDispatcher()
+    engine = FlowEngine(bus=bus, dispatcher=dispatcher)
+    await engine.start()
+    try:
+        flow_id = uuid4()
+        await bus.publish(FlowEvent(
+            flow_id=flow_id, seq=0,
+            event_type=EventType.FLOW_CREATED,
+            payload={"title": "T", "description": "", "user_id": "u", "origin": "chat"},
+            actor=FlowActor.AGENT,
+        ))
+        dag = DAG(steps=[Step(id="a", title="A", tool="noop", args={}, depends_on=[])])
+        await bus.publish(FlowEvent(
+            flow_id=flow_id, seq=0,
+            event_type=EventType.DAG_PROPOSED,
+            payload={"steps": dag.to_payload()},
+            actor=FlowActor.AGENT,
+        ))
+        await asyncio.sleep(0.1)
+        await bus.publish(FlowEvent(
+            flow_id=flow_id, seq=0,
+            event_type=EventType.ESCALATION_RAISED,
+            payload={"step_id": "a", "reason": "max attempts exceeded", "error": "boom"},
+            actor=FlowActor.RECOVERY,
+        ))
+        await asyncio.sleep(0.2)
+
+        events = await bus.replay(flow_id)
+        types = [e.event_type.value for e in events]
+        assert "flow_failed" in types
+    finally:
+        await engine.stop()
+        await bus.stop()

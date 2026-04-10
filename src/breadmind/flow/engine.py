@@ -143,6 +143,9 @@ class FlowEngine:
             st.running.discard(sid)
             st.queued.discard(sid)
             st.failed.add(sid)
+            # Do not finalize here; wait for the recovery controller to
+            # either retry the step or escalate via ESCALATION_RAISED.
+        elif etype == EventType.ESCALATION_RAISED:
             if not st.finalized:
                 st.finalized = True
                 await self._bus.publish(
@@ -150,10 +153,18 @@ class FlowEngine:
                         flow_id=event.flow_id,
                         seq=0,
                         event_type=EventType.FLOW_FAILED,
-                        payload={"reason": f"step {sid} failed"},
+                        payload={
+                            "reason": event.payload.get("reason", "escalated"),
+                            "from_step": event.payload.get("step_id"),
+                        },
                         actor=FlowActor.ENGINE,
                     )
                 )
+        elif etype == EventType.STEP_QUEUED:
+            sid = event.payload["step_id"]
+            st.queued.add(sid)
+            # Clear any prior failure marker if recovery re-queues the step.
+            st.failed.discard(sid)
 
     async def _schedule_next(self, flow_id: UUID, st: _FlowState) -> None:
         if st.dag is None:
