@@ -7,25 +7,39 @@ Action message shape:
 """
 from __future__ import annotations
 
-from typing import Any
+import logging
+from typing import Any, Awaitable, Callable
 from uuid import UUID
 
 from breadmind.flow.event_bus import FlowEventBus
 from breadmind.flow.events import EventType, FlowActor, FlowEvent
 
+logger = logging.getLogger(__name__)
+
+
+MessageHandler = Callable[..., Awaitable[str]]
+
 
 class ActionHandler:
-    """Dispatch SDUI action messages to the appropriate flow-event emission.
+    """Dispatch SDUI action messages to the appropriate handler.
 
-    The handler is intentionally thin: Phase 1 only needs to translate user
-    interventions into :class:`FlowEvent` publications on the
-    :class:`FlowEventBus`. Navigation (``view_request``) is handled directly
-    by the WebSocket route, and chat input is deferred to the chat handler
-    integration planned for Task 22.
+    Phase 1 only handled :class:`FlowEvent` interventions. Phase 1.5 adds
+    chat input: when a ``message_handler`` and ``working_memory`` are
+    provided, ``chat_input`` actions are forwarded to the CoreAgent via
+    the message handler. The working memory is used by the chat view
+    (not directly by this handler) to render the updated conversation.
     """
 
-    def __init__(self, bus: FlowEventBus) -> None:
+    def __init__(
+        self,
+        bus: FlowEventBus,
+        *,
+        message_handler: MessageHandler | None = None,
+        working_memory: Any = None,
+    ) -> None:
         self._bus = bus
+        self._message_handler = message_handler
+        self._working_memory = working_memory
 
     async def handle(self, action: dict[str, Any], *, user_id: str) -> dict[str, Any]:
         kind = action.get("kind")
@@ -39,9 +53,31 @@ class ActionHandler:
                 "params": action.get("params", {}),
             }
         if kind == "chat_input":
-            # Phase 1: defer to chat handler integration (Task 22).
-            return {"ok": True, "deferred": "chat_handler"}
+            return await self._chat_input(action, user_id)
         return {"ok": False, "error": f"unknown action kind: {kind}"}
+
+    async def _chat_input(
+        self, action: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
+        values = action.get("values") or {}
+        text = (values.get("text") or "").strip()
+        session_id = action.get("session_id") or f"sdui:{user_id}"
+
+        if not text:
+            return {"ok": True, "refresh_view": "chat_view", "noop": True}
+
+        if self._message_handler is None:
+            # Graceful degradation: keep the Phase 1 behaviour for tests
+            # and environments that have no CoreAgent wired up.
+            return {"ok": True, "deferred": "chat_handler"}
+
+        try:
+            await self._message_handler(text, user=user_id, channel=session_id)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("chat_input message_handler failed: %s", exc)
+            return {"ok": False, "error": str(exc), "refresh_view": "chat_view"}
+
+        return {"ok": True, "refresh_view": "chat_view"}
 
     async def _intervention(
         self, action: dict[str, Any], user_id: str

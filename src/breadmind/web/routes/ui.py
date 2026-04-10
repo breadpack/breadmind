@@ -73,10 +73,20 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
         store = FlowEventStore(database)
         flow_bus = FlowEventBus(store=store, redis=None)
         await flow_bus.start()
-        projector = UISpecProjector(db=database, bus=flow_bus)
+
+        working_memory = getattr(app_state, "_working_memory", None)
+        message_handler = getattr(app_state, "_message_handler", None)
+
+        projector = UISpecProjector(
+            db=database, bus=flow_bus, working_memory=working_memory,
+        )
         app.state.flow_event_bus = flow_bus
         app.state.uispec_projector = projector
-        app.state.sdui_action_handler = ActionHandler(bus=flow_bus)
+        app.state.sdui_action_handler = ActionHandler(
+            bus=flow_bus,
+            message_handler=message_handler,
+            working_memory=working_memory,
+        )
         return projector, flow_bus
 
 
@@ -131,6 +141,8 @@ async def handle_ws_ui(ws: WebSocket) -> None:
         call = dict(params)
         if view_key in _USER_SCOPED_VIEWS:
             call.setdefault("user_id", user_id)
+        if view_key == "chat_view":
+            call.setdefault("session_id", f"sdui:{user_id}")
         return call
 
     async def push_view(view_key: str, params: dict[str, Any]) -> None:
@@ -219,6 +231,15 @@ async def handle_ws_ui(ws: WebSocket) -> None:
                                 "type": "action_result",
                                 "result": result,
                             }))
+                            refresh_key = (
+                                result.get("refresh_view")
+                                if isinstance(result, dict) else None
+                            )
+                            if refresh_key:
+                                if refresh_key == current_view:
+                                    await refresh_current()
+                                else:
+                                    await push_view(refresh_key, current_params)
                         except Exception as exc:
                             logger.warning("action handler error: %s", exc)
                             await ws.send_text(json.dumps({
