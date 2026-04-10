@@ -3,11 +3,17 @@ import { useState } from 'preact/hooks';
 import { html } from '../renderer.js';
 
 function Button(c, render, ctx) {
-  const onClick = () => {
-    if (c.props.action) ctx.dispatch(c.props.action);
+  const hasAction = !!c.props.action;
+  const buttonType = c.props.submit || !hasAction ? 'submit' : 'button';
+  const onClick = (ev) => {
+    if (hasAction) {
+      ev.preventDefault();
+      ctx.dispatch(c.props.action);
+    }
+    // If no action, let the default submit behavior bubble to the enclosing form.
   };
   const variant = c.props.variant || 'primary';
-  return html`<button type="button" class=${`sdui-button sdui-button--${variant}`} id=${c.id} onClick=${onClick}>${c.props.label || ''}</button>`;
+  return html`<button type=${buttonType} class=${`sdui-button sdui-button--${variant}`} id=${c.id} onClick=${onClick}>${c.props.label || ''}</button>`;
 }
 
 function Form(c, render, ctx) {
@@ -30,6 +36,10 @@ function Form(c, render, ctx) {
     ev.preventDefault();
     if (c.props.action) {
       ctx.dispatch({ ...c.props.action, values });
+      // Reset form values after submit
+      const reset = {};
+      Object.keys(initial).forEach(k => { reset[k] = ''; });
+      setValues(reset);
     }
   };
 

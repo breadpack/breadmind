@@ -19,11 +19,12 @@
   </script>
 </head>
 <body>
-  <div id="root">Loading BreadMind…</div>
-  <script type="module" src="/static/sdui/main.js"></script>
+  <div id="root"></div>
+  <script type="module" src="/static/sdui/main.js?v=2"></script>
   <script>
+    // Unregister any previously registered SW during dev to avoid stale cache.
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/static/sw.js').catch(err => console.warn('SW registration failed', err));
+      navigator.serviceWorker.getRegistrations().then(regs => regs.forEach(r => r.unregister()));
     }
   </script>
 </body>

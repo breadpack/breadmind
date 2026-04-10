@@ -447,7 +447,18 @@ class WebApp:
         # --- Static files (JS, CSS) ---
         static_dir = Path(__file__).parent / "static"
         if static_dir.exists():
-            app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+            class _NoCacheStatic(StaticFiles):
+                async def get_response(self, path, scope):
+                    response = await super().get_response(path, scope)
+                    # Disable browser caching for static assets to make dev iteration painless.
+                    # Production should serve assets via a proper CDN/cache-control strategy.
+                    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+                    if "etag" in response.headers:
+                        del response.headers["etag"]
+                    if "last-modified" in response.headers:
+                        del response.headers["last-modified"]
+                    return response
+            app.mount("/static", _NoCacheStatic(directory=str(static_dir)), name="static")
 
     async def broadcast(self, message: str):
         async with self._lock:
