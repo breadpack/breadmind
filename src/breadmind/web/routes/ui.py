@@ -1,0 +1,242 @@
+"""WebSocket /ws/ui — Server-Driven UI channel.
+
+Pushes UISpec documents to the client and receives user actions. On first
+connection the client sends a ``view_request`` message; the server replies
+with a ``spec_full`` message containing the fully-built UISpec. The server
+also subscribes to the :class:`FlowEventBus` so that flow-related views are
+refreshed (as ``spec_patch`` messages) whenever relevant events occur.
+
+Auth: mirrors the pattern used by ``/ws/chat`` (``token`` query param or the
+``breadmind_session`` cookie validated via ``app._auth``). When no auth is
+configured, connections are accepted and the ``user`` query param (or the
+default ``"default"``) is used as the user id. This is sufficient for the
+Phase 1 milestone of Durable Task Flow.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+from typing import Any
+
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
+from breadmind.sdui.patches import diff_specs
+from breadmind.sdui.projector import UISpecProjector
+from breadmind.sdui.spec import UISpec
+
+logger = logging.getLogger(__name__)
+router = APIRouter(tags=["ui"])
+
+
+_USER_SCOPED_VIEWS = {"chat_view", "flow_list_view"}
+_FLOW_SCOPED_VIEWS = {"flow_list_view", "flow_detail_view"}
+
+
+async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
+    """Lazily construct and cache ``UISpecProjector`` + ``FlowEventBus``.
+
+    The web app factory does not currently expose a startup hook, so we
+    build these singletons on first use and stash them on ``app.state``.
+    Subsequent connections reuse the same instances.
+    """
+    projector = getattr(app.state, "uispec_projector", None)
+    flow_bus = getattr(app.state, "flow_event_bus", None)
+    if projector is not None and flow_bus is not None:
+        return projector, flow_bus
+
+    app_state = getattr(app.state, "app_state", None)
+    if app_state is None:
+        return None, None
+    database = getattr(app_state, "_db", None)
+    if database is None:
+        return None, None
+
+    # Serialize concurrent initialization.
+    lock: asyncio.Lock = getattr(app.state, "_uispec_init_lock", None)
+    if lock is None:
+        lock = asyncio.Lock()
+        app.state._uispec_init_lock = lock
+
+    async with lock:
+        projector = getattr(app.state, "uispec_projector", None)
+        flow_bus = getattr(app.state, "flow_event_bus", None)
+        if projector is not None and flow_bus is not None:
+            return projector, flow_bus
+
+        from breadmind.flow.event_bus import FlowEventBus
+        from breadmind.flow.store import FlowEventStore
+
+        store = FlowEventStore(database)
+        flow_bus = FlowEventBus(store=store, redis=None)
+        await flow_bus.start()
+        projector = UISpecProjector(db=database, bus=flow_bus)
+        app.state.flow_event_bus = flow_bus
+        app.state.uispec_projector = projector
+        return projector, flow_bus
+
+
+def _authenticate(ws: WebSocket) -> str | None:
+    """Resolve a ``user_id`` from the WebSocket connection.
+
+    Mirrors the pattern used by ``/ws/chat``: when ``app._auth`` is enabled
+    the session ``token`` is validated from the query param or the
+    ``breadmind_session`` cookie. When auth is disabled (single-user mode)
+    we fall back to the ``user`` query param, defaulting to ``"default"``.
+    """
+    app_state = getattr(ws.app.state, "app_state", None)
+    auth = getattr(app_state, "_auth", None) if app_state is not None else None
+
+    if auth is not None and getattr(auth, "enabled", False):
+        token = ws.query_params.get("token", "")
+        if not (token and auth.verify_session(token)):
+            token = ws.cookies.get("breadmind_session", "")
+            if not (token and auth.verify_session(token)):
+                return None
+        # Prefer an explicit user hint sent by the client, fall back to token.
+        return ws.query_params.get("user") or token
+
+    return ws.query_params.get("user") or "default"
+
+
+async def handle_ws_ui(ws: WebSocket) -> None:
+    """Handle a single ``/ws/ui`` connection.
+
+    Split out from the route function so tests can drive the handler with a
+    mocked ``WebSocket`` without relying on a running HTTP server.
+    """
+    user_id = _authenticate(ws)
+    if user_id is None:
+        await ws.close(code=4401, reason="Authentication required")
+        return
+
+    await ws.accept()
+
+    projector, flow_bus = await _ensure_projector(ws.app)
+    if projector is None or flow_bus is None:
+        logger.error("uispec_projector/flow_event_bus unavailable — closing /ws/ui")
+        await ws.close(code=1011, reason="UI channel not ready")
+        return
+
+    current_view: str | None = None
+    current_params: dict[str, Any] = {}
+    current_spec: UISpec | None = None
+    subscription_task: asyncio.Task | None = None
+
+    def _call_params(view_key: str, params: dict[str, Any]) -> dict[str, Any]:
+        call = dict(params)
+        if view_key in _USER_SCOPED_VIEWS:
+            call.setdefault("user_id", user_id)
+        return call
+
+    async def push_view(view_key: str, params: dict[str, Any]) -> None:
+        nonlocal current_view, current_params, current_spec
+        try:
+            spec = await projector.build_view(view_key, **_call_params(view_key, params))
+        except Exception as exc:
+            logger.warning("build_view(%s) failed: %s", view_key, exc)
+            await ws.send_text(json.dumps({
+                "type": "error",
+                "view_key": view_key,
+                "error": str(exc),
+            }))
+            return
+        current_view = view_key
+        current_params = dict(params)
+        current_spec = spec
+        await ws.send_text(json.dumps({
+            "type": "spec_full",
+            "view_key": view_key,
+            "spec": spec.to_dict(),
+        }))
+
+    async def refresh_current() -> None:
+        nonlocal current_spec
+        if current_view is None or current_spec is None:
+            return
+        try:
+            new_spec = await projector.build_view(
+                current_view, **_call_params(current_view, current_params)
+            )
+        except Exception as exc:
+            logger.warning("refresh(%s) failed: %s", current_view, exc)
+            return
+        patch = diff_specs(current_spec, new_spec)
+        if patch:
+            try:
+                await ws.send_text(json.dumps({
+                    "type": "spec_patch",
+                    "view_key": current_view,
+                    "patch": patch,
+                }))
+            except Exception:
+                return
+        current_spec = new_spec
+
+    async def flow_event_listener() -> None:
+        subscriber_id = f"ws-ui-{id(ws)}"
+        try:
+            async for _event in flow_bus.subscribe(subscriber_id):
+                if current_view in _FLOW_SCOPED_VIEWS:
+                    await refresh_current()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("flow event listener crashed: %s", exc)
+
+    try:
+        subscription_task = asyncio.create_task(flow_event_listener())
+        while True:
+            raw = await ws.receive_text()
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            mtype = msg.get("type")
+            if mtype == "view_request":
+                await push_view(
+                    msg.get("view_key", "chat_view"),
+                    msg.get("params") or {},
+                )
+            elif mtype == "action":
+                action = msg.get("action") or {}
+                kind = action.get("kind")
+                if kind == "view_request":
+                    await push_view(
+                        action.get("view_key", "chat_view"),
+                        action.get("params") or {},
+                    )
+                else:
+                    handler = getattr(ws.app.state, "sdui_action_handler", None)
+                    if handler is not None:
+                        try:
+                            result = await handler.handle(action, user_id=user_id)
+                            await ws.send_text(json.dumps({
+                                "type": "action_result",
+                                "result": result,
+                            }))
+                        except Exception as exc:
+                            logger.warning("action handler error: %s", exc)
+                            await ws.send_text(json.dumps({
+                                "type": "action_result",
+                                "error": str(exc),
+                            }))
+            elif mtype == "viewport":
+                # Layout hints: stored in Phase 2.
+                continue
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.error("/ws/ui unexpected error: %s", exc)
+    finally:
+        if subscription_task is not None:
+            subscription_task.cancel()
+            try:
+                await subscription_task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+
+@router.websocket("/ws/ui")
+async def ws_ui(ws: WebSocket) -> None:
+    await handle_ws_ui(ws)

@@ -45,6 +45,7 @@ from breadmind.web.routes.export import setup_export_routes
 from breadmind.web.routes.backup import setup_backup_routes
 from breadmind.web.routes.webhook_automation import setup_webhook_automation_routes
 from breadmind.web.routes.pwa import setup_pwa_routes, send_push
+from breadmind.web.routes.ui import router as ui_router
 
 logger = logging.getLogger(__name__)
 
@@ -424,6 +425,10 @@ class WebApp:
         setup_webhook_automation_routes(app, self)
         setup_browser_routes(app, self)
         setup_pwa_routes(app, self)
+        # Server-Driven UI WebSocket (/ws/ui). The FlowEventBus + UISpecProjector
+        # singletons are constructed lazily on first connection (see ui.py),
+        # because the WebApp factory has no async startup hook.
+        app.include_router(ui_router)
 
         # --- Prometheus metrics endpoint (outside versioning) ---
 
