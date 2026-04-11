@@ -282,3 +282,78 @@ class SettingsService:
             reload_errors=dict(dispatch.errors),
             audit_id=audit_id,
         )
+
+    async def set_credential(
+        self,
+        key: str,
+        value: str,
+        *,
+        actor: str,
+        description: str = "",
+    ) -> SetResult:
+        if not settings_schema.is_credential_key(key):
+            return SetResult(
+                ok=False,
+                operation="credential_store",
+                key=key,
+                error=f"key '{key}' is not a credential key",
+            )
+        metadata: dict[str, Any] = {}
+        if description:
+            metadata["description"] = description
+
+        async with self._lock(key):
+            await self._vault.store(key, value, metadata or None)
+            audit_id = await self._audit_sink(
+                kind="credential_store",
+                key=key,
+                actor=actor,
+                old_preview=None,
+                new_preview=None,
+            )
+            # Credentials never carry plaintext through events.
+            dispatch = await self._registry.dispatch(
+                key=key, operation="credential_store", old=None, new=None
+            )
+
+        return SetResult(
+            ok=True,
+            operation="credential_store",
+            key=key,
+            persisted=True,
+            hot_reloaded=dispatch.all_ok,
+            restart_required=False,
+            reload_errors=dict(dispatch.errors),
+            audit_id=audit_id,
+        )
+
+    async def delete_credential(self, key: str, *, actor: str) -> SetResult:
+        if not settings_schema.is_credential_key(key):
+            return SetResult(
+                ok=False,
+                operation="credential_delete",
+                key=key,
+                error=f"key '{key}' is not a credential key",
+            )
+        async with self._lock(key):
+            await self._vault.delete(key)
+            audit_id = await self._audit_sink(
+                kind="credential_delete",
+                key=key,
+                actor=actor,
+                old_preview=None,
+                new_preview=None,
+            )
+            dispatch = await self._registry.dispatch(
+                key=key, operation="credential_delete", old=None, new=None
+            )
+        return SetResult(
+            ok=True,
+            operation="credential_delete",
+            key=key,
+            persisted=True,
+            hot_reloaded=dispatch.all_ok,
+            restart_required=False,
+            reload_errors=dict(dispatch.errors),
+            audit_id=audit_id,
+        )

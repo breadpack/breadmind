@@ -216,3 +216,44 @@ async def test_delete_item_removes_matching_entry(deps):
     assert entry["kind"] == "settings_delete_item"
     assert len(entry["old_preview"]) == 2
     assert len(entry["new_preview"]) == 1
+
+
+async def test_set_credential_stores_in_vault(deps):
+    svc = build(deps)
+    result = await svc.set_credential(
+        "apikey:anthropic",
+        "sk-ant-xxxxxxxxxxxx",
+        description="primary account",
+        actor="agent:core",
+    )
+    assert result.ok is True
+    assert result.operation == "credential_store"
+    assert result.key == "apikey:anthropic"
+    assert len(deps["vault"].store_calls) == 1
+    cred_id, value, metadata = deps["vault"].store_calls[0]
+    assert cred_id == "apikey:anthropic"
+    assert value == "sk-ant-xxxxxxxxxxxx"
+    assert metadata == {"description": "primary account"}
+    assert len(deps["audit"].entries) == 1
+    entry = deps["audit"].entries[0]
+    # Audit never carries the plaintext.
+    assert "sk-ant" not in str(entry)
+    assert entry["kind"] == "credential_store"
+
+
+async def test_set_credential_rejects_non_credential_key(deps):
+    svc = build(deps)
+    result = await svc.set_credential(
+        "persona", "sk-ant-xxxxxxxxxxxx", actor="agent:core"
+    )
+    assert result.ok is False
+    assert "not a credential key" in (result.error or "").lower()
+    assert deps["vault"].store_calls == []
+
+
+async def test_delete_credential_removes_from_vault(deps):
+    svc = build(deps)
+    result = await svc.delete_credential("apikey:anthropic", actor="agent:core")
+    assert result.ok is True
+    assert result.operation == "credential_delete"
+    assert deps["vault"].delete_calls == ["apikey:anthropic"]
