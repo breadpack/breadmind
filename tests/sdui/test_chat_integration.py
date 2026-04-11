@@ -4,7 +4,66 @@ from __future__ import annotations
 from breadmind.flow.event_bus import FlowEventBus
 from breadmind.flow.store import FlowEventStore
 from breadmind.sdui.actions import ActionHandler
+from breadmind.sdui.spec import Component
 from breadmind.sdui.views import chat_view
+
+
+def _walk(component, predicate):
+    out = []
+    if predicate(component):
+        out.append(component)
+    for child in component.children:
+        out.extend(_walk(child, predicate))
+    return out
+
+
+async def test_chat_view_renders_inline_widget_in_assistant_message(test_db):
+    wm = FakeWorkingMemory()
+    wm.append("sdui:alice", "user", "비교해줘")
+    wm.append(
+        "sdui:alice",
+        "assistant",
+        '여기 비교 결과예요.\n\n```sdui\n{"type":"table","id":"cmp","props":{"columns":["A","B"],"rows":[["1","2"]]},"children":[]}\n```\n\n참고하세요.',
+    )
+    spec = await chat_view.build(
+        test_db, user_id="alice", session_id="sdui:alice", working_memory=wm
+    )
+    tables = _walk(spec.root, lambda c: c.type == "table")
+    assert len(tables) == 1
+    assert tables[0].props["columns"] == ["A", "B"]
+    # Surrounding text segments should be markdown components
+    markdowns = _walk(spec.root, lambda c: c.type == "markdown")
+    md_values = [m.props.get("value", "") for m in markdowns]
+    assert any("비교 결과" in v for v in md_values)
+    assert any("참고하세요" in v for v in md_values)
+
+
+async def test_user_messages_never_interpret_widget_blocks(test_db):
+    """A user pasting raw sdui JSON in their input must NOT be parsed as a widget."""
+    wm = FakeWorkingMemory()
+    wm.append(
+        "sdui:alice",
+        "user",
+        '```sdui\n{"type":"table","id":"x","props":{},"children":[]}\n```',
+    )
+    spec = await chat_view.build(
+        test_db, user_id="alice", session_id="sdui:alice", working_memory=wm
+    )
+    tables = _walk(spec.root, lambda c: c.type == "table")
+    assert tables == []
+
+
+async def test_assistant_message_with_invalid_widget_falls_back_to_text(test_db):
+    wm = FakeWorkingMemory()
+    wm.append("sdui:alice", "assistant", "보세요.\n```sdui\nnot json\n```\n끝")
+    spec = await chat_view.build(
+        test_db, user_id="alice", session_id="sdui:alice", working_memory=wm
+    )
+    tables = _walk(spec.root, lambda c: c.type == "table")
+    assert tables == []
+    markdowns = _walk(spec.root, lambda c: c.type == "markdown")
+    md_text = "\n".join(m.props.get("value", "") for m in markdowns)
+    assert "not json" in md_text  # raw fence preserved
 
 
 class FakeWorkingMemory:
