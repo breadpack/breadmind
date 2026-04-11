@@ -126,16 +126,24 @@ async def test_mcp_add_form_env_is_multiline(test_db):
 # ---------------------------------------------------------------------------
 
 async def test_each_server_has_inline_edit_form(test_db):
-    """Each existing mcp_server entry has an inline edit form."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore({"mcp_servers": _SERVERS}))
+    """Each existing mcp_server entry has an inline edit form when expanded."""
     for srv in _SERVERS:
+        spec = await settings_view.build(
+            test_db,
+            settings_store=FakeStore({"mcp_servers": _SERVERS}),
+            expand_server=srv["name"],
+        )
         form = _edit_form_for_server(spec, srv["name"])
         assert form is not None, f"No inline edit form found for server '{srv['name']}'"
 
 
 async def test_edit_form_action_has_match_field(test_db):
     """Edit form action has match_field='name'."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore({"mcp_servers": _SERVERS}))
+    spec = await settings_view.build(
+        test_db,
+        settings_store=FakeStore({"mcp_servers": _SERVERS}),
+        expand_server="github",
+    )
     form = _edit_form_for_server(spec, "github")
     assert form is not None
     action = form.props.get("action") or {}
@@ -145,7 +153,11 @@ async def test_edit_form_action_has_match_field(test_db):
 
 async def test_edit_form_has_required_fields(test_db):
     """Each edit form has name, command, args, env, enabled fields."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore({"mcp_servers": _SERVERS}))
+    spec = await settings_view.build(
+        test_db,
+        settings_store=FakeStore({"mcp_servers": _SERVERS}),
+        expand_server="github",
+    )
     form = _edit_form_for_server(spec, "github")
     assert form is not None
     names = _field_names(form)
@@ -158,7 +170,11 @@ async def test_edit_form_has_required_fields(test_db):
 
 async def test_edit_form_args_prefilled(test_db):
     """Edit form prefills args from existing list joined by newlines."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore({"mcp_servers": _SERVERS}))
+    spec = await settings_view.build(
+        test_db,
+        settings_store=FakeStore({"mcp_servers": _SERVERS}),
+        expand_server="github",
+    )
     form = _edit_form_for_server(spec, "github")
     assert form is not None
     args_fields = _walk(form, lambda c: c.type == "field" and c.props.get("name") == "args")
@@ -168,7 +184,11 @@ async def test_edit_form_args_prefilled(test_db):
 
 async def test_edit_form_env_prefilled(test_db):
     """Edit form prefills env from existing dict joined as KEY=VALUE lines."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore({"mcp_servers": _SERVERS}))
+    spec = await settings_view.build(
+        test_db,
+        settings_store=FakeStore({"mcp_servers": _SERVERS}),
+        expand_server="github",
+    )
     form = _edit_form_for_server(spec, "github")
     assert form is not None
     env_fields = _walk(form, lambda c: c.type == "field" and c.props.get("name") == "env")
@@ -182,16 +202,25 @@ async def test_edit_form_env_prefilled(test_db):
 
 async def test_edit_form_enabled_select_prefilled(test_db):
     """Edit form 'enabled' select is prefilled from existing server data."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore({"mcp_servers": _SERVERS}))
     # github is enabled=True
-    form_github = _edit_form_for_server(spec, "github")
+    spec_github = await settings_view.build(
+        test_db,
+        settings_store=FakeStore({"mcp_servers": _SERVERS}),
+        expand_server="github",
+    )
+    form_github = _edit_form_for_server(spec_github, "github")
     assert form_github is not None
     enabled_selects_g = _walk(form_github, lambda c: c.type == "select" and c.props.get("name") == "enabled")
     assert len(enabled_selects_g) == 1
     assert enabled_selects_g[0].props.get("value") == "true"
 
     # brave is enabled=False
-    form_brave = _edit_form_for_server(spec, "brave")
+    spec_brave = await settings_view.build(
+        test_db,
+        settings_store=FakeStore({"mcp_servers": _SERVERS}),
+        expand_server="brave",
+    )
+    form_brave = _edit_form_for_server(spec_brave, "brave")
     assert form_brave is not None
     enabled_selects_b = _walk(form_brave, lambda c: c.type == "select" and c.props.get("name") == "enabled")
     assert len(enabled_selects_b) == 1
@@ -200,7 +229,11 @@ async def test_edit_form_enabled_select_prefilled(test_db):
 
 async def test_edit_form_name_field_read_only(test_db):
     """Edit form name field is read_only or disabled (name is the identifier)."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore({"mcp_servers": _SERVERS}))
+    spec = await settings_view.build(
+        test_db,
+        settings_store=FakeStore({"mcp_servers": _SERVERS}),
+        expand_server="github",
+    )
     form = _edit_form_for_server(spec, "github")
     assert form is not None
     name_fields = _walk(form, lambda c: c.type == "field" and c.props.get("name") == "name")
@@ -211,7 +244,11 @@ async def test_edit_form_name_field_read_only(test_db):
 
 async def test_delete_button_still_present_with_edit_form(test_db):
     """Delete button is still rendered alongside the inline edit form."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore({"mcp_servers": _SERVERS}))
+    spec = await settings_view.build(
+        test_db,
+        settings_store=FakeStore({"mcp_servers": _SERVERS}),
+        expand_server="github",
+    )
     buttons = _walk(spec.root, lambda c: c.type == "button")
     delete_btns = [
         b for b in buttons
@@ -223,7 +260,11 @@ async def test_delete_button_still_present_with_edit_form(test_db):
 
 async def test_empty_args_env_in_edit_form(test_db):
     """Edit form for server with empty args/env shows empty strings."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore({"mcp_servers": _SERVERS}))
+    spec = await settings_view.build(
+        test_db,
+        settings_store=FakeStore({"mcp_servers": _SERVERS}),
+        expand_server="brave",
+    )
     form = _edit_form_for_server(spec, "brave")
     assert form is not None
     args_fields = _walk(form, lambda c: c.type == "field" and c.props.get("name") == "args")

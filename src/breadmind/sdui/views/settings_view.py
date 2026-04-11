@@ -166,6 +166,8 @@ async def build(
     user_id: str | None = None,
     q: str | None = None,
     active_tab: str | None = None,
+    expand_server: str | None = None,
+    mcp_filter: str | None = None,
     **_kwargs: Any,
 ) -> UISpec:
     # Phase 1 data
@@ -220,7 +222,7 @@ async def build(
     tabs: list[Component] = [
         _quick_start_tab(llm, persona, apikey_status),
         _agent_behavior_tab(prompts, instructions, embedding),
-        _integrations_tab(mcp_config, mcp_servers, skill_markets),
+        _integrations_tab(mcp_config, mcp_servers, skill_markets, expand_server=expand_server, mcp_filter=mcp_filter),
     ]
     if is_admin:
         tab_id_list.append("safety")
@@ -820,6 +822,9 @@ def _integrations_tab(
     mcp_config: dict,
     mcp_servers: list,
     skill_markets: list,
+    *,
+    expand_server: str | None = None,
+    mcp_filter: str | None = None,
 ) -> Component:
     return Component(
         type="stack",
@@ -828,7 +833,7 @@ def _integrations_tab(
         children=[
             Component(type="heading", id="int-h", props={"value": "통합", "level": 3}),
             _mcp_global_card(mcp_config),
-            _mcp_servers_card(mcp_servers),
+            _mcp_servers_card(mcp_servers, expand_server=expand_server, mcp_filter=mcp_filter),
             _skill_markets_card(skill_markets),
         ],
     )
@@ -891,112 +896,252 @@ def _join_env(env: dict) -> str:
     return "\n".join(f"{k}={v}" for k, v in env.items())
 
 
-def _mcp_servers_card(mcp_servers: list) -> Component:
+def _mcp_server_collapsed_row(srv: dict, idx: int, remaining: list) -> Component:
+    """Render a single collapsed server summary row with edit/delete buttons."""
+    name = srv.get("name", f"server-{idx}")
+    command = srv.get("command", "")
+    command_summary = command[:60] + "..." if len(command) > 60 else command
+    enabled = srv.get("enabled", True)
+    enabled_label = "활성" if enabled else "비활성"
+    return Component(
+        type="list",
+        id=f"int-mcp-srv-{idx}",
+        props={"variant": "sub-card"},
+        children=[
+            Component(
+                type="text",
+                id=f"int-mcp-srv-{idx}-name",
+                props={"value": name, "variant": "strong"},
+            ),
+            Component(
+                type="text",
+                id=f"int-mcp-srv-{idx}-cmd",
+                props={"value": command_summary, "variant": "muted"},
+            ),
+            Component(
+                type="text",
+                id=f"int-mcp-srv-{idx}-badge",
+                props={"value": enabled_label, "variant": "badge"},
+            ),
+            Component(
+                type="button",
+                id=f"int-mcp-srv-{idx}-edit",
+                props={
+                    "label": "편집",
+                    "variant": "secondary-sm",
+                    "action": {
+                        "kind": "view_request",
+                        "view": "settings",
+                        "params": {"expand_server": name},
+                    },
+                },
+            ),
+            Component(
+                type="button",
+                id=f"int-mcp-srv-{idx}-del",
+                props={
+                    "label": "삭제",
+                    "variant": "danger-sm",
+                    "action": {
+                        "kind": "settings_write",
+                        "key": "mcp_servers",
+                        "values": remaining,
+                    },
+                },
+            ),
+        ],
+    )
+
+
+def _mcp_server_expanded_card(srv: dict, idx: int, remaining: list) -> Component:
+    """Render a server card in expanded state (summary row + inline edit form)."""
+    name = srv.get("name", f"server-{idx}")
+    command = srv.get("command", "")
+    command_summary = command[:60] + "..." if len(command) > 60 else command
+    enabled = srv.get("enabled", True)
+    enabled_label = "활성" if enabled else "비활성"
+    args_prefill = _join_args(srv.get("args", []))
+    env_prefill = _join_env(srv.get("env", {}))
+    enabled_value = "true" if enabled else "false"
+    return Component(
+        type="list",
+        id=f"int-mcp-srv-{idx}",
+        props={"variant": "sub-card"},
+        children=[
+            Component(
+                type="text",
+                id=f"int-mcp-srv-{idx}-name",
+                props={"value": name, "variant": "strong"},
+            ),
+            Component(
+                type="text",
+                id=f"int-mcp-srv-{idx}-cmd",
+                props={"value": command_summary, "variant": "muted"},
+            ),
+            Component(
+                type="text",
+                id=f"int-mcp-srv-{idx}-badge",
+                props={"value": enabled_label, "variant": "badge"},
+            ),
+            Component(
+                type="button",
+                id=f"int-mcp-srv-{idx}-fold",
+                props={
+                    "label": "접기",
+                    "variant": "secondary-sm",
+                    "action": {
+                        "kind": "view_request",
+                        "view": "settings",
+                        "params": {"expand_server": ""},
+                    },
+                },
+            ),
+            Component(
+                type="form",
+                id=f"mcp-server-edit-{name}-form",
+                props={
+                    "action": {
+                        "kind": "settings_update_item",
+                        "key": "mcp_servers",
+                        "match_field": "name",
+                        "match_value": name,
+                    },
+                    "submit_label": "저장",
+                },
+                children=[
+                    Component(
+                        type="field",
+                        id=f"int-mcp-srv-{idx}-name-field",
+                        props={
+                            "name": "name",
+                            "label": "이름",
+                            "value": name,
+                            "type": "text",
+                            "read_only": True,
+                        },
+                    ),
+                    Component(
+                        type="field",
+                        id=f"int-mcp-srv-{idx}-command",
+                        props={
+                            "name": "command",
+                            "label": "명령어",
+                            "value": command,
+                            "type": "text",
+                        },
+                    ),
+                    Component(
+                        type="field",
+                        id=f"int-mcp-srv-{idx}-args",
+                        props={
+                            "name": "args",
+                            "label": "인수 (한 줄에 하나씩)",
+                            "value": args_prefill,
+                            "type": "text",
+                            "multiline": True,
+                        },
+                    ),
+                    Component(
+                        type="field",
+                        id=f"int-mcp-srv-{idx}-env",
+                        props={
+                            "name": "env",
+                            "label": "환경변수 (KEY=VALUE 형식)",
+                            "value": env_prefill,
+                            "type": "text",
+                            "multiline": True,
+                        },
+                    ),
+                    Component(
+                        type="select",
+                        id=f"int-mcp-srv-{idx}-enabled",
+                        props={
+                            "name": "enabled",
+                            "label": "활성화",
+                            "value": enabled_value,
+                            "options": _BOOL_OPTIONS,
+                        },
+                    ),
+                ],
+            ),
+            Component(
+                type="button",
+                id=f"int-mcp-srv-{idx}-del",
+                props={
+                    "label": "삭제",
+                    "variant": "danger-sm",
+                    "action": {
+                        "kind": "settings_write",
+                        "key": "mcp_servers",
+                        "values": remaining,
+                    },
+                },
+            ),
+        ],
+    )
+
+
+def _mcp_servers_card(
+    mcp_servers: list,
+    *,
+    expand_server: str | None = None,
+    mcp_filter: str | None = None,
+) -> Component:
     server_children: list[Component] = [
         Component(type="heading", id="int-mcp-srv-h", props={"value": "MCP 서버 목록", "level": 4}),
         Component(type="text", id="int-mcp-srv-d", props={"value": "등록된 MCP 서버 목록입니다."}),
+        # Filter form
+        Component(
+            type="form",
+            id="int-mcp-filter-form",
+            props={
+                "action": {"kind": "view_request", "view": "settings"},
+                "submit_label": "검색",
+            },
+            children=[
+                Component(
+                    type="field",
+                    id="int-mcp-filter-input",
+                    props={
+                        "name": "mcp_filter",
+                        "label": "서버 검색",
+                        "value": mcp_filter or "",
+                        "type": "text",
+                    },
+                ),
+            ],
+        ),
     ]
+
+    # Apply filter
+    filter_query = (mcp_filter or "").strip().lower()
+    if filter_query:
+        visible_servers = [s for s in mcp_servers if filter_query in (s.get("name") or "").lower()]
+    else:
+        visible_servers = list(mcp_servers)
+
     if not mcp_servers:
         server_children.append(
             Component(type="text", id="int-mcp-srv-empty", props={"value": "등록된 MCP 서버가 없습니다."})
         )
+    elif not visible_servers:
+        server_children.append(
+            Component(
+                type="text",
+                id="int-mcp-srv-empty",
+                props={"value": "필터 조건에 일치하는 서버가 없습니다."},
+            )
+        )
     else:
-        for idx, srv in enumerate(mcp_servers):
+        for idx, srv in enumerate(visible_servers):
             name = srv.get("name", f"server-{idx}")
             remaining = [s for s in mcp_servers if s.get("name") != name]
-            args_prefill = _join_args(srv.get("args", []))
-            env_prefill = _join_env(srv.get("env", {}))
-            enabled_value = "true" if srv.get("enabled", True) else "false"
-            server_children.append(
-                Component(
-                    type="list",
-                    id=f"int-mcp-srv-{idx}",
-                    props={"variant": "sub-card"},
-                    children=[
-                        Component(
-                            type="form",
-                            id=f"mcp-server-edit-{name}-form",
-                            props={
-                                "action": {
-                                    "kind": "settings_update_item",
-                                    "key": "mcp_servers",
-                                    "match_field": "name",
-                                    "match_value": name,
-                                },
-                                "submit_label": "저장",
-                            },
-                            children=[
-                                Component(
-                                    type="field",
-                                    id=f"int-mcp-srv-{idx}-name",
-                                    props={
-                                        "name": "name",
-                                        "label": "이름",
-                                        "value": name,
-                                        "type": "text",
-                                        "read_only": True,
-                                    },
-                                ),
-                                Component(
-                                    type="field",
-                                    id=f"int-mcp-srv-{idx}-command",
-                                    props={
-                                        "name": "command",
-                                        "label": "명령어",
-                                        "value": srv.get("command", ""),
-                                        "type": "text",
-                                    },
-                                ),
-                                Component(
-                                    type="field",
-                                    id=f"int-mcp-srv-{idx}-args",
-                                    props={
-                                        "name": "args",
-                                        "label": "인수 (한 줄에 하나씩)",
-                                        "value": args_prefill,
-                                        "type": "text",
-                                        "multiline": True,
-                                    },
-                                ),
-                                Component(
-                                    type="field",
-                                    id=f"int-mcp-srv-{idx}-env",
-                                    props={
-                                        "name": "env",
-                                        "label": "환경변수 (KEY=VALUE 형식)",
-                                        "value": env_prefill,
-                                        "type": "text",
-                                        "multiline": True,
-                                    },
-                                ),
-                                Component(
-                                    type="select",
-                                    id=f"int-mcp-srv-{idx}-enabled",
-                                    props={
-                                        "name": "enabled",
-                                        "label": "활성화",
-                                        "value": enabled_value,
-                                        "options": _BOOL_OPTIONS,
-                                    },
-                                ),
-                            ],
-                        ),
-                        Component(
-                            type="button",
-                            id=f"int-mcp-srv-{idx}-del",
-                            props={
-                                "label": "삭제",
-                                "variant": "danger-sm",
-                                "action": {
-                                    "kind": "settings_write",
-                                    "key": "mcp_servers",
-                                    "values": remaining,
-                                },
-                            },
-                        ),
-                    ],
-                )
-            )
+            is_expanded = bool(expand_server and expand_server == name)
+            if is_expanded:
+                server_children.append(_mcp_server_expanded_card(srv, idx, remaining))
+            else:
+                server_children.append(_mcp_server_collapsed_row(srv, idx, remaining))
+
     server_children.append(
         Component(
             type="form",
