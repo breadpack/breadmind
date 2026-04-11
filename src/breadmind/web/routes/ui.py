@@ -376,13 +376,7 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
                 def _monitoring_setter(kw: str):
                     async def _fn(ctx):
                         try:
-                            apply = getattr(monitoring_obj, "apply", None)
-                            if apply is not None:
-                                await apply(**{kw: ctx["new"]})
-                            else:
-                                logger.debug(
-                                    "monitoring reload %s: no apply method", kw,
-                                )
+                            await monitoring_obj.apply(**{kw: ctx["new"]})
                         except Exception as exc:
                             logger.warning(
                                 "monitoring reload %s failed: %s", kw, exc,
