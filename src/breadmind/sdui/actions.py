@@ -70,6 +70,8 @@ class ActionHandler:
             return await self._credential_store(action, user_id)
         if kind == "credential_delete":
             return await self._credential_delete(action, user_id)
+        if kind == "settings_update_item":
+            return await self._settings_update_item(action, user_id)
         if kind == "dev_inject_assistant":
             return await self._dev_inject_assistant(action, user_id)
         return {"ok": False, "error": f"unknown action kind: {kind}"}
@@ -444,8 +446,170 @@ class ActionHandler:
         }
 
     # ------------------------------------------------------------------
+    # Allowed keys for settings_update_item (list[dict] keys only)
+    # ------------------------------------------------------------------
+    _UPDATE_ITEM_ALLOWED_KEYS = frozenset(
+        {
+            "mcp_servers",
+            "skill_markets",
+            "scheduler_cron",
+        }
+    )
+
+    async def _settings_update_item(
+        self, action: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
+        """Replace a single item in a list-shaped setting identified by a match field.
+
+        Action shape::
+            {
+                "kind": "settings_update_item",
+                "key": "mcp_servers",
+                "match_field": "name",
+                "match_value": "github",
+                "values": { <new item fields> }
+            }
+
+        For ``mcp_servers``: args/env/enabled string values are parsed before
+        merging using the same helpers as ``_settings_append``.
+        """
+        from breadmind.sdui.settings_schema import (
+            SettingsValidationError,
+            validate_value,
+        )
+
+        key = action.get("key")
+        if key not in self._UPDATE_ITEM_ALLOWED_KEYS:
+            return {"ok": False, "error": f"key not allowed for settings_update_item: {key}"}
+
+        if self._settings_store is None:
+            return {"ok": False, "error": "settings_store not configured"}
+
+        match_field = action.get("match_field")
+        match_value = action.get("match_value")
+        values = action.get("values")
+
+        if not isinstance(match_field, str) or not match_field:
+            return {"ok": False, "error": "match_field must be a non-empty string"}
+        if not isinstance(match_value, str) or not match_value:
+            return {"ok": False, "error": "match_value must be a non-empty string"}
+        if not isinstance(values, dict):
+            return {"ok": False, "error": "values must be an object"}
+
+        try:
+            existing = await self._settings_store.get_setting(key)
+        except Exception:
+            existing = None
+
+        existing_list: list = existing if isinstance(existing, list) else []
+
+        # Find the item to replace.
+        idx = next(
+            (i for i, item in enumerate(existing_list) if item.get(match_field) == match_value),
+            None,
+        )
+        if idx is None:
+            return {"ok": False, "error": f"{key}: item with {match_field}={match_value!r} not found"}
+
+        # For mcp_servers: parse string args/env/enabled before building the new item.
+        if key == "mcp_servers":
+            parsed_values, err = self._parse_mcp_server_values(values)
+            if err is not None:
+                return {"ok": False, "error": err}
+        else:
+            parsed_values = dict(values)
+
+        # Merge: preserve existing item fields not present in new values (e.g. id).
+        original_item = existing_list[idx]
+        new_item = {**original_item, **parsed_values}
+
+        new_list = existing_list[:idx] + [new_item] + existing_list[idx + 1:]
+
+        try:
+            cleaned = validate_value(key, new_list)
+        except SettingsValidationError as exc:
+            return {"ok": False, "error": str(exc)}
+
+        try:
+            await self._settings_store.set_setting(key, cleaned)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("settings_update_item set_setting failed: %s", exc)
+            return {"ok": False, "error": str(exc)}
+
+        return {"ok": True, "persisted": True, "refresh_view": "settings_view"}
+
+    # ------------------------------------------------------------------
     # Per-key merge helpers (return (merged_candidate, error_str|None))
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_args_text(s: Any) -> list[str]:
+        """Parse a multiline args string into list[str].
+
+        Each non-empty stripped line becomes one argument.
+        If ``s`` is already a list, it is returned as-is.
+        """
+        if isinstance(s, list):
+            return s
+        if not isinstance(s, str):
+            return []
+        return [line.strip() for line in s.splitlines() if line.strip()]
+
+    @staticmethod
+    def _parse_env_text(s: Any) -> tuple[dict[str, str] | None, str | None]:
+        """Parse a multiline env string into dict[str, str].
+
+        Each non-empty stripped line must be in ``KEY=VALUE`` format.
+        The value part may itself contain ``=`` characters.
+        If ``s`` is already a dict, it is returned as-is.
+        Returns ``(parsed_dict, None)`` on success or ``(None, error_str)`` on failure.
+        """
+        if isinstance(s, dict):
+            return s, None
+        if not isinstance(s, str):
+            return {}, None
+        out: dict[str, str] = {}
+        for line in s.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            if "=" not in line:
+                return None, f"env line is missing '=': {line!r}"
+            key, _, value = line.partition("=")
+            out[key.strip()] = value
+        return out, None
+
+    @staticmethod
+    def _parse_mcp_server_values(values: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+        """Parse args/env/enabled string fields in a mcp_servers item dict.
+
+        Non-string args/env values are passed through unchanged so existing callers
+        that pass native list/dict continue to work.
+        Returns ``(parsed_dict, None)`` on success or ``(None, error_str)`` on failure.
+        """
+        from breadmind.sdui.settings_schema import SettingsValidationError, _coerce_bool
+
+        result = dict(values)
+
+        # Parse args.
+        if isinstance(result.get("args"), str):
+            result["args"] = ActionHandler._parse_args_text(result["args"])
+
+        # Parse env.
+        if isinstance(result.get("env"), str):
+            parsed_env, err = ActionHandler._parse_env_text(result["env"])
+            if err is not None:
+                return None, err
+            result["env"] = parsed_env
+
+        # Coerce enabled string.
+        if isinstance(result.get("enabled"), str):
+            try:
+                result["enabled"] = _coerce_bool(result["enabled"], "enabled")
+            except SettingsValidationError as exc:
+                return None, str(exc)
+
+        return result, None
 
     @staticmethod
     def _merge_mcp_server(
@@ -458,7 +622,11 @@ class ActionHandler:
             return None, "mcp_servers item: name must be a non-empty string"
         if any(s.get("name") == name for s in existing):
             return None, f"mcp_servers: duplicate name {name!r}"
-        return existing + [item], None
+        # Parse string args/env/enabled when the form submits multiline text.
+        parsed_item, err = ActionHandler._parse_mcp_server_values(item)
+        if err is not None:
+            return None, err
+        return existing + [parsed_item], None
 
     @staticmethod
     def _merge_skill_market(

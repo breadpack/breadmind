@@ -727,6 +727,16 @@ def _mcp_global_card(mcp_config: dict) -> Component:
     )
 
 
+def _join_args(args: list) -> str:
+    """Join a list of args into a multiline string for form prefill."""
+    return "\n".join(args)
+
+
+def _join_env(env: dict) -> str:
+    """Join an env dict into multiline KEY=VALUE string for form prefill."""
+    return "\n".join(f"{k}={v}" for k, v in env.items())
+
+
 def _mcp_servers_card(mcp_servers: list) -> Component:
     server_children: list[Component] = [
         Component(type="heading", id="int-mcp-srv-h", props={"value": "MCP 서버 목록", "level": 4}),
@@ -740,25 +750,82 @@ def _mcp_servers_card(mcp_servers: list) -> Component:
         for idx, srv in enumerate(mcp_servers):
             name = srv.get("name", f"server-{idx}")
             remaining = [s for s in mcp_servers if s.get("name") != name]
-            args_str = ", ".join(srv.get("args", []))
-            enabled_str = "활성" if srv.get("enabled", True) else "비활성"
+            args_prefill = _join_args(srv.get("args", []))
+            env_prefill = _join_env(srv.get("env", {}))
+            enabled_value = "true" if srv.get("enabled", True) else "false"
             server_children.append(
                 Component(
                     type="list",
                     id=f"int-mcp-srv-{idx}",
                     props={"variant": "sub-card"},
                     children=[
-                        Component(type="heading", id=f"int-mcp-srv-{idx}-h", props={"value": name, "level": 5}),
                         Component(
-                            type="kv",
-                            id=f"int-mcp-srv-{idx}-kv",
+                            type="form",
+                            id=f"mcp-server-edit-{name}-form",
                             props={
-                                "items": [
-                                    {"key": "command", "value": srv.get("command", "")},
-                                    {"key": "args", "value": args_str},
-                                    {"key": "enabled", "value": enabled_str},
-                                ]
+                                "action": {
+                                    "kind": "settings_update_item",
+                                    "key": "mcp_servers",
+                                    "match_field": "name",
+                                    "match_value": name,
+                                },
+                                "submit_label": "저장",
                             },
+                            children=[
+                                Component(
+                                    type="field",
+                                    id=f"int-mcp-srv-{idx}-name",
+                                    props={
+                                        "name": "name",
+                                        "label": "이름",
+                                        "value": name,
+                                        "type": "text",
+                                        "read_only": True,
+                                    },
+                                ),
+                                Component(
+                                    type="field",
+                                    id=f"int-mcp-srv-{idx}-command",
+                                    props={
+                                        "name": "command",
+                                        "label": "명령어",
+                                        "value": srv.get("command", ""),
+                                        "type": "text",
+                                    },
+                                ),
+                                Component(
+                                    type="field",
+                                    id=f"int-mcp-srv-{idx}-args",
+                                    props={
+                                        "name": "args",
+                                        "label": "인수 (한 줄에 하나씩)",
+                                        "value": args_prefill,
+                                        "type": "text",
+                                        "multiline": True,
+                                    },
+                                ),
+                                Component(
+                                    type="field",
+                                    id=f"int-mcp-srv-{idx}-env",
+                                    props={
+                                        "name": "env",
+                                        "label": "환경변수 (KEY=VALUE 형식)",
+                                        "value": env_prefill,
+                                        "type": "text",
+                                        "multiline": True,
+                                    },
+                                ),
+                                Component(
+                                    type="select",
+                                    id=f"int-mcp-srv-{idx}-enabled",
+                                    props={
+                                        "name": "enabled",
+                                        "label": "활성화",
+                                        "value": enabled_value,
+                                        "options": _BOOL_OPTIONS,
+                                    },
+                                ),
+                            ],
                         ),
                         Component(
                             type="button",
@@ -794,6 +861,38 @@ def _mcp_servers_card(mcp_servers: list) -> Component:
                     type="field",
                     id="int-mcp-add-command",
                     props={"name": "command", "label": "명령어", "value": "", "type": "text"},
+                ),
+                Component(
+                    type="field",
+                    id="int-mcp-add-args",
+                    props={
+                        "name": "args",
+                        "label": "인수 (한 줄에 하나씩)",
+                        "value": "",
+                        "type": "text",
+                        "multiline": True,
+                    },
+                ),
+                Component(
+                    type="field",
+                    id="int-mcp-add-env",
+                    props={
+                        "name": "env",
+                        "label": "환경변수 (KEY=VALUE 형식)",
+                        "value": "",
+                        "type": "text",
+                        "multiline": True,
+                    },
+                ),
+                Component(
+                    type="select",
+                    id="int-mcp-add-enabled",
+                    props={
+                        "name": "enabled",
+                        "label": "활성화",
+                        "value": "true",
+                        "options": _BOOL_OPTIONS,
+                    },
                 ),
             ],
         )

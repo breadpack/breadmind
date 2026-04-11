@@ -148,6 +148,98 @@ async def test_settings_append_mcp_servers_missing_command_rejected(bus):
     assert "command" in result["error"].lower()
 
 
+async def test_settings_append_mcp_servers_args_multiline_string(bus):
+    """Multiline string for args is parsed into list[str]."""
+    store = FakeStore()
+    handler = ActionHandler(bus=bus, settings_store=store)
+    result = await handler.handle(
+        {
+            "kind": "settings_append",
+            "key": "mcp_servers",
+            "values": {
+                "name": "multiline-srv",
+                "command": "npx",
+                "args": "-y\n  k8s-mcp  \n\n--port\n8080",
+                "env": "",
+                "enabled": "true",
+            },
+        },
+        user_id="alice",
+    )
+    assert result["ok"] is True
+    servers = store.data["mcp_servers"]
+    assert servers[0]["args"] == ["-y", "k8s-mcp", "--port", "8080"]
+
+
+async def test_settings_append_mcp_servers_env_multiline_string(bus):
+    """Multiline string for env is parsed into dict[str, str]."""
+    store = FakeStore()
+    handler = ActionHandler(bus=bus, settings_store=store)
+    result = await handler.handle(
+        {
+            "kind": "settings_append",
+            "key": "mcp_servers",
+            "values": {
+                "name": "env-srv",
+                "command": "node",
+                "args": "",
+                "env": "KEY1=val1\nKEY2=val2\nKEY3=has=equals",
+                "enabled": "true",
+            },
+        },
+        user_id="alice",
+    )
+    assert result["ok"] is True
+    servers = store.data["mcp_servers"]
+    assert servers[0]["env"] == {"KEY1": "val1", "KEY2": "val2", "KEY3": "has=equals"}
+
+
+async def test_settings_append_mcp_servers_empty_args_env_strings(bus):
+    """Empty string for args/env produces empty list/dict."""
+    store = FakeStore()
+    handler = ActionHandler(bus=bus, settings_store=store)
+    result = await handler.handle(
+        {
+            "kind": "settings_append",
+            "key": "mcp_servers",
+            "values": {
+                "name": "empty-srv",
+                "command": "node",
+                "args": "",
+                "env": "",
+                "enabled": "true",
+            },
+        },
+        user_id="alice",
+    )
+    assert result["ok"] is True
+    servers = store.data["mcp_servers"]
+    assert servers[0]["args"] == []
+    assert servers[0]["env"] == {}
+
+
+async def test_settings_append_mcp_servers_invalid_env_line_rejected(bus):
+    """Env string with a line missing '=' is rejected."""
+    store = FakeStore()
+    handler = ActionHandler(bus=bus, settings_store=store)
+    result = await handler.handle(
+        {
+            "kind": "settings_append",
+            "key": "mcp_servers",
+            "values": {
+                "name": "bad-env",
+                "command": "node",
+                "args": "",
+                "env": "MISSING_EQUALS",
+                "enabled": "true",
+            },
+        },
+        user_id="alice",
+    )
+    assert result["ok"] is False
+    assert "=" in result["error"] or "env" in result["error"].lower()
+
+
 # ---------------------------------------------------------------------------
 # skill_markets
 # ---------------------------------------------------------------------------
