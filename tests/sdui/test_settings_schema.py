@@ -156,7 +156,14 @@ def test_validate_mcp_empty_payload_raises():
 
 def test_validate_mcp_auto_discover_not_bool_raises():
     with pytest.raises(SettingsValidationError):
-        validate_value("mcp", {"auto_discover": "yes"})
+        validate_value("mcp", {"auto_discover": "maybe"})
+
+
+def test_validate_mcp_auto_discover_accepts_string_true():
+    out = validate_value("mcp", {"auto_discover": "true"})
+    assert out["auto_discover"] is True
+    out = validate_value("mcp", {"auto_discover": "false"})
+    assert out["auto_discover"] is False
 
 
 def test_validate_mcp_max_restart_attempts_negative_raises():
@@ -381,7 +388,12 @@ def test_validate_tool_security_dangerous_patterns_not_list_raises():
 
 def test_validate_tool_security_command_whitelist_enabled_not_bool_raises():
     with pytest.raises(SettingsValidationError):
-        validate_value("tool_security", {"command_whitelist_enabled": "true"})
+        validate_value("tool_security", {"command_whitelist_enabled": "maybe"})
+
+
+def test_validate_tool_security_command_whitelist_enabled_accepts_string():
+    out = validate_value("tool_security", {"command_whitelist_enabled": "true"})
+    assert out["command_whitelist_enabled"] is True
 
 
 # ---------------------------------------------------------------------------

@@ -16,6 +16,25 @@ class SettingsValidationError(ValueError):
     """Raised when a settings_write payload fails validation."""
 
 
+def _coerce_bool(value: Any, field: str) -> bool:
+    """Accept native bools and the strings the SDUI ``select`` widget emits.
+
+    The browser-side renderer can only emit string option values, so a select
+    bound to a boolean field arrives here as ``"true"`` or ``"false"``. Coerce
+    those to bools and reject anything else so we don't silently swallow bad
+    inputs.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        s = value.strip().lower()
+        if s in ("true", "1", "yes", "on"):
+            return True
+        if s in ("false", "0", "no", "off"):
+            return False
+    raise SettingsValidationError(f"{field} must be bool")
+
+
 _PERSONA_PRESETS = {"professional", "friendly", "concise", "humorous"}
 _EMBEDDING_PROVIDERS = {
     "auto", "fastembed", "ollama", "local", "gemini", "openai", "off",
@@ -240,10 +259,7 @@ def _validate_mcp(value: Any) -> dict:
     data = _require_dict("mcp", value)
     out: dict[str, Any] = {}
     if "auto_discover" in data:
-        v = data["auto_discover"]
-        if not isinstance(v, bool):
-            raise SettingsValidationError("mcp.auto_discover must be bool")
-        out["auto_discover"] = v
+        out["auto_discover"] = _coerce_bool(data["auto_discover"], "mcp.auto_discover")
     if "max_restart_attempts" in data:
         v = data["max_restart_attempts"]
         try:
@@ -393,10 +409,9 @@ def _validate_tool_security(value: Any) -> dict:
             raise SettingsValidationError("tool_security.base_directory must be string")
         out["base_directory"] = v
     if "command_whitelist_enabled" in data:
-        v = data["command_whitelist_enabled"]
-        if not isinstance(v, bool):
-            raise SettingsValidationError("tool_security.command_whitelist_enabled must be bool")
-        out["command_whitelist_enabled"] = v
+        out["command_whitelist_enabled"] = _coerce_bool(
+            data["command_whitelist_enabled"], "tool_security.command_whitelist_enabled"
+        )
     if not out:
         raise SettingsValidationError("tool_security payload empty")
     return out
@@ -404,6 +419,14 @@ def _validate_tool_security(value: Any) -> dict:
 
 def _validate_monitoring_config(value: Any) -> dict:
     data = _require_dict("monitoring_config", value)
+    # Convenience: when an SDUI form sends loop_protector fields at the top
+    # level (because the form widget can only emit a flat dict), auto-wrap
+    # them under "loop_protector" so the rest of the validator stays simple.
+    _LP_FIELDS = ("cooldown_minutes", "max_auto_actions")
+    if any(k in data for k in _LP_FIELDS) and "loop_protector" not in data:
+        wrapped = {k: data[k] for k in _LP_FIELDS if k in data}
+        data = {k: v for k, v in data.items() if k not in _LP_FIELDS}
+        data["loop_protector"] = wrapped
     out: dict[str, Any] = {}
     if "rules" in data:
         rules = data["rules"]
