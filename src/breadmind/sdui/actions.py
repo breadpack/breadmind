@@ -54,7 +54,39 @@ class ActionHandler:
             }
         if kind == "chat_input":
             return await self._chat_input(action, user_id)
+        if kind == "dev_inject_assistant":
+            return await self._dev_inject_assistant(action, user_id)
         return {"ok": False, "error": f"unknown action kind: {kind}"}
+
+    async def _dev_inject_assistant(
+        self, action: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
+        """Inject a fake assistant message directly into working memory.
+
+        Used for SDUI widget rendering smoke tests when no LLM provider is
+        available. The action body must contain ``content`` (str) and may
+        optionally specify ``session_id``.
+        """
+        if self._working_memory is None:
+            return {"ok": False, "error": "working_memory not configured"}
+        content = action.get("content")
+        if not isinstance(content, str) or not content:
+            return {"ok": False, "error": "content must be a non-empty string"}
+        session_id = action.get("session_id") or f"sdui:{user_id}"
+
+        try:
+            from breadmind.llm.base import LLMMessage
+            self._working_memory.get_or_create_session(
+                session_id, user=user_id, channel=session_id
+            )
+            self._working_memory.add_message(
+                session_id,
+                LLMMessage(role="assistant", content=content),
+            )
+        except Exception as exc:
+            logger.warning("dev_inject_assistant failed: %s", exc)
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "refresh_view": "chat_view"}
 
     async def _chat_input(
         self, action: dict[str, Any], user_id: str
