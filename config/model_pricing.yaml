@@ -1,0 +1,371 @@
+# Model pricing and capability metadata for cost-optimized routing.
+# Prices are in USD per 1 million tokens.
+# quality_tier: low (1), medium (2), high (3), premium (4)
+
+models:
+  # --- Anthropic ---
+  claude-haiku-4-5:
+    provider: anthropic
+    pricing:
+      input: 0.80
+      output: 4.0
+      cache_creation: 1.0
+      cache_read: 0.08
+    capability:
+      max_context: 200000
+      quality_tier: 2
+      supports_thinking: true
+      supports_tools: true
+      supports_streaming: true
+      supports_vision: true
+
+  claude-sonnet-4-6:
+    provider: anthropic
+    pricing:
+      input: 3.0
+      output: 15.0
+      cache_creation: 3.75
+      cache_read: 0.30
+    capability:
+      max_context: 200000
+      quality_tier: 3
+      supports_thinking: true
+      supports_tools: true
+      supports_streaming: true
+      supports_vision: true
+
+  claude-opus-4-6:
+    provider: anthropic
+    pricing:
+      input: 15.0
+      output: 75.0
+      cache_creation: 18.75
+      cache_read: 1.50
+    capability:
+      max_context: 1000000
+      quality_tier: 4
+      supports_thinking: true
+      supports_tools: true
+      supports_streaming: true
+      supports_vision: true
+
+  # --- OpenAI ---
+  gpt-4o:
+    provider: openai
+    pricing:
+      input: 2.50
+      output: 10.0
+    capability:
+      max_context: 128000
+      quality_tier: 3
+      supports_thinking: false
+      supports_tools: true
+      supports_streaming: true
+      supports_vision: true
+
+  gpt-4o-mini:
+    provider: openai
+    pricing:
+      input: 0.15
+      output: 0.60
+    capability:
+      max_context: 128000
+      quality_tier: 1
+      supports_thinking: false
+      supports_tools: true
+      supports_streaming: true
+      supports_vision: true
+
+  o1:
+    provider: openai
+    pricing:
+      input: 15.0
+      output: 60.0
+    capability:
+      max_context: 200000
+      quality_tier: 4
+      supports_thinking: true
+      supports_tools: true
+      supports_streaming: true
+      supports_vision: true
+
+  o1-mini:
+    provider: openai
+    pricing:
+      input: 1.10
+      output: 4.40
+    capability:
+      max_context: 128000
+      quality_tier: 2
+      supports_thinking: true
+      supports_tools: true
+      supports_streaming: true
+      supports_vision: false
+
+  o3-mini:
+    provider: openai
+    pricing:
+      input: 1.10
+      output: 4.40
+    capability:
+      max_context: 200000
+      quality_tier: 2
+      supports_thinking: true
+      supports_tools: true
+      supports_streaming: true
+      supports_vision: false
+
+  # --- Google ---
+  gemini-2.5-flash:
+    provider: google
+    pricing:
+      input: 0.15
+      output: 0.60
+    capability:
+      max_context: 1000000
+      quality_tier: 1
+      supports_thinking: true
+      supports_tools: true
+      supports_streaming: true
+      supports_vision: true
+
+  gemini-2.5-pro:
+    provider: google
+    pricing:
+      input: 1.25
+      output: 10.0
+    capability:
+      max_context: 1000000
+      quality_tier: 3
+      supports_thinking: true
+      supports_tools: true
+      supports_streaming: true
+      supports_vision: true
+
+  # --- xAI ---
+  grok-3:
+    provider: xai
+    pricing:
+      input: 3.0
+      output: 15.0
+    capability:
+      max_context: 131072
+      quality_tier: 3
+      supports_thinking: false
+      supports_tools: true
+      supports_streaming: true
+      supports_vision: false
+
+  grok-3-mini:
+    provider: xai
+    pricing:
+      input: 0.30
+      output: 0.50
+    capability:
+      max_context: 131072
+      quality_tier: 1
+      supports_thinking: true
+      supports_tools: true
+      supports_streaming: true
+      supports_vision: false
+
+  # --- DeepSeek ---
+  deepseek-chat:
+    provider: deepseek
+    pricing:
+      input: 0.27
+      output: 1.10
+    capability:
+      max_context: 64000
+      quality_tier: 2
+      supports_thinking: false
+      supports_tools: true
+      supports_streaming: true
+      supports_vision: false
+
+  deepseek-reasoner:
+    provider: deepseek
+    pricing:
+      input: 0.55
+      output: 2.19
+    capability:
+      max_context: 64000
+      quality_tier: 3
+      supports_thinking: true
+      supports_tools: true
+      supports_streaming: true
+      supports_vision: false
+
+  # --- Mistral AI ---
+  mistral-large-latest:
+    provider: mistral
+    pricing:
+      input: 2.0
+      output: 6.0
+    capability:
+      max_context: 128000
+      quality_tier: 3
+      supports_thinking: false
+      supports_tools: true
+      supports_streaming: true
+      supports_vision: false
+
+  mistral-medium-latest:
+    provider: mistral
+    pricing:
+      input: 2.0
+      output: 6.0
+    capability:
+      max_context: 128000
+      quality_tier: 2
+      supports_thinking: false
+      supports_tools: true
+      supports_streaming: true
+      supports_vision: false
+
+  mistral-small-latest:
+    provider: mistral
+    pricing:
+      input: 0.10
+      output: 0.30
+    capability:
+      max_context: 128000
+      quality_tier: 1
+      supports_thinking: false
+      supports_tools: true
+      supports_streaming: true
+      supports_vision: false
+
+  codestral-latest:
+    provider: mistral
+    pricing:
+      input: 0.30
+      output: 0.90
+    capability:
+      max_context: 32000
+      quality_tier: 2
+      supports_thinking: false
+      supports_tools: false
+      supports_streaming: true
+      supports_vision: false
+
+  # --- Groq (fast inference) ---
+  llama-3.3-70b-versatile:
+    provider: groq
+    pricing:
+      input: 0.59
+      output: 0.79
+    capability:
+      max_context: 128000
+      quality_tier: 2
+      supports_thinking: false
+      supports_tools: true
+      supports_streaming: true
+      supports_vision: false
+
+  llama-3.1-8b-instant:
+    provider: groq
+    pricing:
+      input: 0.05
+      output: 0.08
+    capability:
+      max_context: 128000
+      quality_tier: 1
+      supports_thinking: false
+      supports_tools: true
+      supports_streaming: true
+      supports_vision: false
+
+  mixtral-8x7b-32768:
+    provider: groq
+    pricing:
+      input: 0.24
+      output: 0.24
+    capability:
+      max_context: 32768
+      quality_tier: 1
+      supports_thinking: false
+      supports_tools: true
+      supports_streaming: true
+      supports_vision: false
+
+  # --- Together AI ---
+  meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo:
+    provider: together
+    pricing:
+      input: 0.88
+      output: 0.88
+    capability:
+      max_context: 131072
+      quality_tier: 2
+      supports_thinking: false
+      supports_tools: true
+      supports_streaming: true
+      supports_vision: false
+
+  # --- AWS Bedrock (on-demand pricing) ---
+  anthropic.claude-sonnet-4-6-20250514-v1:0:
+    provider: bedrock
+    pricing:
+      input: 3.0
+      output: 15.0
+    capability:
+      max_context: 200000
+      quality_tier: 3
+      supports_thinking: true
+      supports_tools: true
+      supports_streaming: true
+      supports_vision: true
+
+  amazon.nova-pro-v1:0:
+    provider: bedrock
+    pricing:
+      input: 0.80
+      output: 3.20
+    capability:
+      max_context: 300000
+      quality_tier: 2
+      supports_thinking: false
+      supports_tools: true
+      supports_streaming: true
+      supports_vision: true
+
+  meta.llama3-1-70b-instruct-v1:0:
+    provider: bedrock
+    pricing:
+      input: 0.72
+      output: 0.72
+    capability:
+      max_context: 128000
+      quality_tier: 2
+      supports_thinking: false
+      supports_tools: true
+      supports_streaming: true
+      supports_vision: false
+
+  # --- Ollama (local, zero cost) ---
+  llama3.1:
+    provider: ollama
+    pricing:
+      input: 0.0
+      output: 0.0
+    capability:
+      max_context: 131072
+      quality_tier: 1
+      supports_thinking: false
+      supports_tools: false
+      supports_streaming: true
+      supports_vision: false
+
+  qwen2.5:
+    provider: ollama
+    pricing:
+      input: 0.0
+      output: 0.0
+    capability:
+      max_context: 131072
+      quality_tier: 1
+      supports_thinking: false
+      supports_tools: false
+      supports_streaming: true
+      supports_vision: false

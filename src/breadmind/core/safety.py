@@ -1,5 +1,8 @@
+import logging
 from enum import Enum
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 class SafetyResult(Enum):
     ALLOW = "ALLOWED"
@@ -66,6 +69,76 @@ class SafetyGuard:
         self._user_permissions = permissions
         if admins is not None:
             self._admin_users = admins
+
+    def reload(
+        self,
+        *,
+        blacklist=None,
+        approval=None,
+        permissions=None,
+        tool_security=None,
+    ) -> None:
+        """Replace live rule sets from new settings.
+
+        ``None`` means keep current. Accepts:
+
+        - ``blacklist``: dict mapping category -> list of tool names, OR a
+          flat list of tool names (normalized to ``{"default": [...]}``).
+        - ``approval``: list/iterable of tool names requiring approval, OR
+          a dict whose keys are tool names.
+        - ``permissions``: dict with either ``{"user_permissions": {...},
+          "admin_users": [...]}`` or the raw user_permissions mapping. An
+          ``admin_users`` alias key is also accepted at the top level.
+        - ``tool_security``: currently a no-op on SafetyGuard — the tool
+          security allowlist is consulted by the ToolRegistry/executor
+          rather than cached on the guard, so nothing to swap here. We
+          still log at debug level so hot-reload wiring stays observable.
+        """
+        if blacklist is not None:
+            if isinstance(blacklist, dict):
+                normalized: dict[str, list[str]] = {
+                    str(k): list(v or []) for k, v in blacklist.items()
+                }
+            else:
+                normalized = {"default": list(blacklist)}
+            self._blacklist = normalized
+            self._flat_blacklist = set()
+            for actions in self._blacklist.values():
+                self._flat_blacklist.update(actions)
+
+        if approval is not None:
+            if isinstance(approval, dict):
+                tools = list(approval.keys())
+            else:
+                tools = list(approval)
+            self._require_approval = set(tools)
+
+        if permissions is not None:
+            if isinstance(permissions, dict):
+                if (
+                    "user_permissions" in permissions
+                    or "admin_users" in permissions
+                ):
+                    user_perms = permissions.get("user_permissions") or {}
+                    admins = permissions.get("admin_users")
+                    self._user_permissions = dict(user_perms)
+                    if admins is not None:
+                        self._admin_users = list(admins)
+                else:
+                    self._user_permissions = dict(permissions)
+            else:
+                # A bare list/iterable is interpreted as the admin_users
+                # alias payload (safety_permissions_admin_users key).
+                self._admin_users = list(permissions)
+
+        if tool_security is not None:
+            logger.debug(
+                "SafetyGuard.reload: tool_security is not cached on the "
+                "guard; ignoring payload (keys=%s)",
+                list(tool_security.keys())
+                if isinstance(tool_security, dict)
+                else type(tool_security).__name__,
+            )
 
     def get_config(self) -> dict:
         """Return current safety config as dict."""

@@ -5,8 +5,8 @@ logger = logging.getLogger(__name__)
 
 class DiscordGateway(MessengerGateway):
     def __init__(self, bot_token: str, on_message=None):
+        super().__init__(platform="discord", on_message=on_message)
         self._bot_token = bot_token
-        self._on_message = on_message
         self._client = None
 
     async def start(self):
@@ -24,12 +24,10 @@ class DiscordGateway(MessengerGateway):
                 if message.author == self._client.user:
                     return
                 if on_message_cb:
-                    from breadmind.messenger.router import IncomingMessage
-                    msg = IncomingMessage(
+                    msg = self._create_incoming_message(
                         text=message.content,
-                        user_id=str(message.author.id),
-                        channel_id=str(message.channel.id),
-                        platform="discord",
+                        user=str(message.author.id),
+                        channel=str(message.channel.id),
                     )
                     response = await on_message_cb(msg)
                     if response:
@@ -51,9 +49,5 @@ class DiscordGateway(MessengerGateway):
             if channel:
                 await channel.send(text)
 
-    async def ask_approval(self, channel_id: str, action_name: str, params: dict) -> str:
-        import uuid
-        action_id = str(uuid.uuid4())[:8]
-        text = f"**Approval Required**\nAction: `{action_name}`\nParams: `{params}`\nReact \u2705 to approve, \u274c to deny."
-        await self.send(channel_id, text)
-        return action_id
+    def _format_approval_message(self, action_name: str, params: dict, action_id: str) -> str:
+        return f"**Approval Required**\nAction: `{action_name}`\nParams: `{params}`\nReact \u2705 to approve, \u274c to deny."

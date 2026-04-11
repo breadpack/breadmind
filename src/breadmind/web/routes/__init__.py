@@ -11,8 +11,10 @@ from .scheduler import setup_scheduler_routes
 from .subagent import setup_subagent_routes
 from .swarm import setup_swarm_routes
 from .system import setup_system_routes
+from .browser import setup_browser_routes
 
 __all__ = [
+    "setup_browser_routes",
     "setup_chat_routes",
     "setup_config_routes",
     "setup_container_routes",

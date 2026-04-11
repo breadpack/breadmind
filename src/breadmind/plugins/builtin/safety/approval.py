@@ -4,17 +4,18 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Protocol
 
 from breadmind.core.events import EventBus
+from breadmind.utils.serialization import SerializableMixin
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class ApprovalRequest:
+class ApprovalRequest(SerializableMixin):
     """승인 요청 데이터."""
     request_id: str
     tool_name: str
@@ -31,23 +32,13 @@ class ApprovalRequest:
             reason=reason,
         )
 
-    def to_dict(self) -> dict[str, Any]:
-        """JSON 직렬화 가능한 dict로 변환."""
-        d = asdict(self)
-        d["timestamp"] = self.timestamp.isoformat()
-        return d
-
 
 @dataclass
-class ApprovalResponse:
+class ApprovalResponse(SerializableMixin):
     """승인 응답 데이터."""
     request_id: str
     approved: bool
     modified_arguments: dict[str, Any] | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        """JSON 직렬화 가능한 dict로 변환."""
-        return asdict(self)
 
 
 class ApprovalHandler(Protocol):

@@ -7,6 +7,7 @@ from .base import (
     ToolDefinition,
 )
 from .factory import create_provider
+from .openai_compat import OpenAICompatibleProvider
 
 __all__ = [
     "LLMProvider",
@@ -15,5 +16,6 @@ __all__ = [
     "ToolCall",
     "TokenUsage",
     "ToolDefinition",
+    "OpenAICompatibleProvider",
     "create_provider",
 ]

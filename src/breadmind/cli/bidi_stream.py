@@ -4,10 +4,11 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import AsyncIterator, TextIO
+
+from breadmind.utils.helpers import generate_short_id
 
 
 class StreamMessageType(str, Enum):
@@ -77,7 +78,7 @@ class BidiStreamHandler:
             StreamMessage(
                 type=StreamMessageType.ASSISTANT_TEXT,
                 data={"text": text},
-                id=uuid.uuid4().hex[:8],
+                id=generate_short_id(),
             )
         )
 
@@ -90,9 +91,9 @@ class BidiStreamHandler:
                 data={
                     "tool_name": tool_name,
                     "arguments": arguments,
-                    "tool_use_id": tool_use_id or uuid.uuid4().hex[:8],
+                    "tool_use_id": tool_use_id or generate_short_id(),
                 },
-                id=uuid.uuid4().hex[:8],
+                id=generate_short_id(),
             )
         )
 
@@ -101,7 +102,7 @@ class BidiStreamHandler:
             StreamMessage(
                 type=StreamMessageType.ERROR,
                 data={"error": error},
-                id=uuid.uuid4().hex[:8],
+                id=generate_short_id(),
             )
         )
 
@@ -110,7 +111,7 @@ class BidiStreamHandler:
             StreamMessage(
                 type=StreamMessageType.COMPLETE,
                 data={"result": result},
-                id=uuid.uuid4().hex[:8],
+                id=generate_short_id(),
             )
         )
 

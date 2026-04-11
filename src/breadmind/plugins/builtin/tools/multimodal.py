@@ -10,9 +10,10 @@ import re
 from pathlib import Path
 
 from breadmind.core.protocols.provider import Attachment
+from breadmind.constants import MAX_IMAGE_SIZE as _MAX_IMAGE_SIZE
 
 SUPPORTED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
-MAX_IMAGE_SIZE = 20 * 1024 * 1024  # 20MB
+MAX_IMAGE_SIZE = _MAX_IMAGE_SIZE
 
 # 이미지 파일 경로 패턴: Unix (/path/to/img.png) 및 Windows (C:\path\img.png)
 IMAGE_PATH_PATTERN = re.compile(

@@ -30,8 +30,8 @@ def setup_scheduler_routes(r: APIRouter, app_state):
         if not scheduler:
             return JSONResponse(status_code=503, content={"error": "Scheduler not configured"})
         data = await request.json()
-        import uuid
-        job_id = data.get("id", str(uuid.uuid4())[:8])
+        from breadmind.utils.helpers import generate_short_id
+        job_id = data.get("id", generate_short_id())
         from breadmind.core.scheduler import CronJob
         job = CronJob(
             id=job_id, name=data.get("name", ""), schedule=data.get("schedule", ""),
@@ -71,8 +71,8 @@ def setup_scheduler_routes(r: APIRouter, app_state):
         if not scheduler:
             return JSONResponse(status_code=503, content={"error": "Scheduler not configured"})
         data = await request.json()
-        import uuid
-        hb_id = data.get("id", str(uuid.uuid4())[:8])
+        from breadmind.utils.helpers import generate_short_id
+        hb_id = data.get("id", generate_short_id())
         from breadmind.core.scheduler import HeartbeatTask
         hb = HeartbeatTask(
             id=hb_id, name=data.get("name", ""), interval_minutes=data.get("interval_minutes", 30),

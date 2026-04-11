@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 
 
 @dataclass
@@ -25,7 +25,6 @@ class AgentResponse:
     cost_usd: float = 0.0
 
 
-@runtime_checkable
 class AgentProtocol(Protocol):
     """에이전트 생명주기 계약."""
     @property

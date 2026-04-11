@@ -7,10 +7,12 @@ remote endpoint (worker node or cloud service).
 from __future__ import annotations
 
 import re
-import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from functools import partial
+
+from breadmind.utils.helpers import generate_short_id
 
 
 class CloudTaskStatus(str, Enum):
@@ -32,7 +34,7 @@ _CRON_RE = re.compile(
 
 @dataclass
 class CloudTask:
-    id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    id: str = field(default_factory=partial(generate_short_id, 12))
     prompt: str = ""
     schedule: str = ""  # cron expression or "once"
     status: CloudTaskStatus = CloudTaskStatus.PENDING

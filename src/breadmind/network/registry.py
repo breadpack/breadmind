@@ -124,5 +124,19 @@ class AgentRegistry:
                     offline.append(agent_id)
         return offline
 
+    def list_companions(self) -> list[AgentInfo]:
+        """Return agents whose environment.agent_type == 'companion'."""
+        return [
+            a for a in self._agents.values()
+            if a.environment.get("agent_type") == "companion"
+        ]
+
+    def list_workers(self) -> list[AgentInfo]:
+        """Return agents that are NOT companions (traditional workers)."""
+        return [
+            a for a in self._agents.values()
+            if a.environment.get("agent_type") != "companion"
+        ]
+
     def remove(self, agent_id: str) -> None:
         self._agents.pop(agent_id, None)

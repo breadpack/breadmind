@@ -5,7 +5,9 @@ import os
 
 from celery import Celery
 
-_redis_url = os.environ.get("BREADMIND_REDIS_URL", "redis://localhost:6379/0")
+from breadmind.constants import DEFAULT_REDIS_URL
+
+_redis_url = os.environ.get("BREADMIND_REDIS_URL", DEFAULT_REDIS_URL)
 
 celery_app = Celery(
     "breadmind",

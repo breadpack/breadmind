@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import time
-import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from breadmind.utils.helpers import generate_short_id
 
 
 @dataclass
@@ -50,7 +51,7 @@ class CheckpointManager:
         message_index: int = 0,
     ) -> Checkpoint:
         """Create a new checkpoint, optionally snapshotting specific files."""
-        cp_id = uuid.uuid4().hex[:12]
+        cp_id = generate_short_id(12)
         now = time.time()
         snapshots: list[FileSnapshot] = []
 
@@ -141,7 +142,7 @@ class CheckpointManager:
         if source is None:
             raise ValueError(f"Checkpoint {checkpoint_id} not found")
 
-        cp_id = uuid.uuid4().hex[:12]
+        cp_id = generate_short_id(12)
         now = time.time()
 
         # Copy snapshots from source

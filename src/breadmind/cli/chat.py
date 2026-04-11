@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import os
-import uuid
 from pathlib import Path
 
 from breadmind.cli.session_manager import SessionManager
+from breadmind.utils.helpers import generate_short_id
 from breadmind.cli.ui import get_ui
 
 
@@ -150,7 +150,7 @@ async def _resolve_session(args, session_mgr: SessionManager, ui) -> tuple[str, 
             ui.info(f"[Resumed session {latest}]")
             return latest, True
         ui.warning("No previous session found. Starting new session.")
-        return f"chat_{uuid.uuid4().hex[:8]}", False
+        return f"chat_{generate_short_id()}", False
 
     # --resume (-r): 특정 세션 또는 목록 선택
     resume_val = getattr(args, "resume_session", None)
@@ -162,12 +162,12 @@ async def _resolve_session(args, session_mgr: SessionManager, ui) -> tuple[str, 
                 ui.info(f"[Resumed session {resume_val}]")
                 return resume_val, True
             ui.warning(f"Session '{resume_val}' not found. Starting new session.")
-            return f"chat_{uuid.uuid4().hex[:8]}", False
+            return f"chat_{generate_short_id()}", False
         # 빈 값: 목록에서 선택
         sessions = session_mgr.list_sessions(limit=20)
         if not sessions:
             ui.warning("No sessions found. Starting new session.")
-            return f"chat_{uuid.uuid4().hex[:8]}", False
+            return f"chat_{generate_short_id()}", False
 
         import datetime
         rows = []
@@ -188,12 +188,12 @@ async def _resolve_session(args, session_mgr: SessionManager, ui) -> tuple[str, 
         except (KeyboardInterrupt, EOFError):
             pass
         ui.info("Starting new session.")
-        return f"chat_{uuid.uuid4().hex[:8]}", False
+        return f"chat_{generate_short_id()}", False
 
     # --continue (기존 하위 호환) 또는 새 세션
     if args.continue_session:
         return args.continue_session, True
-    return f"chat_{uuid.uuid4().hex[:8]}", False
+    return f"chat_{generate_short_id()}", False
 
 
 async def _chat_loop(

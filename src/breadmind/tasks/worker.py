@@ -56,7 +56,8 @@ def _worker_bootstrap(**kwargs):
     _guard = SafetyGuard(load_safety_config())
 
     # Redis for Pub/Sub
-    redis_url = os.environ.get("BREADMIND_REDIS_URL", "redis://localhost:6379/0")
+    from breadmind.constants import DEFAULT_REDIS_URL
+    redis_url = os.environ.get("BREADMIND_REDIS_URL", DEFAULT_REDIS_URL)
     try:
         _redis_client = sync_redis.from_url(redis_url)
         _redis_client.ping()
@@ -225,6 +226,30 @@ async def _run_monitor(job_id: str) -> None:
             })
 
         await asyncio.sleep(interval)
+
+
+# ── Durable Flow Step Execution ──────────────────────────────────────
+
+@celery_app.task(bind=True, name="flow.execute_step")
+def execute_flow_step_task(self, flow_id: str, step_id: str, tool: str | None, args: dict | None = None):
+    """Celery entry point for durable task flow step execution.
+
+    Delegates to ``breadmind.flow.celery_tasks.execute_flow_step`` which
+    publishes STEP_STARTED/COMPLETED/FAILED events on the flow event bus and
+    executes the requested tool via the worker-local ToolRegistry.
+    """
+    from breadmind.flow.celery_tasks import execute_flow_step
+
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(
+            execute_flow_step(flow_id, step_id, tool, args or {})
+        )
+    except Exception as e:
+        logger.exception("flow.execute_step failed for %s/%s", flow_id, step_id)
+        return {"ok": False, "error": str(e)}
+    finally:
+        loop.close()
 
 
 # ── Helpers ──────────────────────────────────────────────────────────

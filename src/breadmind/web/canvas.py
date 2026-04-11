@@ -1,7 +1,9 @@
 """Canvas (A2UI) foundation: agent-driven UI surface system."""
 from __future__ import annotations
-import json, logging, uuid
+import json, logging
 from dataclasses import dataclass, field
+
+from breadmind.utils.helpers import generate_short_id
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -21,7 +23,7 @@ class CanvasManager:
         self._surfaces: dict[str, CanvasSurface] = {}
 
     def create_surface(self, session_id: str, content: str = "") -> CanvasSurface:
-        surface_id = f"canvas_{uuid.uuid4().hex[:8]}"
+        surface_id = f"canvas_{generate_short_id()}"
         surface = CanvasSurface(id=surface_id, session_id=session_id, content=content)
         self._surfaces[surface_id] = surface
         return surface

@@ -4,9 +4,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import uuid
 from dataclasses import dataclass, field
 from typing import Any
+
+from breadmind.utils.helpers import generate_short_id
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ class WorktreeManager:
 
         Creates a new branch and worktree directory.
         """
-        wt_id = f"wt_{uuid.uuid4().hex[:8]}"
+        wt_id = f"wt_{generate_short_id()}"
         branch_name = f"breadmind/{agent_id}/{wt_id}"
         wt_path = os.path.join(self._worktree_dir, wt_id)
 

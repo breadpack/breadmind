@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from breadmind.utils.serialization import SerializableMixin
+
 logger = logging.getLogger(__name__)
 
 
@@ -22,7 +24,7 @@ class BackupConfig:
 
 
 @dataclass
-class BackupInfo:
+class BackupInfo(SerializableMixin):
     """Metadata about a single backup file."""
     filename: str
     path: str
@@ -30,16 +32,6 @@ class BackupInfo:
     created_at: datetime
     database: str
     compressed: bool
-
-    def to_dict(self) -> dict:
-        return {
-            "filename": self.filename,
-            "path": self.path,
-            "size_bytes": self.size_bytes,
-            "created_at": self.created_at.isoformat(),
-            "database": self.database,
-            "compressed": self.compressed,
-        }
 
 
 class BackupError(Exception):

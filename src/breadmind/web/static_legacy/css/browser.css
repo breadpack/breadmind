@@ -1,0 +1,235 @@
+/* =============================================================================
+   Browser Page — Sessions Dashboard & Live View
+   ============================================================================= */
+
+.browser-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 12px;
+    padding: 4px;
+}
+
+.browser-session-card {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    padding: 16px;
+    transition: all 0.2s ease;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.browser-session-card:hover {
+    background: var(--glass-bg-hover);
+    border-color: rgba(99, 102, 241, 0.3);
+}
+
+.browser-session-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.browser-session-name {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.browser-session-badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.browser-session-badge.persistent {
+    background: rgba(99, 102, 241, 0.15);
+    color: var(--accent-light, #818cf8);
+}
+
+.browser-session-badge.transient {
+    background: rgba(148, 163, 184, 0.15);
+    color: var(--text-tertiary);
+}
+
+.browser-session-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.browser-session-meta span {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.browser-session-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.browser-btn {
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    border: 1px solid var(--glass-border);
+    background: var(--glass-bg);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.browser-btn:hover {
+    background: var(--glass-bg-hover);
+    color: var(--text-primary);
+}
+
+.browser-btn.primary {
+    background: rgba(99, 102, 241, 0.15);
+    border-color: rgba(99, 102, 241, 0.3);
+    color: var(--accent-light, #818cf8);
+}
+
+.browser-btn.primary:hover {
+    background: rgba(99, 102, 241, 0.25);
+}
+
+.browser-btn.danger {
+    color: var(--error, #ef4444);
+    border-color: rgba(239, 68, 68, 0.3);
+}
+
+.browser-btn.danger:hover {
+    background: rgba(239, 68, 68, 0.1);
+}
+
+/* --- Live View --- */
+
+.browser-live-container {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    height: 100%;
+}
+
+.browser-live-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 0;
+    flex-shrink: 0;
+}
+
+.browser-live-toolbar select,
+.browser-live-toolbar input {
+    padding: 5px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--glass-border);
+    background: var(--glass-bg);
+    color: var(--text-primary);
+    font-size: 13px;
+}
+
+.browser-live-viewport {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 12px;
+    border: 1px solid var(--glass-border);
+    overflow: hidden;
+    position: relative;
+    min-height: 400px;
+}
+
+.browser-live-viewport img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+}
+
+.browser-live-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-tertiary);
+}
+
+.browser-live-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-tertiary);
+}
+
+.browser-live-dot.active {
+    background: #22c55e;
+    animation: browser-pulse 2s infinite;
+}
+
+@keyframes browser-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+.browser-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 16px;
+    color: var(--text-tertiary);
+    font-size: 14px;
+    text-align: center;
+    gap: 12px;
+}
+
+.browser-empty-icon {
+    font-size: 48px;
+    opacity: 0.5;
+}
+
+/* --- Macro cards --- */
+
+.browser-macro-card {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    transition: all 0.15s ease;
+}
+
+.browser-macro-card:hover {
+    background: var(--glass-bg-hover);
+}
+
+.browser-macro-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.browser-macro-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.browser-macro-meta {
+    font-size: 11px;
+    color: var(--text-tertiary);
+}

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 from breadmind.llm.base import ToolDefinition
 from breadmind.tools.registry import ToolResult
+from breadmind.constants import MAX_MCP_MESSAGE_SIZE
 from breadmind.tools.mcp_protocol import (
     create_initialize_request, create_initialized_notification,
     create_tools_list_request, create_tools_call_request,
@@ -15,8 +16,8 @@ from breadmind.tools.mcp_protocol import (
     encode_message, parse_response, MCPError,
 )
 
-_MAX_MESSAGE_SIZE = 10 * 1024 * 1024  # 10 MB
-MAX_RESPONSE_SIZE = 10 * 1024 * 1024  # 10 MB
+_MAX_MESSAGE_SIZE = MAX_MCP_MESSAGE_SIZE
+MAX_RESPONSE_SIZE = MAX_MCP_MESSAGE_SIZE
 _CONTENT_LENGTH_RE = re.compile(r"Content-Length:\s*(\d+)", re.IGNORECASE)
 
 # Patterns that may indicate prompt injection in tool output

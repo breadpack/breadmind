@@ -6,7 +6,7 @@ import logging
 import uuid
 from typing import Callable
 
-from breadmind.messenger.router import MessengerGateway, IncomingMessage
+from breadmind.messenger.router import MessengerGateway
 
 logger = logging.getLogger(__name__)
 
@@ -19,11 +19,10 @@ class MatrixGateway(MessengerGateway):
         user_id: str = "",
         on_message: Callable | None = None,
     ) -> None:
+        super().__init__(platform="matrix", on_message=on_message)
         self._homeserver = homeserver.rstrip("/")
         self._access_token = access_token
         self._user_id = user_id
-        self._on_message = on_message
-        self._connected = False
         self._sync_task: asyncio.Task | None = None
         self._since: str = ""
 
@@ -60,17 +59,12 @@ class MatrixGateway(MessengerGateway):
                 if resp.status not in (200, 201):
                     logger.error("Matrix send failed: %s", await resp.text())
 
-    async def ask_approval(
-        self, channel_id: str, action_name: str, params: dict
-    ) -> str:
-        action_id = str(uuid.uuid4())[:8]
-        text = (
+    def _format_approval_message(self, action_name: str, params: dict, action_id: str) -> str:
+        return (
             f"\U0001f510 승인 요청: {action_name}\n"
             f"파라미터: {params}\n"
             f"Action ID: {action_id}"
         )
-        await self.send(channel_id, text)
-        return action_id
 
     async def _sync_loop(self) -> None:
         """Long-poll sync loop to receive messages."""
@@ -108,11 +102,10 @@ class MatrixGateway(MessengerGateway):
                             == "m.text"
                             and event.get("sender") != self._user_id
                         ):
-                            msg = IncomingMessage(
+                            msg = self._create_incoming_message(
                                 text=event["content"]["body"],
-                                user_id=event["sender"],
-                                channel_id=room_id,
-                                platform="matrix",
+                                user=event["sender"],
+                                channel=room_id,
                             )
                             if self._on_message:
                                 response = await self._on_message(msg)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import Any
+from breadmind.constants import DEFAULT_CLAUDE_MODEL
 from breadmind.core.protocols import (
     CacheStrategy, LLMResponse, Message, PromptBlock, ProviderProtocol, TokenUsage, ToolCallRequest,
 )
@@ -10,7 +11,7 @@ SUPPORTED_FEATURES = frozenset({"thinking_blocks", "system_reminder", "prompt_ca
 class ClaudeAdapter:
     """Claude API ProviderProtocol 구현."""
 
-    def __init__(self, api_key: str, model: str = "claude-sonnet-4-6",
+    def __init__(self, api_key: str, model: str = DEFAULT_CLAUDE_MODEL,
                  fallback_provider: ProviderProtocol | None = None, max_tokens: int = 16384) -> None:
         self._api_key = api_key
         self._model = model

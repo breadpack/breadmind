@@ -61,50 +61,12 @@ SLACK_APP_MANIFEST = {
 class SlackAutoConnector(AutoConnector):
     platform = "slack"
 
-    async def get_setup_steps(self) -> list[SetupStep]:
-        bot_token = os.environ.get("SLACK_BOT_TOKEN")
-        app_token = os.environ.get("SLACK_APP_TOKEN")
+    def _has_existing_credentials(self) -> bool:
+        return bool(
+            os.environ.get("SLACK_BOT_TOKEN") and os.environ.get("SLACK_APP_TOKEN")
+        )
 
-        if bot_token and app_token:
-            return [
-                SetupStep(
-                    step_number=1,
-                    title="토큰 검증",
-                    description="기존 토큰을 검증합니다.",
-                    action_type="auto",
-                    auto_executable=True,
-                ),
-            ]
-
-        client_id = os.environ.get("SLACK_CLIENT_ID")
-        if client_id:
-            # OAuth flow 가능
-            base_url = _get_base_url()
-            redirect_uri = f"{base_url}/api/messenger/slack/oauth-callback"
-            oauth_url = (
-                f"https://slack.com/oauth/v2/authorize"
-                f"?client_id={client_id}"
-                f"&scope=chat:write,channels:history,channels:read,im:history,im:read,im:write,app_mentions:read"
-                f"&redirect_uri={redirect_uri}"
-            )
-            return [
-                SetupStep(
-                    step_number=1,
-                    title="Slack 앱 승인",
-                    description="아래 링크를 클릭하여 BreadMind 앱을 워크스페이스에 설치하세요.",
-                    action_type="oauth_redirect",
-                    action_url=oauth_url,
-                ),
-                SetupStep(
-                    step_number=2,
-                    title="연결 완료",
-                    description="OAuth 인증이 완료되면 자동으로 연결됩니다.",
-                    action_type="auto",
-                    auto_executable=True,
-                ),
-            ]
-
-        # 수동 설정
+    def _get_initial_setup_steps(self) -> list[SetupStep]:
         return [
             SetupStep(
                 step_number=1,
@@ -150,6 +112,41 @@ class SlackAutoConnector(AutoConnector):
                 auto_executable=True,
             ),
         ]
+
+    async def get_setup_steps(self) -> list[SetupStep]:
+        """Slack은 OAuth 중간 경로가 있어 추가 분기 로직이 필요."""
+        if self._has_existing_credentials():
+            return [self._get_verification_step()]
+
+        # Client ID가 있으면 OAuth flow 가능
+        client_id = os.environ.get("SLACK_CLIENT_ID")
+        if client_id:
+            base_url = _get_base_url()
+            redirect_uri = f"{base_url}/api/messenger/slack/oauth-callback"
+            oauth_url = (
+                f"https://slack.com/oauth/v2/authorize"
+                f"?client_id={client_id}"
+                f"&scope=chat:write,channels:history,channels:read,im:history,im:read,im:write,app_mentions:read"
+                f"&redirect_uri={redirect_uri}"
+            )
+            return [
+                SetupStep(
+                    step_number=1,
+                    title="Slack 앱 승인",
+                    description="아래 링크를 클릭하여 BreadMind 앱을 워크스페이스에 설치하세요.",
+                    action_type="oauth_redirect",
+                    action_url=oauth_url,
+                ),
+                SetupStep(
+                    step_number=2,
+                    title="연결 완료",
+                    description="OAuth 인증이 완료되면 자동으로 연결됩니다.",
+                    action_type="auto",
+                    auto_executable=True,
+                ),
+            ]
+
+        return self._get_initial_setup_steps()
 
     async def create_bot(self, params: dict) -> CreateResult:
         """Slack App Manifest API로 앱 생성 시도."""

@@ -7,6 +7,7 @@ from typing import Callable, Any
 from abc import ABC, abstractmethod
 
 from breadmind.messenger.platforms import get_platform_configs, get_platform_names
+from breadmind.utils.helpers import generate_short_id
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,16 @@ class MessengerGateway(ABC):
     _connected: bool = False
     _enabled: bool = True
 
+    def __init__(self, platform: str, on_message: Callable | None = None):
+        """Common initialization for all gateways.
+
+        Subclasses should call ``super().__init__(platform, on_message)`` or
+        simply set ``_platform`` and ``_on_message`` themselves for backward
+        compatibility.
+        """
+        self._platform = platform
+        self._on_message = on_message
+
     @abstractmethod
     async def start(self):
         ...
@@ -57,10 +68,50 @@ class MessengerGateway(ABC):
     async def send(self, channel_id: str, text: str):
         ...
 
-    @abstractmethod
-    async def ask_approval(self, channel_id: str, action_name: str, params: dict) -> str:
-        """Returns an action_id for tracking the approval."""
-        ...
+    # --- concrete helper methods ---
+
+    def _create_incoming_message(
+        self, text: str, user: str, channel: str, **kwargs: Any,
+    ) -> "IncomingMessage":
+        """Factory for IncomingMessage with sensible defaults."""
+        return IncomingMessage(
+            text=text,
+            user_id=user,
+            channel_id=channel,
+            platform=getattr(self, "_platform", "unknown"),
+            **kwargs,
+        )
+
+    @staticmethod
+    def _generate_action_id() -> str:
+        """Generate a short UUID-based action ID."""
+        return generate_short_id()
+
+    async def ask_approval(
+        self, channel_id: str, action_name: str, params: dict,
+    ) -> str:
+        """Default approval flow: format message, send it, return action_id.
+
+        Subclasses can override ``_format_approval_message`` for
+        platform-specific formatting or override this method entirely for
+        richer UI (e.g. Slack blocks, Telegram inline keyboards).
+        """
+        action_id = self._generate_action_id()
+        text = self._format_approval_message(action_name, params, action_id)
+        await self.send(channel_id, text)
+        return action_id
+
+    def _format_approval_message(
+        self, action_name: str, params: dict, action_id: str,
+    ) -> str:
+        """Override point for platform-specific approval formatting."""
+        return (
+            f"Approval Required\n"
+            f"Action: {action_name}\n"
+            f"Params: {params}\n"
+            f"ID: {action_id}\n"
+            f"Reply 'approve {action_id}' or 'deny {action_id}'."
+        )
 
 class MessageRouter:
     def __init__(self):

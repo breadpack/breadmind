@@ -1,8 +1,9 @@
 """ToolGapDetector: detects missing tools and suggests MCP server installations."""
 import time
-import uuid
 from dataclasses import dataclass, field
 from typing import Any
+
+from breadmind.utils.helpers import generate_short_id
 
 _MAX_PENDING = 10
 _CACHE_TTL = 600  # 10 minutes
@@ -79,7 +80,7 @@ class ToolGapDetector:
         suggestions = []
         for r in results:
             suggestion = MCPSuggestion(
-                id=str(uuid.uuid4())[:8],
+                id=generate_short_id(),
                 tool_name=tool_name,
                 mcp_name=r.name,
                 mcp_description=r.description,
@@ -110,7 +111,7 @@ class ToolGapDetector:
         suggestions = []
         for r in results:
             suggestion = MCPSuggestion(
-                id=str(uuid.uuid4())[:8],
+                id=generate_short_id(),
                 tool_name=description,
                 mcp_name=r.name,
                 mcp_description=r.description,

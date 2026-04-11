@@ -3,9 +3,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 
-# 모델별 가격 (USD / 1M tokens)
-MODEL_PRICING: dict[str, dict[str, float]] = {
+import yaml
+
+_PRICING_FILE = Path(__file__).resolve().parents[5] / "config" / "model_pricing.yaml"
+
+# 모델별 가격 (USD / 1M tokens) — YAML 로드 실패 시 폴백
+_FALLBACK_PRICING: dict[str, dict[str, float]] = {
     "claude-sonnet-4-6": {
         "input": 3.0,
         "output": 15.0,
@@ -27,28 +32,33 @@ MODEL_PRICING: dict[str, dict[str, float]] = {
     "gemini-2.5-flash": {
         "input": 0.15,
         "output": 0.60,
-        "cache_creation": 0.0,
-        "cache_read": 0.0,
     },
     "gemini-2.5-pro": {
         "input": 1.25,
         "output": 10.0,
-        "cache_creation": 0.0,
-        "cache_read": 0.0,
     },
     "grok-3": {
         "input": 3.0,
         "output": 15.0,
-        "cache_creation": 0.0,
-        "cache_read": 0.0,
     },
     "grok-3-mini": {
         "input": 0.30,
         "output": 0.50,
-        "cache_creation": 0.0,
-        "cache_read": 0.0,
     },
 }
+
+
+def _load_pricing() -> dict[str, dict[str, float]]:
+    try:
+        if _PRICING_FILE.exists():
+            with open(_PRICING_FILE, encoding="utf-8") as f:
+                return yaml.safe_load(f)
+    except Exception:
+        pass
+    return _FALLBACK_PRICING
+
+
+MODEL_PRICING: dict[str, dict[str, float]] = _load_pricing()
 
 
 @dataclass

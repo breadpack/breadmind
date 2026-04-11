@@ -101,6 +101,22 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id);
                 CREATE INDEX IF NOT EXISTS idx_conversations_active ON conversations(last_active DESC);
 
+                CREATE TABLE IF NOT EXISTS subagent_roles (
+                    name          TEXT PRIMARY KEY,
+                    domain        TEXT NOT NULL DEFAULT 'general',
+                    task_type     TEXT NOT NULL DEFAULT 'general',
+                    description   TEXT NOT NULL DEFAULT '',
+                    system_prompt TEXT NOT NULL,
+                    provider      TEXT NOT NULL DEFAULT '',
+                    model         TEXT NOT NULL DEFAULT '',
+                    tool_mode     TEXT NOT NULL DEFAULT 'whitelist',
+                    tools         JSONB NOT NULL DEFAULT '[]',
+                    max_turns     INTEGER NOT NULL DEFAULT 5,
+                    created_by    TEXT NOT NULL DEFAULT 'user',
+                    created_at    TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at    TIMESTAMPTZ DEFAULT NOW()
+                );
+
                 -- Personal assistant tables
                 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 

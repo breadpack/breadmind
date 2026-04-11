@@ -4,17 +4,19 @@ import logging
 import time
 from fastapi import FastAPI, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from typing import Callable
 
 from breadmind.core.metrics import get_metrics_registry, normalize_path
 
+from breadmind.web.context import AppContext
 from breadmind.web.idempotency import setup_idempotency
 from breadmind.web.rate_limiter import RateLimiter
 from breadmind.web.versioning import setup_versioning
 from breadmind.web.routes import (
+    setup_browser_routes,
     setup_chat_routes,
     setup_config_routes,
     setup_container_routes,
@@ -33,6 +35,7 @@ from breadmind.web.routes.oauth import router as oauth_router
 from breadmind.web.routes.infrastructure import router as infra_router
 from breadmind.web.routes.personal import router as personal_router
 from breadmind.web.routes.workers import setup_worker_routes
+from breadmind.web.routes.companions import setup_companion_routes
 from breadmind.web.routes.credential_input import setup_credential_input_routes
 from breadmind.web.routes.bg_jobs import setup_bg_job_routes
 from breadmind.web.routes.coding_jobs import register_coding_job_routes
@@ -40,21 +43,19 @@ from breadmind.web.routes.plugins import router as plugins_router
 from breadmind.web.routes.upload import router as upload_router
 from breadmind.web.routes.export import setup_export_routes
 from breadmind.web.routes.backup import setup_backup_routes
+from breadmind.web.routes.webhook_automation import setup_webhook_automation_routes
+from breadmind.web.routes.pwa import setup_pwa_routes, send_push
+from breadmind.web.routes.ui import router as ui_router
 
 logger = logging.getLogger(__name__)
 
 class WebApp:
-    def __init__(self, message_handler: Callable | None = None, tool_registry=None, mcp_manager=None,
-                 config=None, monitoring_engine=None, safety_config=None,
-                 agent=None, audit_logger=None, metrics_collector=None, database=None,
-                 mcp_store=None, safety_guard=None, working_memory=None, message_router=None,
-                 scheduler=None, subagent_manager=None, webhook_manager=None, auth=None,
-                 container_executor=None, swarm_manager=None,
-                 skill_store=None, performance_tracker=None, search_engine=None,
-                 token_manager=None, commander=None,
-                 messenger_security=None, lifecycle_manager=None, orchestrator=None,
-                 bg_job_manager=None, embedding_service=None,
-                 plugin_mgr=None):
+    def __init__(self, ctx: AppContext | None = None, **kwargs):
+        # Support both new (ctx) and legacy (kwargs) initialization
+        if ctx is None:
+            ctx = AppContext(**kwargs)
+        self.ctx = ctx
+
         try:
             from importlib.metadata import version as _pkg_ver
             _version = _pkg_ver("breadmind")
@@ -63,40 +64,10 @@ class WebApp:
         self.app = FastAPI(title="BreadMind", version=_version)
         # Expose self via FastAPI state so Depends() helpers can reach it
         self.app.state.app_state = self
-        self._message_handler = message_handler
-        self._tool_registry = tool_registry
-        self._mcp_manager = mcp_manager
-        self._config = config
-        self._monitoring_engine = monitoring_engine
-        self._safety_config = safety_config
-        self._agent = agent
-        self._audit_logger = audit_logger
-        self._metrics_collector = metrics_collector
-        self._db = database
-        self._mcp_store = mcp_store
-        self._safety_guard = safety_guard
-        self._working_memory = working_memory
-        self._message_router = message_router
-        self._scheduler = scheduler
-        self._subagent_manager = subagent_manager
-        self._webhook_manager = webhook_manager
-        self._auth = auth
-        self._container_executor = container_executor
-        self._swarm_manager = swarm_manager
-        self._skill_store = skill_store
-        self._performance_tracker = performance_tracker
-        self._search_engine = search_engine
-        self._token_manager = token_manager
-        self._commander = commander
-        self._messenger_security = messenger_security
-        self._lifecycle_manager = lifecycle_manager
-        self._orchestrator = orchestrator
-        self._bg_job_manager = bg_job_manager
-        self._embedding_service = embedding_service
-        self._plugin_mgr = plugin_mgr
         self._marketplace = None
 
         # CORS middleware
+        config = self._config
         if config and hasattr(config, 'security'):
             origins = config.security.cors_origins
         else:
@@ -125,16 +96,58 @@ class WebApp:
             if tracker is not None:
                 tracker._on_prompt_updated = self._on_behavior_prompt_updated
 
-        # Restore swarm roles from DB on startup
-        @self.app.on_event("startup")
-        async def _restore_swarm_roles():
-            if self._swarm_manager and self._db:
-                try:
-                    roles_data = await self._db.get_setting("swarm_roles")
-                    if roles_data:
-                        self._swarm_manager.import_roles(roles_data)
-                except Exception:
-                    pass
+
+    # ── Backward-compatible attribute proxy to self.ctx ─────────────────
+    # Routes and dependency helpers access ``app_state._field``; this
+    # mapping keeps that contract intact while the real data lives in ctx.
+    _CTX_ATTR_MAP: dict[str, str] = {
+        "_message_handler": "message_handler",
+        "_tool_registry": "tool_registry",
+        "_mcp_manager": "mcp_manager",
+        "_config": "config",
+        "_monitoring_engine": "monitoring_engine",
+        "_safety_config": "safety_config",
+        "_agent": "agent",
+        "_audit_logger": "audit_logger",
+        "_metrics_collector": "metrics_collector",
+        "_db": "database",
+        "_mcp_store": "mcp_store",
+        "_safety_guard": "safety_guard",
+        "_working_memory": "working_memory",
+        "_message_router": "message_router",
+        "_scheduler": "scheduler",
+        "_subagent_manager": "subagent_manager",
+        "_webhook_manager": "webhook_manager",
+        "_auth": "auth",
+        "_container_executor": "container_executor",
+        "_skill_store": "skill_store",
+        "_performance_tracker": "performance_tracker",
+        "_search_engine": "search_engine",
+        "_token_manager": "token_manager",
+        "_commander": "commander",
+        "_messenger_security": "messenger_security",
+        "_lifecycle_manager": "lifecycle_manager",
+        "_orchestrator": "orchestrator",
+        "_bg_job_manager": "bg_job_manager",
+        "_embedding_service": "embedding_service",
+        "_plugin_mgr": "plugin_mgr",
+        "_webhook_automation_store": "webhook_automation_store",
+        "_webhook_rule_engine": "webhook_rule_engine",
+        "_webhook_pipeline_executor": "webhook_pipeline_executor",
+    }
+
+    def __getattr__(self, name: str):
+        ctx_field = WebApp._CTX_ATTR_MAP.get(name)
+        if ctx_field is not None:
+            return getattr(self.ctx, ctx_field)
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+    def __setattr__(self, name: str, value):
+        ctx_field = WebApp._CTX_ATTR_MAP.get(name)
+        if ctx_field is not None:
+            setattr(self.ctx, ctx_field, value)
+        else:
+            super().__setattr__(name, value)
 
     async def _on_behavior_prompt_updated(self, new_prompt: str, reason: str):
         """Broadcast behavior prompt update to connected WebSocket clients."""
@@ -160,6 +173,18 @@ class WebApp:
             self._events = self._events[-100:]
         # Broadcast to connected WebSocket clients
         await self.broadcast_event(event_dict)
+        # Send push notification for warning/critical events
+        if event.severity in ("warning", "critical"):
+            try:
+                await send_push(
+                    self._db,
+                    title=f"[{event.severity.upper()}] {event.source}",
+                    body=f"{event.target}: {event.condition}",
+                    url="/#monitoring",
+                    tag=f"monitor-{event.severity}",
+                )
+            except Exception:
+                pass
 
     async def broadcast_event(self, event_dict):
         async with self._lock:
@@ -243,7 +268,8 @@ class WebApp:
             # Skip auth for certain paths
             skip_paths = ["/api/auth/", "/health", "/metrics",
                          "/api/webhook/receive/", "/api/workers/install-script",
-                         "/credential-input/", "/api/vault/submit-external/"]
+                         "/credential-input/", "/api/vault/submit-external/",
+                         "/sw.js", "/manifest.json", "/offline.html"]
             if any(path.startswith(p) for p in skip_paths):
                 return await call_next(request)
 
@@ -340,6 +366,26 @@ class WebApp:
                 return RedirectResponse(url=str(https_url), status_code=301)
             return await call_next(request)
 
+        # --- PWA routes ---
+
+        static_dir = Path(__file__).parent / "static"
+
+        @app.get("/manifest.json")
+        async def manifest():
+            return FileResponse(static_dir / "manifest.json", media_type="application/manifest+json")
+
+        @app.get("/sw.js")
+        async def service_worker():
+            return FileResponse(
+                static_dir / "sw.js",
+                media_type="application/javascript",
+                headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"},
+            )
+
+        @app.get("/offline.html")
+        async def offline():
+            return FileResponse(static_dir / "offline.html", media_type="text/html")
+
         # --- Index route ---
 
         @app.get("/", response_class=HTMLResponse)
@@ -363,6 +409,7 @@ class WebApp:
         setup_settings_routes(app, self)
         setup_messenger_routes(app, self)
         setup_worker_routes(app, self)
+        setup_companion_routes(app, self)
         setup_chat_routes(app, self)
         setup_credential_input_routes(app, self)
         setup_bg_job_routes(app, self)
@@ -375,6 +422,13 @@ class WebApp:
         app.include_router(upload_router)
         setup_export_routes(app, self)
         setup_backup_routes(app, self)
+        setup_webhook_automation_routes(app, self)
+        setup_browser_routes(app, self)
+        setup_pwa_routes(app, self)
+        # Server-Driven UI WebSocket (/ws/ui). The FlowEventBus + UISpecProjector
+        # singletons are constructed lazily on first connection (see ui.py),
+        # because the WebApp factory has no async startup hook.
+        app.include_router(ui_router)
 
         # --- Prometheus metrics endpoint (outside versioning) ---
 
@@ -393,15 +447,18 @@ class WebApp:
         # --- Static files (JS, CSS) ---
         static_dir = Path(__file__).parent / "static"
         if static_dir.exists():
-            app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
-
-    async def _persist_swarm_roles(self):
-        """Save all swarm roles to DB."""
-        if self._db and self._swarm_manager:
-            try:
-                await self._db.set_setting("swarm_roles", self._swarm_manager.export_roles())
-            except Exception:
-                pass
+            class _NoCacheStatic(StaticFiles):
+                async def get_response(self, path, scope):
+                    response = await super().get_response(path, scope)
+                    # Disable browser caching for static assets to make dev iteration painless.
+                    # Production should serve assets via a proper CDN/cache-control strategy.
+                    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+                    if "etag" in response.headers:
+                        del response.headers["etag"]
+                    if "last-modified" in response.headers:
+                        del response.headers["last-modified"]
+                    return response
+            app.mount("/static", _NoCacheStatic(directory=str(static_dir)), name="static")
 
     async def broadcast(self, message: str):
         async with self._lock:

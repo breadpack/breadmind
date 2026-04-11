@@ -33,9 +33,40 @@ class TokenCounter:
 
     # Model context windows
     MODEL_LIMITS: dict[str, int] = {
+        # Anthropic
         "claude-sonnet-4-6": 200_000,
         "claude-haiku-4-5": 200_000,
         "claude-opus-4-6": 1_000_000,
+        # OpenAI
+        "gpt-4o": 128_000,
+        "gpt-4o-mini": 128_000,
+        "o1": 200_000,
+        "o1-mini": 128_000,
+        "o3-mini": 200_000,
+        # xAI Grok
+        "grok-3": 131_072,
+        "grok-3-mini": 131_072,
+        # Google Gemini
+        "gemini-2.5-flash": 1_048_576,
+        "gemini-2.5-pro": 1_048_576,
+        # DeepSeek
+        "deepseek-chat": 64_000,
+        "deepseek-reasoner": 64_000,
+        # Mistral
+        "mistral-large-latest": 128_000,
+        "mistral-medium-latest": 128_000,
+        "mistral-small-latest": 128_000,
+        "codestral-latest": 256_000,
+        # Together / Meta Llama
+        "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo": 131_072,
+        # Groq
+        "llama-3.3-70b-versatile": 128_000,
+        "llama-3.1-8b-instant": 131_072,
+        "mixtral-8x7b-32768": 32_768,
+        # AWS Bedrock
+        "anthropic.claude-sonnet-4-6-20250514-v1:0": 200_000,
+        "amazon.nova-pro-v1:0": 300_000,
+        "meta.llama3-1-70b-instruct-v1:0": 128_000,
     }
 
     @staticmethod

@@ -961,7 +961,7 @@ def test_post_messenger_test_with_gateway():
         async def ask_approval(self, channel_id, action_name, params): return "id"
 
     router = MessageRouter()
-    router.register_gateway("slack", FakeGateway())
+    router.register_gateway("slack", FakeGateway(platform="slack"))
     app = WebApp(message_handler=lambda m, **kw: "ok", message_router=router)
     client = TestClient(app.app)
     resp = client.post("/api/messenger/slack/test")

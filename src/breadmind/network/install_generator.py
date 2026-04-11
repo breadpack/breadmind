@@ -145,6 +145,62 @@ fi
 '''
 
 
+def generate_companion_install_script(
+    commander_url: str,
+    token_secret: str,
+    os_type: str = "linux",
+) -> str:
+    """Generate a companion agent install + pair script.
+
+    Args:
+        commander_url: WebSocket URL of the Commander
+        token_secret: Join token secret for pairing
+        os_type: "linux", "macos", or "windows"
+    """
+    if os_type == "windows":
+        return _generate_companion_windows(commander_url, token_secret)
+    return _generate_companion_unix(commander_url, token_secret, os_type)
+
+
+def _generate_companion_unix(commander_url: str, token: str, os_type: str) -> str:
+    return f'''#!/bin/bash
+set -euo pipefail
+
+# BreadMind Companion Agent Installer
+echo "=== BreadMind Companion Installer ==="
+echo "  Commander: {commander_url}"
+
+# 1. Install breadmind
+pip install --quiet --upgrade breadmind 2>/dev/null || \\
+    pip install --quiet --upgrade "git+https://github.com/breadmind/breadmind.git"
+
+# 2. Pair with Commander
+python -m breadmind.companion pair --url "{commander_url}" --token "{token}"
+
+# 3. Start companion
+echo "Starting companion agent..."
+python -m breadmind.companion start &
+echo "Companion agent started (PID: $!)"
+'''
+
+
+def _generate_companion_windows(commander_url: str, token: str) -> str:
+    return f'''$ErrorActionPreference = "Stop"
+# BreadMind Companion Agent Installer (Windows)
+Write-Host "=== BreadMind Companion Installer ===" -ForegroundColor Cyan
+Write-Host "  Commander: {commander_url}"
+
+pip install --quiet --upgrade breadmind 2>$null
+if ($LASTEXITCODE -ne 0) {{
+    pip install --quiet --upgrade "git+https://github.com/breadmind/breadmind.git"
+}}
+
+python -m breadmind.companion pair --url "{commander_url}" --token "{token}"
+Start-Process python -ArgumentList "-m breadmind.companion start" -WindowStyle Hidden
+Write-Host "Companion agent started." -ForegroundColor Green
+'''
+
+
 def _generate_windows(commander_url: str, token: str, agent_id: str) -> str:
     agent_id_line = f'$AgentId = "{agent_id}"' if agent_id else '$AgentId = "worker-$($env:COMPUTERNAME)-$(Get-Date -Format yyyyMMddHHmmss)"'
 

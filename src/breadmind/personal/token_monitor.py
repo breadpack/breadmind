@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from breadmind.utils.helpers import cancel_task_safely
+
 logger = logging.getLogger(__name__)
 
 
@@ -47,12 +49,7 @@ class TokenMonitor:
         logger.info("TokenMonitor started (interval=%ds)", self._check_interval)
 
     async def stop(self) -> None:
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
+        await cancel_task_safely(self._task)
 
     async def check_all(self) -> list[TokenStatus]:
         """Check all token statuses. Returns list of all statuses."""

@@ -8,21 +8,14 @@ from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from .token_counter import TokenCounter
 
-# 모델별 가격 정보 (USD per 1M tokens)
-_MODEL_PRICING: dict[str, dict[str, float]] = {
-    "claude-sonnet-4-6": {
-        "input": 3.0,
-        "output": 15.0,
-        "cache_creation": 3.75,
-        "cache_read": 0.30,
-    },
-    "claude-haiku-4-5": {
-        "input": 0.80,
-        "output": 4.0,
-        "cache_creation": 1.0,
-        "cache_read": 0.08,
-    },
-}
+@dataclass
+class Attachment:
+    """메시지 첨부 파일 (이미지, 파일 등)."""
+    type: str  # "image", "file"
+    path: str | None = None  # 로컬 파일 경로
+    url: str | None = None   # URL
+    data: str | None = None  # base64 encoded data
+    media_type: str = ""     # "image/png", "image/jpeg", "application/pdf"
 
 
 @dataclass
@@ -35,8 +28,8 @@ class ToolCall:
 
 @dataclass
 class TokenUsage:
-    input_tokens: int
-    output_tokens: int
+    input_tokens: int = 0
+    output_tokens: int = 0
     cache_creation_input_tokens: int = 0
     cache_read_input_tokens: int = 0
 
@@ -52,7 +45,9 @@ class TokenUsage:
 
     def cost(self, model: str) -> float:
         """주어진 모델의 가격 정보를 기반으로 비용(USD)을 계산한다."""
-        pricing = _MODEL_PRICING.get(model)
+        from breadmind.plugins.builtin.agent_loop.cost_tracker import MODEL_PRICING
+
+        pricing = MODEL_PRICING.get(model)
         if pricing is None:
             raise ValueError(f"지원되지 않는 모델: {model}")
 
@@ -72,7 +67,8 @@ class LLMMessage:
     tool_calls: list[ToolCall] = field(default_factory=list)
     tool_call_id: str | None = None
     name: str | None = None
-    attachments: list = field(default_factory=list)  # list[Attachment]
+    is_meta: bool = False
+    attachments: list[Attachment] = field(default_factory=list)
 
 
 @dataclass
@@ -92,6 +88,7 @@ class ToolDefinition:
     name: str
     description: str
     parameters: dict[str, Any]  # JSON Schema
+    readonly: bool = False
 
 
 class LLMProvider(ABC):

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Callable
 
 from breadmind.llm.base import LLMProvider, LLMMessage
@@ -16,7 +17,46 @@ logger = logging.getLogger("breadmind.orchestrator")
 
 _MAX_RETRIES = 2
 _MAX_REPLANS = 1
-_DIFFICULTY_TURNS = {"low": 3, "medium": 5, "high": 10}
+
+# Cache of resolved (provider_name, model) -> LLMProvider instances
+_provider_cache: dict[tuple[str, str], LLMProvider] = {}
+
+
+def _resolve_provider(provider_name: str, model_name: str) -> tuple[LLMProvider, str] | None:
+    """Create (or return cached) a provider instance for the given provider/model names.
+
+    Returns (provider, model) on success, or None on failure.
+    """
+    cache_key = (provider_name, model_name)
+    if cache_key in _provider_cache:
+        return _provider_cache[cache_key], model_name
+
+    try:
+        from breadmind.llm.factory import get_registered_providers
+        registry = get_registered_providers()
+        info = registry.get(provider_name)
+        if info is None:
+            logger.warning("Unknown provider '%s' in role config", provider_name)
+            return None
+
+        if info.env_key:
+            api_key = os.environ.get(info.env_key, "")
+            if not api_key:
+                logger.warning(
+                    "Provider '%s' requires env var %s but it is not set",
+                    provider_name, info.env_key,
+                )
+                return None
+            instance = info.cls(api_key=api_key, default_model=model_name or None)
+        else:
+            instance = info.cls()
+
+        _provider_cache[cache_key] = instance
+        return instance, model_name
+
+    except Exception:
+        logger.exception("Failed to resolve provider '%s'", provider_name)
+        return None
 
 
 class Orchestrator:
@@ -117,16 +157,45 @@ class Orchestrator:
 
     def _create_subagent_factory(self):
         roles = self._roles
-        provider = self._provider
+        default_provider = self._provider
         tool_registry = self._tool_registry
 
         async def factory(node: TaskNode, context: dict[str, str]) -> SubAgentResult:
             system_prompt = roles.get_prompt(node.role)
-            tool_names = node.tools or roles.get_tools(node.role)
-            max_turns = _DIFFICULTY_TURNS.get(node.difficulty, 5)
 
+            # Per-role provider/model selection
+            role_def = roles.get(node.role)
+            provider = default_provider
+            model_override: str | None = None
+
+            if role_def is not None:
+                max_turns = role_def.max_turns
+                if role_def.provider and role_def.provider != type(default_provider).__name__.lower().replace("provider", ""):
+                    resolved = _resolve_provider(role_def.provider, role_def.model)
+                    if resolved is not None:
+                        provider, model_override = resolved
+                    elif role_def.model:
+                        model_override = role_def.model
+                elif role_def.model:
+                    model_override = role_def.model
+            else:
+                max_turns = 5
+
+            # Tool filtering based on role tool_mode
             all_tools = tool_registry.get_all_definitions() if hasattr(tool_registry, "get_all_definitions") else []
-            tools = [t for t in all_tools if t.get("name") in tool_names] if tool_names else all_tools[:20]
+            tool_mode, tool_names = roles.get_tools(node.role)
+
+            if node.tools:  # explicit tools from TaskNode override role config
+                tools = [t for t in all_tools if t.get("name") in node.tools]
+            elif tool_names:
+                if tool_mode == "blacklist":
+                    excluded = set(tool_names)
+                    tools = [t for t in all_tools if t.get("name") not in excluded]
+                else:  # whitelist
+                    allowed = set(tool_names)
+                    tools = [t for t in all_tools if t.get("name") in allowed]
+            else:
+                tools = all_tools[:20]
 
             agent = SubAgent(
                 task_id=node.id,
@@ -137,6 +206,7 @@ class Orchestrator:
                 system_prompt=system_prompt,
                 max_turns=max_turns,
                 tool_executor=tool_registry.execute if hasattr(tool_registry, "execute") else None,
+                model_override=model_override,
             )
             return await agent.run(context=context)
 

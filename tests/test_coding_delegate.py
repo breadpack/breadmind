@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, patch
 from breadmind.coding.adapters.base import CodingResult
 from breadmind.coding.executors.base import ExecutionResult
 from breadmind.coding.adapters.claude_code import ClaudeCodeAdapter
-from breadmind.coding.adapters.codex import CodexAdapter
 from breadmind.coding.adapters.gemini_cli import GeminiCLIAdapter
 from breadmind.coding.adapters import get_adapter
 from breadmind.coding.executors.local import LocalExecutor
@@ -84,37 +83,6 @@ class TestClaudeCodeAdapter:
         assert "{not valid json}" in result.output
 
 
-class TestCodexAdapter:
-    def setup_method(self):
-        self.adapter = CodexAdapter()
-
-    def test_basic_command(self):
-        cmd = self.adapter.build_command("/project", "fix bug")
-        assert cmd[0] == "codex"
-        assert "--prompt" in cmd
-        assert "fix bug" in cmd
-        assert "--quiet" in cmd
-
-    def test_with_session(self):
-        cmd = self.adapter.build_command("/project", "task", {"session_id": "sess42"})
-        assert "--session" in cmd
-        assert "sess42" in cmd
-
-    def test_no_model_flag(self):
-        # Codex adapter does not support model override in the spec
-        cmd = self.adapter.build_command("/project", "task", {"model": "gpt-4o"})
-        assert "--model" not in cmd
-
-    def test_parse_result_success(self):
-        result = self.adapter.parse_result("Task complete.", "", 0)
-        assert result.success is True
-        assert "Task complete." in result.output
-
-    def test_parse_result_failure(self):
-        result = self.adapter.parse_result("", "error occurred", 1)
-        assert result.success is False
-
-
 class TestGeminiCLIAdapter:
     def setup_method(self):
         self.adapter = GeminiCLIAdapter()
@@ -155,7 +123,7 @@ class TestGeminiCLIAdapter:
 # ---------------------------------------------------------------------------
 
 def test_get_adapter_valid():
-    for name in ("claude", "codex", "gemini"):
+    for name in ("claude", "gemini"):
         adapter = get_adapter(name)
         assert adapter.name == name
 

@@ -11,6 +11,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from breadmind.constants import THINK_BUDGET_MEDIUM
+
 logger = logging.getLogger("breadmind.coding.decomposer")
 
 
@@ -101,7 +103,7 @@ class TaskDecomposer:
         try:
             response = await self._provider.chat(
                 messages=messages,
-                think_budget=4096,
+                think_budget=THINK_BUDGET_MEDIUM,
             )
 
             # Parse JSON from response

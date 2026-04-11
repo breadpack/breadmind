@@ -30,21 +30,22 @@ class SignalAutoConnector(AutoConnector):
             return configured
         return shutil.which("signal-cli")
 
-    async def get_setup_steps(self) -> list[SetupStep]:
-        phone = os.environ.get("SIGNAL_PHONE_NUMBER")
+    def _has_existing_credentials(self) -> bool:
+        return bool(
+            os.environ.get("SIGNAL_PHONE_NUMBER") and self._find_signal_cli()
+        )
+
+    def _get_verification_step(self) -> SetupStep:
+        return SetupStep(
+            step_number=1,
+            title="Signal 연결 검증",
+            description="기존 Signal 설정을 검증합니다.",
+            action_type="auto",
+            auto_executable=True,
+        )
+
+    def _get_initial_setup_steps(self) -> list[SetupStep]:
         cli_path = self._find_signal_cli()
-
-        if phone and cli_path:
-            return [
-                SetupStep(
-                    step_number=1,
-                    title="Signal 연결 검증",
-                    description="기존 Signal 설정을 검증합니다.",
-                    action_type="auto",
-                    auto_executable=True,
-                ),
-            ]
-
         steps = []
         step = 1
 

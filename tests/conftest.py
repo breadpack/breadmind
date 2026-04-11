@@ -5,11 +5,16 @@ that both fixtures and test files can use them.
 """
 from __future__ import annotations
 
+import os
+from typing import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import pytest_asyncio
 
 from breadmind.core.protocols import AgentContext
+from breadmind.storage.database import Database
+from breadmind.storage.migrator import MigrationConfig, Migrator
 
 # Re-export factory functions so they are discoverable from conftest
 from tests.factories import (  # noqa: F401
@@ -68,6 +73,52 @@ def safety_guard():
     """SafetyGuard in fully autonomous mode."""
     from breadmind.plugins.builtin.safety.guard import SafetyGuard
     return SafetyGuard(autonomy="auto")
+
+
+# ---------------------------------------------------------------------------
+# Database fixture (shared across integration test suites)
+# ---------------------------------------------------------------------------
+
+
+def _default_test_dsn() -> str:
+    return (
+        os.environ.get("TEST_DATABASE_URL")
+        or os.environ.get("DATABASE_URL")
+        or "postgresql://breadmind:breadmind_dev@localhost:5434/breadmind"
+    )
+
+
+@pytest_asyncio.fixture
+async def test_db() -> AsyncIterator[Database]:
+    """Yield a connected ``Database`` with migrations applied to head.
+
+    Skips the test if PostgreSQL is not reachable. Shared fixture so
+    that any test directory (storage, flow, etc.) can use it without
+    duplicating the setup logic.
+    """
+    import asyncpg
+
+    dsn = _default_test_dsn()
+
+    # Probe reachability before running migrations so we can skip cleanly.
+    try:
+        probe = await asyncpg.connect(dsn, timeout=3)
+        await probe.close()
+    except Exception as exc:  # pragma: no cover - environment-dependent
+        pytest.skip(f"PostgreSQL not reachable at {dsn}: {exc}")
+
+    # Run alembic migrations up to head so the schema under test exists.
+    migrator = Migrator(MigrationConfig(database_url=dsn))
+    migrator.upgrade("head")
+
+    db = Database(dsn)
+    # Create a raw pool without re-running legacy _migrate() side effects
+    # by setting up the pool manually (mirrors Database.connect()).
+    db._pool = await asyncpg.create_pool(dsn, min_size=1, max_size=4)
+    try:
+        yield db
+    finally:
+        await db.disconnect()
 
 
 @pytest.fixture

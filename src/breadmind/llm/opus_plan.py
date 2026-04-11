@@ -18,11 +18,12 @@ class TaskPhase(str, Enum):
     REVIEW = "review"
 
 
+
 @dataclass
 class ModelStrategy:
-    planning_model: str = "claude-opus-4-6"
-    implementation_model: str = "claude-sonnet-4-6"
-    review_model: str = "claude-sonnet-4-6"
+    planning_model: str = ""      # resolved from tier config if empty
+    implementation_model: str = "" # resolved from tier config if empty
+    review_model: str = ""        # resolved from tier config if empty
     auto_switch: bool = True
 
 
@@ -111,12 +112,30 @@ class OpusPlanManager:
         return TaskPhase.IMPLEMENTATION
 
     def get_model_for_turn(self, messages: list[dict]) -> str:
-        """Get the appropriate model for the next turn based on auto-detection."""
+        """Get the appropriate model for the next turn based on auto-detection.
+
+        Returns the model string from ``ModelStrategy``.  When all strategy
+        fields are empty the return value is ``""``, which callers should
+        treat as "use the default model".
+        """
         if not self._strategy.auto_switch:
             return self.current_model
 
         detected = self.detect_phase(messages)
         return self.transition(detected)
+
+    def get_difficulty_for_turn(self, messages: list[dict]) -> str:
+        """Return the difficulty tier for the current turn."""
+        _phase_to_difficulty = {
+            TaskPhase.PLANNING: "high",
+            TaskPhase.IMPLEMENTATION: "medium",
+            TaskPhase.REVIEW: "low",
+        }
+        if not self._strategy.auto_switch:
+            return _phase_to_difficulty[self._current_phase]
+        detected = self.detect_phase(messages)
+        self._current_phase = detected
+        return _phase_to_difficulty[detected]
 
     # ---- internal ---------------------------------------------------------
 

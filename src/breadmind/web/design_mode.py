@@ -7,13 +7,14 @@ changes for the frontend.
 
 from __future__ import annotations
 
-import uuid
 from dataclasses import dataclass, field
+
+from breadmind.utils.helpers import generate_short_id
 
 
 @dataclass
 class UIAnnotation:
-    id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
+    id: str = field(default_factory=generate_short_id)
     element_selector: str = ""  # CSS selector
     annotation_text: str = ""
     annotation_type: str = "comment"  # comment, fix, improve, remove

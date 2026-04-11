@@ -1,9 +1,27 @@
 import os
 import platform
 import yaml
-from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
+
+from breadmind.constants import (
+    DEFAULT_DB_HOST,
+    DEFAULT_DB_NAME,
+    DEFAULT_DB_PORT,
+    DEFAULT_DB_USER,
+    DEFAULT_HEARTBEAT_INTERVAL,
+    DEFAULT_MODEL,
+    DEFAULT_OFFLINE_THRESHOLD,
+    DEFAULT_PROVIDER,
+    DEFAULT_REDIS_URL,
+    DEFAULT_SESSION_TIMEOUT,
+    DEFAULT_TOOL_TIMEOUT,
+    DEFAULT_WEB_HOST,
+    DEFAULT_WEB_PORT,
+    DEFAULT_WS_PORT,
+)
 from breadmind.config_types import (
     EmbeddingConfig,
     MemoryGCConfig,
@@ -24,32 +42,36 @@ _VALID_PROVIDERS = _get_valid_providers()
 _VALID_LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 
-@dataclass
-class WebConfig:
-    port: int = 8080
-    host: str = "127.0.0.1"
+class WebConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
+    port: int = DEFAULT_WEB_PORT
+    host: str = DEFAULT_WEB_HOST
 
 
-@dataclass
-class LoggingConfig:
+class LoggingConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
     level: str = "INFO"
     format: str = "json"
 
 
-@dataclass
-class LLMConfig:
-    default_provider: str = "gemini"
-    default_model: str = "gemini-2.5-flash"
+class LLMConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
+    default_provider: str = DEFAULT_PROVIDER
+    default_model: str = DEFAULT_MODEL
     tool_call_max_turns: int = 20
-    tool_call_timeout_seconds: int = 30
+    tool_call_timeout_seconds: int = DEFAULT_TOOL_TIMEOUT
 
 
-@dataclass
-class DatabaseConfig:
-    host: str = "localhost"
-    port: int = 5432
-    name: str = "breadmind"
-    user: str = "breadmind"
+class DatabaseConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
+    host: str = DEFAULT_DB_HOST
+    port: int = DEFAULT_DB_PORT
+    name: str = DEFAULT_DB_NAME
+    user: str = DEFAULT_DB_USER
     password: str = ""
 
     @property
@@ -65,20 +87,22 @@ class DatabaseConfig:
         return f"postgresql://{self.user}:{pw}@{self.host}:{self.port}/{self.name}"
 
 
-@dataclass
-class RegistryConfigItem:
+class RegistryConfigItem(BaseModel):
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
     name: str
     type: str
     enabled: bool = True
     url: str | None = None
 
 
-@dataclass
-class MCPConfig:
+class MCPConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
     auto_discover: bool = True
     max_restart_attempts: int = 3
-    servers: dict = field(default_factory=dict)
-    registries: list[RegistryConfigItem] = field(default_factory=lambda: [
+    servers: dict = Field(default_factory=dict)
+    registries: list[RegistryConfigItem] = Field(default_factory=lambda: [
         RegistryConfigItem(name="skills.sh", type="skills_sh", enabled=True,
                            url="https://skills.sh"),
         RegistryConfigItem(name="clawhub", type="clawhub", enabled=True),
@@ -87,34 +111,36 @@ class MCPConfig:
     ])
 
 
-@dataclass
-class SecurityConfig:
+class SecurityConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
     auth_enabled: bool = False
     password_hash: str = ""  # SHA-256 hash
-    api_keys: list[str] = field(default_factory=list)
-    session_timeout: int = 7200  # 2 hours
-    cors_origins: list[str] = field(default_factory=lambda: ["http://localhost:8080", "http://127.0.0.1:8080"])
+    api_keys: list[str] = Field(default_factory=list)
+    session_timeout: int = DEFAULT_SESSION_TIMEOUT  # 2 hours
+    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:8080", "http://127.0.0.1:8080"])
     require_https: bool = False
 
 
-
-@dataclass
-class TaskConfig:
+class TaskConfig(BaseModel):
     """Background task system configuration (Celery + Redis)."""
-    redis_url: str = "redis://localhost:6379/0"
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
+    redis_url: str = DEFAULT_REDIS_URL
     max_concurrent_monitors: int = 10
     result_max_size_kb: int = 100
     completed_retention_days: int = 30
 
 
-@dataclass
-class NetworkConfig:
+class NetworkConfig(BaseModel):
     """Distributed agent network configuration."""
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
     mode: str = "standalone"  # standalone | commander | worker
     commander_url: str = ""  # Worker: wss://commander:8081/ws/agent/self
-    ws_port: int = 8081  # Commander: WebSocket hub port
-    heartbeat_interval: int = 30  # seconds
-    offline_threshold: int = 90  # seconds without heartbeat → offline
+    ws_port: int = DEFAULT_WS_PORT  # Commander: WebSocket hub port
+    heartbeat_interval: int = DEFAULT_HEARTBEAT_INTERVAL  # seconds
+    offline_threshold: int = DEFAULT_OFFLINE_THRESHOLD  # seconds without heartbeat -> offline
     ca_cert_path: str = ""
     ca_key_path: str = ""
     cert_path: str = ""
@@ -126,23 +152,41 @@ class NetworkConfig:
     offline_queue_max_mb: int = 100
 
 
-@dataclass
-class AppConfig:
-    llm: LLMConfig = field(default_factory=LLMConfig)
-    database: DatabaseConfig = field(default_factory=DatabaseConfig)
-    mcp: MCPConfig = field(default_factory=MCPConfig)
-    web: WebConfig = field(default_factory=WebConfig)
-    security: SecurityConfig = field(default_factory=SecurityConfig)
-    task: TaskConfig = field(default_factory=TaskConfig)
-    network: NetworkConfig = field(default_factory=NetworkConfig)
-    logging: LoggingConfig = field(default_factory=LoggingConfig)
-    timeouts: TimeoutsConfig = field(default_factory=TimeoutsConfig)
-    retry: RetryConfig = field(default_factory=RetryConfig)
-    limits: LimitsConfig = field(default_factory=LimitsConfig)
-    polling: PollingConfig = field(default_factory=PollingConfig)
-    memory_gc: MemoryGCConfig = field(default_factory=MemoryGCConfig)
-    embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
-    _persona: dict = field(default=None)
+class BrowserConfig(BaseModel):
+    """Browser automation engine configuration."""
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
+    headless: str = "auto"  # "auto" | "true" | "false"
+    max_sessions: int = 5
+    max_tabs_per_session: int = 10
+    idle_timeout_seconds: int = 300
+    default_timeout_ms: int = 10000
+    viewport_width: int = 1280
+    viewport_height: int = 900
+    locale: str = "ko-KR"
+
+
+class AppConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
+    llm: LLMConfig = Field(default_factory=LLMConfig)
+    database: DatabaseConfig = Field(default_factory=DatabaseConfig)
+    mcp: MCPConfig = Field(default_factory=MCPConfig)
+    web: WebConfig = Field(default_factory=WebConfig)
+    security: SecurityConfig = Field(default_factory=SecurityConfig)
+    task: TaskConfig = Field(default_factory=TaskConfig)
+    network: NetworkConfig = Field(default_factory=NetworkConfig)
+    browser: BrowserConfig = Field(default_factory=BrowserConfig)
+    logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    timeouts: TimeoutsConfig = Field(default_factory=TimeoutsConfig)
+    retry: RetryConfig = Field(default_factory=RetryConfig)
+    limits: LimitsConfig = Field(default_factory=LimitsConfig)
+    polling: PollingConfig = Field(default_factory=PollingConfig)
+    memory_gc: MemoryGCConfig = Field(default_factory=MemoryGCConfig)
+    embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
+    # PrivateAttr: existing code accesses config._persona directly.
+    # Pydantic treats underscore-prefixed names as private attributes.
+    _persona: dict[str, Any] | None = PrivateAttr(default=None)
 
     def validate(self) -> None:
         if self.llm.default_provider not in _VALID_PROVIDERS:
@@ -276,18 +320,20 @@ def load_config(config_dir: str = "config") -> AppConfig:
     limits_raw = raw.get("limits", {})
     polling_raw = raw.get("polling", {})
 
+    # Pydantic models with extra="ignore" handle unknown fields automatically,
+    # so we can pass the raw dicts directly without filtering by field names.
     config = AppConfig(
-        llm=LLMConfig(**{k: v for k, v in llm_raw.items() if k in LLMConfig.__dataclass_fields__}),
-        database=DatabaseConfig(**{k: (int(v) if k == "port" else v) for k, v in db_raw.items() if k in DatabaseConfig.__dataclass_fields__}),
+        llm=LLMConfig(**llm_raw),
+        database=DatabaseConfig(**{k: (int(v) if k == "port" else v) for k, v in db_raw.items()}),
         mcp=mcp_config,
-        web=WebConfig(**{k: v for k, v in web_raw.items() if k in WebConfig.__dataclass_fields__}),
-        security=SecurityConfig(**{k: v for k, v in security_raw.items() if k in SecurityConfig.__dataclass_fields__}),
-        logging=LoggingConfig(**{k: v for k, v in logging_raw.items() if k in LoggingConfig.__dataclass_fields__}),
-        memory_gc=MemoryGCConfig(**{k: v for k, v in memory_gc_raw.items() if k in MemoryGCConfig.__dataclass_fields__}),
-        timeouts=TimeoutsConfig(**{k: v for k, v in timeouts_raw.items() if k in TimeoutsConfig.__dataclass_fields__}),
-        retry=RetryConfig(**{k: v for k, v in retry_raw.items() if k in RetryConfig.__dataclass_fields__}),
-        limits=LimitsConfig(**{k: v for k, v in limits_raw.items() if k in LimitsConfig.__dataclass_fields__}),
-        polling=PollingConfig(**{k: v for k, v in polling_raw.items() if k in PollingConfig.__dataclass_fields__}),
+        web=WebConfig(**web_raw),
+        security=SecurityConfig(**security_raw),
+        logging=LoggingConfig(**logging_raw),
+        memory_gc=MemoryGCConfig(**memory_gc_raw),
+        timeouts=TimeoutsConfig(**timeouts_raw),
+        retry=RetryConfig(**retry_raw),
+        limits=LimitsConfig(**limits_raw),
+        polling=PollingConfig(**polling_raw),
     )
 
     # CORS origins from environment variable (comma-separated, overrides config file)
@@ -299,19 +345,6 @@ def load_config(config_dir: str = "config") -> AppConfig:
     redis_url = os.environ.get("BREADMIND_REDIS_URL")
     if redis_url:
         config.task.redis_url = redis_url
-
-    # Optional Pydantic schema validation (opt-in via env var)
-    if os.environ.get("BREADMIND_VALIDATE_CONFIG") == "1":
-        try:
-            from breadmind.core.config_schema import validate_config
-
-            validate_config(raw)
-        except Exception as exc:
-            import logging as _logging
-
-            _logging.getLogger(__name__).warning(
-                "Pydantic config validation failed (non-fatal): %s", exc
-            )
 
     return config
 
@@ -373,9 +406,9 @@ async def apply_db_settings(config: AppConfig, db) -> dict:
         # Load persona
         persona = await db.get_setting("persona")
         if persona:
-            config._persona = persona
+            config.persona = persona
         else:
-            config._persona = DEFAULT_PERSONA
+            config.persona = DEFAULT_PERSONA
 
         # Load encrypted API keys
         await load_api_keys_from_db(db)

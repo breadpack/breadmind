@@ -5,6 +5,7 @@ import json
 import logging
 from typing import Any
 
+from breadmind.constants import DEFAULT_WEB_PORT
 from breadmind.core.protocols import UserInput, AgentOutput, Progress
 
 logger = logging.getLogger("breadmind.server_runtime")
@@ -13,7 +14,7 @@ logger = logging.getLogger("breadmind.server_runtime")
 class ServerRuntime:
     """FastAPI 서버 런타임. RuntimeProtocol 구현."""
 
-    def __init__(self, agent: Any, host: str = "0.0.0.0", port: int = 8080) -> None:
+    def __init__(self, agent: Any, host: str = "0.0.0.0", port: int = DEFAULT_WEB_PORT) -> None:
         self._agent = agent
         self._host = host
         self._port = port

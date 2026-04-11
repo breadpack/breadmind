@@ -63,13 +63,13 @@ class EventBus:
     async def publish(self, event: "Event") -> None:
         key = event.type.value if isinstance(event.type, EventType) else str(event.type)
         await self.async_emit(key, event.data)
-        # Global subscribers
+        # Global subscribers — pass full Event object, not just data
         for handler in self._listeners.get("*", []):
             try:
                 if asyncio.iscoroutinefunction(handler):
-                    await handler(event.data)
+                    await handler(event)
                 else:
-                    handler(event.data)
+                    handler(event)
             except Exception as e:
                 logger.error("Global event handler error: %s", e)
 
@@ -83,56 +83,24 @@ class EventType(str, Enum):
     SESSION_START = "session_start"
     SESSION_END = "session_end"
     INTENT_CLASSIFIED = "intent_classified"
-    TOOL_CALL_START = "tool_call_start"
-    TOOL_CALL_END = "tool_call_end"
-    TOOL_APPROVED = "tool_approved"
-    TOOL_DENIED = "tool_denied"
     ORCHESTRATOR_START = "orchestrator_start"
     ORCHESTRATOR_REPLAN = "orchestrator_replan"
     ORCHESTRATOR_END = "orchestrator_end"
     SUBAGENT_START = "subagent_start"
     SUBAGENT_END = "subagent_end"
-    SUBAGENT_FAILED = "subagent_failed"
     DAG_BATCH_START = "dag_batch_start"
     DAG_BATCH_END = "dag_batch_end"
     MESSENGER_CONNECTED = "messenger_connected"
     MESSENGER_DISCONNECTED = "messenger_disconnected"
     MESSENGER_RECONNECTED = "messenger_reconnected"
     MESSENGER_FAILED = "messenger_failed"
-    MESSENGER_ERROR = "messenger_error"
-    PROVIDER_CHANGED = "provider_changed"
-    CONFIG_UPDATED = "config_updated"
-    MONITORING_ALERT = "monitoring_alert"
-    MEMORY_SAVED = "memory_saved"
-    MEMORY_PROMOTED = "memory_promoted"
     MCP_SERVER_ADDED = "mcp_server_added"
     MCP_SERVER_REMOVED = "mcp_server_removed"
     MCP_SERVER_ERROR = "mcp_server_error"
     MCP_TOOLS_UPDATED = "mcp_tools_updated"
     APPROVAL_REQUESTED = "approval_requested"
-    APPROVAL_RESOLVED = "approval_resolved"
-    # Lifecycle events (Round 11)
-    STOP = "stop"
-    SUBAGENT_STOP = "subagent_stop"
-    PRE_COMPACT = "pre_compact"
-    USER_PROMPT_SUBMIT = "user_prompt_submit"
-    PERMISSION_REQUEST = "permission_request"
-    # Extended lifecycle events
-    INSTRUCTIONS_LOADED = "instructions_loaded"
-    POST_TOOL_USE_FAILURE = "post_tool_use_failure"
-    STOP_FAILURE = "stop_failure"
-    SUBAGENT_START_HOOK = "subagent_start_hook"
-    TASK_CREATED = "task_created"
-    TASK_COMPLETED = "task_completed"
-    TEAMMATE_IDLE = "teammate_idle"
-    CONFIG_CHANGE = "config_change"
-    CWD_CHANGED = "cwd_changed"
-    FILE_CHANGED = "file_changed"
-    POST_COMPACT = "post_compact"
-    WORKTREE_CREATE = "worktree_create"
-    WORKTREE_REMOVE = "worktree_remove"
-    NOTIFICATION = "notification"
-    ELICITATION = "elicitation"
+    SETTINGS_CHANGED = "settings_changed"
+    PROGRESS = "progress"
 
 
 @dataclass

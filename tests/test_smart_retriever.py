@@ -179,7 +179,7 @@ class TestSmartRetriever:
         skill = MagicMock()
         skill.name = "fallback_skill"
         skill.prompt_template = "Fallback prompt"
-        retriever._skill_store.find_matching_skills = AsyncMock(
+        retriever._skill_store.find_matching_skills_keyword = AsyncMock(
             return_value=[skill],
         )
 

@@ -5,6 +5,7 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
+from breadmind.constants import DEFAULT_CLAUDE_MODEL
 from breadmind.llm.base import LLMMessage, LLMProvider
 from breadmind.llm.token_counter import TokenCounter
 
@@ -92,7 +93,7 @@ class ConversationSummarizer:
         model: str = "",
     ) -> list[LLMMessage]:
         """Return messages, summarizing old turns if they exceed the target ratio of context."""
-        effective_model = model or self._model or getattr(self._provider, "model_name", "claude-sonnet-4-6")
+        effective_model = model or self._model or getattr(self._provider, "model_name", DEFAULT_CLAUDE_MODEL)
         limit = TokenCounter.get_model_limit(effective_model)
         target = int(limit * self._target_ratio)
 

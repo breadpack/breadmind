@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol
 from breadmind.core.protocols.provider import Message
 
 
@@ -37,7 +37,6 @@ class CompactResult:
     tokens_saved: int
 
 
-@runtime_checkable
 class PromptProtocol(Protocol):
     """프롬프트 빌드/캐시/압축 계약."""
     def build(self, context: PromptContext) -> list[PromptBlock]: ...

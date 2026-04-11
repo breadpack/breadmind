@@ -5,9 +5,9 @@ logger = logging.getLogger(__name__)
 
 class SlackGateway(MessengerGateway):
     def __init__(self, bot_token: str, app_token: str | None = None, on_message=None):
+        super().__init__(platform="slack", on_message=on_message)
         self._bot_token = bot_token
         self._app_token = app_token
-        self._on_message = on_message
         self._app = None
 
     async def start(self):
@@ -20,12 +20,10 @@ class SlackGateway(MessengerGateway):
             @self._app.message("")
             async def handle_message(message, say):
                 if self._on_message:
-                    from breadmind.messenger.router import IncomingMessage
-                    msg = IncomingMessage(
+                    msg = self._create_incoming_message(
                         text=message.get("text", ""),
-                        user_id=message.get("user", ""),
-                        channel_id=message.get("channel", ""),
-                        platform="slack",
+                        user=message.get("user", ""),
+                        channel=message.get("channel", ""),
                     )
                     response = await self._on_message(msg)
                     if response:
@@ -46,8 +44,7 @@ class SlackGateway(MessengerGateway):
             await self._app.client.chat_postMessage(channel=channel_id, text=text)
 
     async def ask_approval(self, channel_id: str, action_name: str, params: dict) -> str:
-        import uuid
-        action_id = str(uuid.uuid4())[:8]
+        action_id = self._generate_action_id()
         blocks = [
             {"type": "section", "text": {"type": "mrkdwn", "text": f"*Approval Required*\nAction: `{action_name}`\nParams: `{params}`"}},
             {"type": "actions", "elements": [

@@ -1,15 +1,11 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol
 
-
-@dataclass
-class ToolDefinition:
-    """도구 정의."""
-    name: str
-    description: str
-    parameters: dict[str, Any]
-    readonly: bool = False
+from breadmind.llm.base import (
+    ToolCall,
+    ToolDefinition,
+)
 
 
 @dataclass
@@ -18,14 +14,6 @@ class ToolSchema:
     name: str
     deferred: bool = False
     definition: ToolDefinition | None = None
-
-
-@dataclass
-class ToolCall:
-    """에이전트 루프에서 실행할 도구 호출."""
-    id: str
-    name: str
-    arguments: dict[str, Any]
 
 
 @dataclass
@@ -55,7 +43,6 @@ class ExecutionContext:
     autonomy: str = "confirm-destructive"
 
 
-@runtime_checkable
 class ToolProtocol(Protocol):
     """도구 등록/실행/검색 계약."""
     def register(self, tool: ToolDefinition) -> None: ...

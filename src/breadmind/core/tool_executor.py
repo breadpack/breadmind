@@ -13,6 +13,10 @@ from typing import TYPE_CHECKING
 from breadmind.llm.base import LLMMessage, ToolCall
 from breadmind.tools.registry import ToolRegistry
 from breadmind.core.safety import SafetyGuard, SafetyResult
+from breadmind.tools.browser_screenshot import (
+    is_browser_tool,
+    process_tool_result as process_browser_result,
+)
 
 if TYPE_CHECKING:
     from breadmind.core.audit import AuditLogger
@@ -36,7 +40,6 @@ class ToolExecutionContext:
     tool_gap_detector: ToolGapDetector | None
     context_builder: object | None
     pending_approvals: dict[str, dict] = field(default_factory=dict)
-    notify_progress: object | None = None  # async callback(status, detail)
     on_new_tool_detected: object | None = None  # async callback(cmd, output)
     _injected_provider: object | None = None  # LLMProvider for subagent tools
 
@@ -149,16 +152,20 @@ class ToolExecutor:
             ctx.audit_logger.log_approval_request(
                 ctx.user, ctx.channel, tc.name, "pending",
             )
-        # Push approval request to UI immediately via progress callback
-        if ctx.notify_progress:
-            asyncio.ensure_future(ctx.notify_progress(
-                "approval_request",
-                json.dumps({
+        # Push approval request to UI via EventBus
+        from breadmind.core.events import get_event_bus, Event, EventType
+        asyncio.ensure_future(get_event_bus().publish(Event(
+            type=EventType.PROGRESS,
+            data={
+                "status": "approval_request",
+                "detail": json.dumps({
                     "approval_id": approval_id,
                     "tool": tc.name,
                     "args": tc.arguments,
                 }),
-            ))
+            },
+            source="tool_executor",
+        )))
         return LLMMessage(
             role="tool",
             content=(
@@ -176,8 +183,12 @@ class ToolExecutor:
     ) -> None:
         """Execute tool calls in parallel and append results to messages."""
         tool_names = ", ".join(tc.name for tc in calls)
-        if ctx.notify_progress:
-            await ctx.notify_progress("tool_call", tool_names)
+        from breadmind.core.events import get_event_bus, Event, EventType
+        await get_event_bus().publish_fire_and_forget(Event(
+            type=EventType.PROGRESS,
+            data={"status": "tool_call", "detail": tool_names},
+            source="tool_executor",
+        ))
 
         results = await asyncio.gather(
             *[self._execute_one(tc, ctx) for tc in calls]
@@ -206,6 +217,12 @@ class ToolExecutor:
                 role="tool", content=output,
                 tool_call_id=tc.id, name=tc.name,
             )
+            # Extract screenshots/PDFs from browser tool results into Attachments
+            if is_browser_tool(tc.name):
+                cleaned, attachments = process_browser_result(tool_msg.content or "")
+                if attachments:
+                    tool_msg.content = cleaned
+                    tool_msg.attachments = attachments
             messages.append(tool_msg)
             if ctx.working_memory is not None:
                 from breadmind.storage.credential_vault import CredentialVault

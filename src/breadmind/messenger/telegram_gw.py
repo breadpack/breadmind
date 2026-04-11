@@ -5,8 +5,8 @@ logger = logging.getLogger(__name__)
 
 class TelegramGateway(MessengerGateway):
     def __init__(self, bot_token: str, on_message=None):
+        super().__init__(platform="telegram", on_message=on_message)
         self._bot_token = bot_token
-        self._on_message = on_message
         self._app = None
 
     async def start(self):
@@ -18,12 +18,10 @@ class TelegramGateway(MessengerGateway):
 
             async def handle_message(update, context):
                 if on_message_cb and update.message:
-                    from breadmind.messenger.router import IncomingMessage
-                    msg = IncomingMessage(
+                    msg = self._create_incoming_message(
                         text=update.message.text or "",
-                        user_id=str(update.effective_user.id),
-                        channel_id=str(update.effective_chat.id),
-                        platform="telegram",
+                        user=str(update.effective_user.id),
+                        channel=str(update.effective_chat.id),
                     )
                     response = await on_message_cb(msg)
                     if response:
@@ -45,8 +43,7 @@ class TelegramGateway(MessengerGateway):
             await self._app.bot.send_message(chat_id=int(channel_id), text=text)
 
     async def ask_approval(self, channel_id: str, action_name: str, params: dict) -> str:
-        import uuid
-        action_id = str(uuid.uuid4())[:8]
+        action_id = self._generate_action_id()
         text = f"*Approval Required*\nAction: `{action_name}`\nParams: `{params}`"
         if self._app:
             from telegram import InlineKeyboardButton, InlineKeyboardMarkup

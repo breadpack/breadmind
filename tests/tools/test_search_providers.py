@@ -4,14 +4,10 @@ from __future__ import annotations
 import pytest
 
 from breadmind.tools.search_providers import (
-    ExaSearch,
-    FirecrawlSearch,
     SearchBackend,
     SearchProvider,
     SearchProviderManager,
     SearchResult,
-    SearXNGSearch,
-    TavilySearch,
 )
 
 
@@ -26,71 +22,6 @@ def test_search_result_defaults():
     assert r.metadata == {}
 
 
-# --- Backend configuration ---
-
-
-def test_exa_not_configured_by_default():
-    backend = ExaSearch()
-    assert backend.is_configured() is False
-
-
-def test_exa_configured_with_key():
-    backend = ExaSearch(api_key="test-key")
-    assert backend.is_configured() is True
-
-
-def test_tavily_not_configured_by_default():
-    backend = TavilySearch()
-    assert backend.is_configured() is False
-
-
-def test_tavily_configured_with_key():
-    backend = TavilySearch(api_key="test-key")
-    assert backend.is_configured() is True
-
-
-def test_firecrawl_configured_with_key():
-    backend = FirecrawlSearch(api_key="fc-key")
-    assert backend.is_configured() is True
-
-
-def test_searxng_configured_with_host():
-    backend = SearXNGSearch(host="http://localhost:8888")
-    assert backend.is_configured() is True
-
-
-def test_searxng_not_configured_by_default():
-    backend = SearXNGSearch()
-    assert backend.is_configured() is False
-
-
-# --- Backend search raises without config ---
-
-
-async def test_exa_search_raises_without_key():
-    backend = ExaSearch()
-    with pytest.raises(ValueError, match="not configured"):
-        await backend.search("test query")
-
-
-async def test_tavily_search_raises_without_key():
-    backend = TavilySearch()
-    with pytest.raises(ValueError, match="not configured"):
-        await backend.search("test query")
-
-
-async def test_firecrawl_search_raises_without_key():
-    backend = FirecrawlSearch()
-    with pytest.raises(ValueError, match="not configured"):
-        await backend.search("test query")
-
-
-async def test_searxng_search_raises_without_host():
-    backend = SearXNGSearch()
-    with pytest.raises(ValueError, match="not configured"):
-        await backend.search("test query")
-
-
 # --- SearchProviderManager ---
 
 
@@ -99,17 +30,10 @@ def test_manager_no_available_by_default():
     assert manager.available_providers() == []
 
 
-def test_manager_available_with_configured_backend():
-    manager = SearchProviderManager()
-    manager.register(SearchProvider.EXA, ExaSearch(api_key="key"))
-    available = manager.available_providers()
-    assert SearchProvider.EXA in available
-
-
 def test_manager_set_default():
     manager = SearchProviderManager()
-    manager.set_default(SearchProvider.TAVILY)
-    assert manager._default == SearchProvider.TAVILY
+    manager.set_default(SearchProvider.DEFAULT)
+    assert manager._default == SearchProvider.DEFAULT
 
 
 async def test_manager_search_raises_when_none_configured():
@@ -130,7 +54,7 @@ async def test_manager_search_fallback():
 
     manager = SearchProviderManager()
     manager.set_default(SearchProvider.DEFAULT)
-    manager.register(SearchProvider.TAVILY, FakeBackend())
+    manager.register(SearchProvider.DEFAULT, FakeBackend())
 
     results = await manager.search("hello")
     assert len(results) == 1
@@ -139,19 +63,19 @@ async def test_manager_search_fallback():
 
 
 async def test_manager_search_uses_specified_provider():
-    class FakeExa(SearchBackend):
+    class FakeSearch(SearchBackend):
         async def search(self, query, limit=10, **kwargs):
-            return [SearchResult(title="Exa Result", url="http://exa", snippet=query)]
+            return [SearchResult(title="Result", url="http://test", snippet=query)]
 
         def is_configured(self):
             return True
 
     manager = SearchProviderManager()
-    manager.register(SearchProvider.EXA, FakeExa())
+    manager.register(SearchProvider.DEFAULT, FakeSearch())
 
-    results = await manager.search("query", provider=SearchProvider.EXA)
+    results = await manager.search("query", provider=SearchProvider.DEFAULT)
     assert len(results) == 1
-    assert results[0].title == "Exa Result"
+    assert results[0].title == "Result"
 
 
 def test_manager_register_custom_backend():
@@ -165,18 +89,3 @@ def test_manager_register_custom_backend():
     manager = SearchProviderManager()
     manager.register(SearchProvider.DEFAULT, Custom())
     assert SearchProvider.DEFAULT in manager.available_providers()
-
-
-# --- Tavily/Firecrawl specific methods ---
-
-
-async def test_tavily_extract_raises_without_key():
-    backend = TavilySearch()
-    with pytest.raises(ValueError, match="not configured"):
-        await backend.extract(["http://example.com"])
-
-
-async def test_firecrawl_scrape_raises_without_key():
-    backend = FirecrawlSearch()
-    with pytest.raises(ValueError, match="not configured"):
-        await backend.scrape("http://example.com")

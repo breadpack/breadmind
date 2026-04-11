@@ -16,6 +16,7 @@ from breadmind.core.events import get_event_bus, Event, EventType
 if TYPE_CHECKING:
     from breadmind.memory.working import WorkingMemory
     from breadmind.core.tool_gap import ToolGapDetector
+    from breadmind.llm.cost_router import CostRouter
 
 logger = logging.getLogger("breadmind.agent")
 
@@ -38,9 +39,13 @@ class CoreAgent:
         behavior_prompt: str | None = None,
         profiler: object | None = None,
         prompt_builder: object | None = None,
-        orchestrator: object | None = None,
+        cost_router: CostRouter | None = None,
     ):
+        from breadmind.settings.llm_holder import LLMProviderHolder
+        if not isinstance(provider, LLMProviderHolder):
+            provider = LLMProviderHolder(provider)
         self._provider = provider
+        self._cost_router = cost_router
         self._tools = tool_registry
         self._guard = safety_guard
         self._tool_executor = ToolExecutor(tool_registry, safety_guard, tool_timeout)
@@ -61,7 +66,6 @@ class CoreAgent:
         self._progress_callback: object | None = None
         self._profiler = profiler
         self._prompt_builder = prompt_builder
-        self._orchestrator = orchestrator
         self._provider_name: str = ""
         self._persona: str = "professional"
         self._role: str | None = None
@@ -80,11 +84,17 @@ class CoreAgent:
 
     async def update_provider(self, provider: LLMProvider):
         """Replace the LLM provider at runtime, closing the old one."""
-        old = self._provider
-        self._provider = provider
-        if old is not None:
+        from breadmind.settings.llm_holder import LLMProviderHolder
+        old_inner = self._provider.current if isinstance(self._provider, LLMProviderHolder) else self._provider
+        if isinstance(provider, LLMProviderHolder):
+            provider = provider.current
+        if isinstance(self._provider, LLMProviderHolder):
+            self._provider.swap(provider)
+        else:
+            self._provider = LLMProviderHolder(provider)
+        if old_inner is not None and old_inner is not provider:
             try:
-                await old.close()
+                await old_inner.close()
             except Exception:
                 pass
 
@@ -158,6 +168,46 @@ class CoreAgent:
             self._role = role
             self._rebuild_system_prompt()
 
+    def reload_prompt_components(
+        self,
+        *,
+        persona: str | dict | None = None,
+        custom_prompts: dict | None = None,
+        custom_instructions: str | None = None,
+    ) -> None:
+        """Rebuild the cached system prompt when prompt-related settings change.
+
+        Any argument left as ``None`` is kept at its current value. Called by
+        the settings reload registry when ``persona``, ``custom_prompts``, or
+        ``custom_instructions`` is written. ``persona`` may be either a preset
+        name (string) or a legacy dict payload accepted by ``set_persona``.
+        """
+        if persona is not None:
+            if isinstance(persona, str):
+                # New path: persona preset name. ``set_persona_name`` handles
+                # the PromptBuilder-based rebuild; fall back to set_persona
+                # for the legacy config path.
+                if self._prompt_builder:
+                    self.set_persona_name(persona)
+                else:
+                    self.set_persona({"preset": persona})
+            else:
+                self.set_persona(persona)
+        if custom_instructions is not None:
+            # Delegates to existing set_custom_instructions which rebuilds via
+            # PromptBuilder when available and falls back otherwise.
+            self.set_custom_instructions(custom_instructions)
+        if custom_prompts is not None:
+            # NOTE: PromptContext does not currently carry a custom_prompts
+            # field, so there is no prompt rebuild path for it. We stash the
+            # value on the agent for future wiring and log at debug level.
+            self._custom_prompts = custom_prompts
+            logger.debug(
+                "reload_prompt_components: custom_prompts stored (%d entries) "
+                "but no rebuild path yet",
+                len(custom_prompts) if hasattr(custom_prompts, "__len__") else 0,
+            )
+
     def _rebuild_system_prompt(self):
         """Rebuild system prompt from PromptBuilder."""
         if self._prompt_builder and self._prompt_context:
@@ -218,25 +268,10 @@ class CoreAgent:
 
         t0 = time.monotonic()
         try:
-            # Check if this is a long-running task (no timeout)
-            is_long = (
-                tool_name == "code_delegate"
-                and arguments.get("long_running", False)
+            result = await asyncio.wait_for(
+                self._tools.execute(tool_name, arguments),
+                timeout=self._tool_timeout,
             )
-            if isinstance(is_long, str):
-                is_long = is_long.lower() in ("true", "1", "yes")
-
-            if is_long:
-                logger.info("Executing approved %s with NO timeout (long_running)", tool_name)
-                result = await self._tools.execute(tool_name, arguments)
-            else:
-                timeout = self._tool_timeout
-                if tool_name == "code_delegate":
-                    timeout = max(timeout, 600)
-                result = await asyncio.wait_for(
-                    self._tools.execute(tool_name, arguments),
-                    timeout=timeout,
-                )
         except asyncio.TimeoutError:
             result = ToolResult(success=False, output=f"Tool execution timed out after {self._tool_timeout}s.")
         except Exception as e:
@@ -323,29 +358,6 @@ class CoreAgent:
         # Record intent for adaptive user profiling
         if self._profiler:
             self._profiler.record_intent(user, intent.category.value)
-
-        # Step 1.5: Route complex tasks to Orchestrator
-        if self._orchestrator and intent.complexity == "complex":
-            logger.info(json.dumps({"event": "orchestrator_route", "complexity": "complex"}))
-            if self._progress_callback:
-                await self._progress_callback("orchestrator", "Complex task detected, routing to orchestrator...")
-            try:
-                result = await self._orchestrator.run(message, user=user, channel=channel)
-                # Store result in working memory
-                if self._working_memory is not None:
-                    self._working_memory.add_message(
-                        session_id,
-                        LLMMessage(role="assistant", content=result),
-                    )
-                await get_event_bus().publish_fire_and_forget(Event(
-                    type=EventType.SESSION_END,
-                    data={"user": user, "channel": channel, "session_id": session_id, "route": "orchestrator"},
-                    source="agent",
-                ))
-                return result
-            except Exception as e:
-                logger.warning("Orchestrator failed, falling back to single agent: %s", e)
-                # Fall through to normal single-agent loop
 
         # Auto-resolve credential_ref in user message — bypass LLM
         import re as _cred_re
@@ -438,12 +450,25 @@ class CoreAgent:
 
             await self._notify_progress("thinking", "")
 
+            # Cost-optimized model selection (when enabled)
+            _routed_provider: str | None = None
+            _routed_model: str | None = None
+            if self._cost_router and self._cost_router.enabled:
+                _routed_provider, _routed_model = self._cost_router.select_model(
+                    category=intent.category,
+                    complexity="moderate",  # default; future: derive from message
+                    urgency=intent.urgency,
+                    needs_tools=bool(tools),
+                    needs_thinking=think_budget is not None and think_budget > 0,
+                )
+
             t0 = time.monotonic()
             try:
                 response = await asyncio.wait_for(
                     self._provider.chat(
                         messages=chat_messages,
                         tools=tools or None,
+                        model=_routed_model,
                         think_budget=think_budget,
                     ),
                     timeout=self._chat_timeout,
@@ -457,6 +482,26 @@ class CoreAgent:
 
             duration_ms = (time.monotonic() - t0) * 1000
             self._accumulate_usage(response)
+
+            # Record result to cost router
+            if self._cost_router and _routed_provider and _routed_model and response.usage:
+                cost_usd = 0.0
+                try:
+                    cost_usd = self._cost_router.registry.estimate_cost(
+                        _routed_model,
+                        response.usage.input_tokens,
+                        response.usage.output_tokens,
+                    )
+                except Exception:
+                    pass
+                self._cost_router.record_result(
+                    provider=_routed_provider,
+                    model=_routed_model,
+                    intent=intent.category.value,
+                    success=response.stop_reason != "error",
+                    cost=cost_usd,
+                    latency_ms=duration_ms,
+                )
 
             # Log LLM call
             model_name = getattr(self._provider, "model", "unknown")
@@ -654,7 +699,7 @@ class CoreAgent:
             "skill_manage", "memory_save", "memory_search",
             "swarm_role", "messenger_connect", "network_scan", "router_manage",
             "task_create", "task_list", "event_create", "event_list",
-            "reminder_set",
+            "reminder_set", "delegate_tasks",
         }
 
         if len(tools) <= max_tools:

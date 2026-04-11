@@ -1,45 +1,72 @@
-"""Extended configuration dataclasses for timeouts, retries, limits, and polling.
+"""Extended configuration models for timeouts, retries, limits, and polling.
 
 Separated from config.py to keep file sizes manageable (SOLID / SRP).
 """
 
-from dataclasses import dataclass
+from typing import ClassVar
+
+from pydantic import BaseModel, ConfigDict
+
+from breadmind.constants import (
+    DEFAULT_BASE_BACKOFF,
+    DEFAULT_GC_INTERVAL,
+    DEFAULT_GATEWAY_MAX_RETRIES,
+    DEFAULT_KG_MAX_AGE_DAYS,
+    DEFAULT_LLM_TIMEOUT,
+    DEFAULT_MAX_BACKOFF,
+    DEFAULT_MAX_CACHED_NOTES,
+    DEFAULT_MAX_CONTEXT_TOKENS,
+    DEFAULT_MAX_RETRIES,
+    DEFAULT_MAX_TOOLS,
+    DEFAULT_OLLAMA_URL,
+    DEFAULT_SSH_TIMEOUT,
+    DEFAULT_TOOL_TIMEOUT,
+    EMBEDDING_FASTEMBED_MODEL,
+    EMBEDDING_GEMINI_MODEL,
+    EMBEDDING_LOCAL_MODEL,
+    EMBEDDING_OLLAMA_MODEL,
+    EMBEDDING_OPENAI_MODEL,
+)
 
 
-@dataclass
-class MemoryGCConfig:
-    interval_seconds: int = 3600
+class MemoryGCConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
+    interval_seconds: int = DEFAULT_GC_INTERVAL
     decay_threshold: float = 0.1
-    max_cached_notes: int = 500
-    kg_max_age_days: int = 90
+    max_cached_notes: int = DEFAULT_MAX_CACHED_NOTES
+    kg_max_age_days: int = DEFAULT_KG_MAX_AGE_DAYS
     env_refresh_interval: int = 6
 
 
-@dataclass
-class TimeoutsConfig:
-    tool_call: int = 30
-    llm_api: int = 120
-    ssh_command: int = 300
+class TimeoutsConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
+    tool_call: int = DEFAULT_TOOL_TIMEOUT
+    llm_api: int = DEFAULT_LLM_TIMEOUT
+    ssh_command: int = DEFAULT_SSH_TIMEOUT
     health_check: int = 5
     pypi_check: int = 10
     http_default: int = 10
     skill_discovery: int = 30
 
 
-@dataclass
-class RetryConfig:
-    max_retries: int = 3
-    llm_max_retries: int = 3
-    gateway_max_retries: int = 10
-    base_backoff: int = 1
-    max_backoff: int = 300
+class RetryConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
+    max_retries: int = DEFAULT_MAX_RETRIES
+    llm_max_retries: int = DEFAULT_MAX_RETRIES
+    gateway_max_retries: int = DEFAULT_GATEWAY_MAX_RETRIES
+    base_backoff: int = DEFAULT_BASE_BACKOFF
+    max_backoff: int = DEFAULT_MAX_BACKOFF
     health_check_interval: int = 30
 
 
-@dataclass
-class LimitsConfig:
-    max_tools: int = 30
-    max_context_tokens: int = 4000
+class LimitsConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
+    max_tools: int = DEFAULT_MAX_TOOLS
+    max_context_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS
     max_per_domain_skills: int = 1
     audit_log_recent: int = 50
     embedding_cache_size: int = 500
@@ -49,28 +76,28 @@ class LimitsConfig:
     smart_retriever_limit: int = 5
 
 
-@dataclass
-class EmbeddingConfig:
+class EmbeddingConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
     provider: str = "auto"  # "fastembed", "ollama", "local", "gemini", "openai", "auto", "off"
     model_name: str = ""  # empty = use provider default
-    ollama_base_url: str = "http://localhost:11434"
+    ollama_base_url: str = DEFAULT_OLLAMA_URL
     cache_size: int = 500
 
-    # Provider default models (read-only reference)
-    PROVIDER_DEFAULTS: dict = None  # type: ignore[assignment]
-
-    def __post_init__(self):
-        self.PROVIDER_DEFAULTS = {
-            "fastembed": {"model": "BAAI/bge-small-en-v1.5", "dimensions": 384},
-            "ollama": {"model": "nomic-embed-text", "dimensions": 768},
-            "local": {"model": "all-MiniLM-L6-v2", "dimensions": 384},
-            "gemini": {"model": "gemini-embedding-001", "dimensions": 768},
-            "openai": {"model": "text-embedding-3-small", "dimensions": 1536},
-        }
+    # Provider default models as a class-level constant (read-only reference).
+    # Not a Pydantic field — shared across all instances.
+    PROVIDER_DEFAULTS: ClassVar[dict] = {
+        "fastembed": {"model": EMBEDDING_FASTEMBED_MODEL, "dimensions": 384},
+        "ollama": {"model": EMBEDDING_OLLAMA_MODEL, "dimensions": 768},
+        "local": {"model": EMBEDDING_LOCAL_MODEL, "dimensions": 384},
+        "gemini": {"model": EMBEDDING_GEMINI_MODEL, "dimensions": 768},
+        "openai": {"model": EMBEDDING_OPENAI_MODEL, "dimensions": 1536},
+    }
 
 
-@dataclass
-class PollingConfig:
+class PollingConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
     signal_interval: int = 5
     gmail_interval: int = 30
     update_check_interval: int = 3600

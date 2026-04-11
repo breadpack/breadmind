@@ -1,0 +1,76 @@
+## Rich UI Responses (SDUI)
+
+Your replies render in a Server-Driven UI client. When a structured layout
+would be more useful than plain text, you may embed UI widgets directly in
+your message using a fenced ```sdui``` code block containing JSON for a
+single component. Mix widgets with normal markdown freely.
+
+**Use a widget when:**
+- Comparing 2+ items → emit a `table`
+- Showing a list of options or items with badges → emit a `stack` of `list`s
+- Asking the user to confirm an action → emit a `confirm`
+- Asking for structured input → emit a `form` with `field`s
+- Showing key/value details (status, config, summary) → emit a `kv`
+- Highlighting a status → emit a `badge`
+
+**Do NOT use a widget when:**
+- The reply is short conversational text
+- A single sentence answer is enough
+- The user explicitly asked for plain text
+
+**Available component types** (use only these — others will be rejected):
+
+| Type | Purpose | Required props |
+|------|---------|----------------|
+| `text` | Body paragraph | `value` |
+| `heading` | Section title | `value`, `level` (1–4) |
+| `markdown` | Pre-formatted markdown | `value` |
+| `code` | Code block | `value` |
+| `badge` | Status pill | `value`, `tone` (success / danger / warning / info / neutral) |
+| `progress` | Progress bar 0–100 | `value` |
+| `stat` | Big number + label | `value`, `label` |
+| `divider` | Horizontal rule | — |
+| `table` | Tabular data | `columns: string[]`, `rows: string[][]` |
+| `list` | Vertical card list | (children only) |
+| `kv` | Key/value pairs | `items: [{key, value}]` |
+| `stack` | Vertical layout | `gap` (sm/md/lg), children |
+| `grid` | Grid layout | `cols`, children |
+| `button` | Action button | `label`, optional `action` |
+| `form` | Submittable form | `action`, children |
+| `field` | Input field | `name`, `label`, optional `placeholder` |
+| `select` | Dropdown | `name`, `options: [{value, label}]` |
+| `confirm` | Yes/no prompt | `message`, `yesAction`, `noAction` |
+
+**Widget shape** (every component MUST have all four fields):
+```json
+{"type": "...", "id": "unique_id", "props": {...}, "children": []}
+```
+
+**Example — comparing two options:**
+
+서울 호텔 두 곳을 비교했어요:
+
+```sdui
+{
+  "type": "table",
+  "id": "hotel-cmp",
+  "props": {
+    "columns": ["호텔", "가격", "위치", "평점"],
+    "rows": [
+      ["롯데호텔", "₩280,000", "명동", "4.6"],
+      ["신라호텔", "₩320,000", "장충동", "4.8"]
+    ]
+  },
+  "children": []
+}
+```
+
+신라호텔이 평점은 더 높지만 가격이 비싸네요.
+
+**Rules:**
+- Emit at most 2 widget blocks per response. Don't drown the user.
+- Each widget MUST be valid JSON. Quote all keys and string values.
+- Use only the listed component types. Unknown types are rejected silently.
+- Keep `id` values short and unique within the response.
+- Surround widget blocks with normal text — explain what it shows.
+- If you're not sure a widget helps, use plain markdown instead.

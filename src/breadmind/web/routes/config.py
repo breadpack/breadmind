@@ -295,14 +295,19 @@ def setup_config_routes(r: APIRouter, app_state):
             if app._config:
                 app._config.llm.tool_call_timeout_seconds = timeout
 
-        # Persist to DB
+        # Persist to DB (include tier config)
         if app._db and app._config:
             try:
+                tiers_data = {}
+                for level in ("low", "medium", "high"):
+                    t = getattr(app._config.llm, f"tier_{level}")
+                    tiers_data[level] = {"provider": t.provider, "model": t.model}
                 await app._db.set_setting("llm", {
                     "default_provider": app._config.llm.default_provider,
                     "default_model": app._config.llm.default_model,
                     "tool_call_max_turns": app._config.llm.tool_call_max_turns,
                     "tool_call_timeout_seconds": app._config.llm.tool_call_timeout_seconds,
+                    "tiers": tiers_data,
                 })
             except Exception as e:
                 logger.warning(f"Failed to persist LLM settings to DB: {e}")
@@ -691,8 +696,11 @@ def setup_config_routes(r: APIRouter, app_state):
             await app._db.set_setting("custom_prompts", custom)
 
         # Persist swarm roles if updated
-        if (data.get("swarm_roles") or data.get("roles")) and app._swarm_manager:
-            await app._persist_swarm_roles()
+        if (data.get("swarm_roles") or data.get("roles")) and app._swarm_manager and app._db:
+            try:
+                await app._db.set_setting("swarm_roles", app._swarm_manager.export_roles())
+            except Exception:
+                logger.exception("Failed to persist swarm roles")
 
         response = JSONResponse(content={"status": "ok"})
         if deprecation_used:
@@ -867,3 +875,72 @@ def setup_config_routes(r: APIRouter, app_state):
             except Exception:
                 pass
         return {"status": "ok", "level": level}
+
+    # --- Model Tier Config ---
+
+    @r.get("/api/config/tiers")
+    async def get_tiers(request: Request, config=Depends(get_config)):
+        """Get per-difficulty model tier configuration."""
+        from breadmind.llm.factory import get_provider_options
+        tiers: dict[str, dict] = {}
+        if config:
+            for level in ("low", "medium", "high"):
+                t = getattr(config.llm, f"tier_{level}", None)
+                if t and t.provider:
+                    tiers[level] = {"provider": t.provider, "model": t.model}
+                else:
+                    tiers[level] = {"provider": "", "model": ""}
+        return {
+            "default": {
+                "provider": config.llm.default_provider if config else "",
+                "model": config.llm.default_model if config else "",
+            },
+            "tiers": tiers,
+            "available_providers": get_provider_options(),
+        }
+
+    @r.post("/api/config/tiers")
+    async def update_tiers(request: Request):
+        """Update per-difficulty model tier configuration.
+
+        Body: {"low": {"provider": "gemini", "model": "..."}, "medium": ..., "high": ...}
+        Empty provider = inherit from default.
+        """
+        from breadmind.config import _VALID_PROVIDERS as _valid_providers
+        app = request.app
+        data = await request.json()
+
+        for level in ("low", "medium", "high"):
+            tier_data = data.get(level)
+            if tier_data is None:
+                continue
+            prov = tier_data.get("provider", "")
+            mdl = tier_data.get("model", "")
+            if prov and prov not in _valid_providers:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": f"Unknown provider '{prov}' for tier '{level}'"},
+                )
+            if app._config:
+                tier_entry = getattr(app._config.llm, f"tier_{level}")
+                tier_entry.provider = prov
+                tier_entry.model = mdl
+
+        # Persist to DB (full LLM settings)
+        if app._db and app._config:
+            try:
+                tiers_data = {}
+                for level in ("low", "medium", "high"):
+                    t = getattr(app._config.llm, f"tier_{level}")
+                    tiers_data[level] = {"provider": t.provider, "model": t.model}
+                await app._db.set_setting("llm", {
+                    "default_provider": app._config.llm.default_provider,
+                    "default_model": app._config.llm.default_model,
+                    "tool_call_max_turns": app._config.llm.tool_call_max_turns,
+                    "tool_call_timeout_seconds": app._config.llm.tool_call_timeout_seconds,
+                    "tiers": tiers_data,
+                })
+            except Exception as e:
+                logger.warning(f"Failed to persist tier settings to DB: {e}")
+
+        return {"status": "ok", "persisted": app._db is not None}

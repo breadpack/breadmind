@@ -1,7 +1,6 @@
 import asyncio
 import base64
 import logging
-import uuid
 from email.mime.text import MIMEText
 from breadmind.messenger.router import MessengerGateway
 
@@ -13,14 +12,12 @@ class GmailGateway(MessengerGateway):
 
     def __init__(self, client_id: str, client_secret: str, refresh_token: str,
                  on_message=None, poll_interval: int = 30):
+        super().__init__(platform="gmail", on_message=on_message)
         self._client_id = client_id
         self._client_secret = client_secret
         self._refresh_token = refresh_token
-        self._on_message = on_message
         self._poll_interval = poll_interval
         self._service = None
-        self._connected = False
-        self._enabled = True
         self._poll_task: asyncio.Task | None = None
         self._last_history_id: str | None = None
         self._user_email: str = ""
@@ -91,7 +88,7 @@ class GmailGateway(MessengerGateway):
             logger.error(f"Gmail send failed: {e}")
 
     async def ask_approval(self, channel_id: str, action_name: str, params: dict) -> str:
-        action_id = str(uuid.uuid4())[:8]
+        action_id = self._generate_action_id()
         text = (
             f"Approval Required\n"
             f"==================\n"
@@ -184,8 +181,6 @@ class GmailGateway(MessengerGateway):
             if not body.strip():
                 return
 
-            from breadmind.messenger.router import IncomingMessage
-
             # Check for approval responses
             is_approval = False
             approval_action_id = None
@@ -200,11 +195,10 @@ class GmailGateway(MessengerGateway):
                 approval_action_id = body_lower.split(" ", 1)[1].strip().split()[0]
                 approved = False
 
-            incoming = IncomingMessage(
+            incoming = self._create_incoming_message(
                 text=body.strip(),
-                user_id=sender,
-                channel_id=sender,
-                platform="gmail",
+                user=sender,
+                channel=sender,
                 is_approval=is_approval,
                 approval_action_id=approval_action_id,
                 approved=approved,

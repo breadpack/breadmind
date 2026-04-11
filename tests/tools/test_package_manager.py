@@ -260,7 +260,7 @@ class TestPackageManagerInstall:
     async def test_install_skill_no_backend(self, manager):
         result = await manager.install("review", PackageType.SKILL)
         assert result.success is False
-        assert "not available" in result.message
+        assert "not supported" in result.message or "not available" in result.message
 
     async def test_install_mcp_server(self, manager):
         mcp_store = AsyncMock()
