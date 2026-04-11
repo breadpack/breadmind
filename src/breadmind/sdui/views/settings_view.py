@@ -305,7 +305,7 @@ def _search_card(q: str | None) -> Component:
                     "action": {
                         "kind": "view_request",
                         "view_key": "settings_view",
-                        "params": {"q": "__FORM_VALUE_q__"},
+                        "params": {},
                     },
                     "submit_label": "검색",
                 },

@@ -269,9 +269,19 @@ async def handle_ws_ui(ws: WebSocket) -> None:
                 action = msg.get("action") or {}
                 kind = action.get("kind")
                 if kind == "view_request":
+                    # Form-driven view requests carry their field values in
+                    # ``action.values`` (the SDUI form widget always wraps
+                    # field state under that key). Merge them into params so
+                    # search/filter forms that target a view can pass query
+                    # state without inventing a new action kind.
+                    merged_params = dict(action.get("params") or {})
+                    form_values = action.get("values")
+                    if isinstance(form_values, dict):
+                        for k, v in form_values.items():
+                            merged_params.setdefault(k, v)
                     await push_view(
                         action.get("view_key", "chat_view"),
-                        action.get("params") or {},
+                        merged_params,
                     )
                 else:
                     handler = getattr(ws.app.state, "sdui_action_handler", None)
