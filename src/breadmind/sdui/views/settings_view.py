@@ -426,14 +426,19 @@ async def _safe_list_prefix(store: Any, prefix: str) -> list[str]:
 
 
 async def _safe_list_vault_entries(db: Any) -> list[dict] | None:
-    """Return a list of vault entry dicts (id, stored_at, has_metadata), or None.
+    """Return a list of vault entry dicts, or None.
 
     Returns:
       None   — db has no list_settings_by_prefix (vault unavailable)
       []     — method exists but no vault keys found (vault empty)
       [...]  — one dict per vault entry, up to 100
 
-    Each dict: {"id": str, "stored_at": float | None, "has_metadata": bool}
+    Each dict: {
+        "id": str,
+        "stored_at": float | None,
+        "metadata": dict | None,
+        "group": str,       # id.split(":", 1)[0] or "기타"
+    }
     """
     if db is None:
         return None
@@ -450,11 +455,16 @@ async def _safe_list_vault_entries(db: Any) -> list[dict] | None:
                 data = await db.get_setting(key)
                 if not isinstance(data, dict):
                     data = {}
+                cred_id = key.removeprefix("vault:")
+                raw_meta = data.get("metadata")
+                metadata = raw_meta if (isinstance(raw_meta, dict) and raw_meta) else None
+                group = cred_id.split(":", 1)[0] if ":" in cred_id else "기타"
                 entries.append(
                     {
-                        "id": key.removeprefix("vault:"),
+                        "id": cred_id,
                         "stored_at": data.get("stored_at"),
-                        "has_metadata": bool(data.get("metadata")),
+                        "metadata": metadata,
+                        "group": group,
                     }
                 )
             except Exception as exc:  # noqa: BLE001
@@ -2134,50 +2144,69 @@ def _logging_card(logging_config: dict) -> Component:
 
 
 def _vault_entry_row(entry: dict, index: int) -> Component:
-    """Render a single vault entry: id label, masked indicator, stored_at, delete button."""
+    """Render a single vault entry: id label, masked indicator, stored_at, metadata kv, delete button."""
     cred_id = entry.get("id", "")
     stored_at = _format_timestamp(entry.get("stored_at"))
+    metadata: dict | None = entry.get("metadata")
     row_id = f"adv-vault-entry-{index}"
+
+    row_children: list[Component] = [
+        Component(
+            type="stack",
+            id=f"{row_id}-top",
+            props={"direction": "horizontal", "gap": "sm", "align": "center"},
+            children=[
+                Component(
+                    type="text",
+                    id=f"{row_id}-id",
+                    props={"value": cred_id, "variant": "code"},
+                ),
+                Component(
+                    type="badge",
+                    id=f"{row_id}-masked",
+                    props={"value": "●●●● 저장됨"},
+                ),
+                Component(
+                    type="button",
+                    id=f"{row_id}-del",
+                    props={
+                        "label": "삭제",
+                        "variant": "danger-sm",
+                        "action": {
+                            "kind": "credential_delete",
+                            "credential_id": cred_id,
+                        },
+                    },
+                ),
+            ],
+        ),
+        Component(
+            type="text",
+            id=f"{row_id}-ts",
+            props={"value": f"저장 시각: {stored_at}", "variant": "muted"},
+        ),
+    ]
+
+    if metadata:
+        kv_items = []
+        for k, v in metadata.items():
+            v_str = str(v)
+            if len(v_str) > 80:
+                v_str = v_str[:80] + "..."
+            kv_items.append({"key": k, "value": v_str})
+        row_children.append(
+            Component(
+                type="kv",
+                id=f"{row_id}-meta",
+                props={"items": kv_items},
+            )
+        )
+
     return Component(
         type="stack",
         id=row_id,
         props={"gap": "xs"},
-        children=[
-            Component(
-                type="stack",
-                id=f"{row_id}-top",
-                props={"direction": "horizontal", "gap": "sm", "align": "center"},
-                children=[
-                    Component(
-                        type="text",
-                        id=f"{row_id}-id",
-                        props={"value": cred_id, "variant": "code"},
-                    ),
-                    Component(
-                        type="badge",
-                        id=f"{row_id}-masked",
-                        props={"value": "●●●● 저장됨"},
-                    ),
-                    Component(
-                        type="button",
-                        id=f"{row_id}-del",
-                        props={
-                            "label": "삭제",
-                            "variant": "danger-sm",
-                            "action": {
-                                "kind": "credential_delete",
-                                "credential_id": cred_id,
-                            },
-                        },
-                    ),
-                ],
-            ),
-            Component(
-                type="text",
-                id=f"{row_id}-ts",
-                props={"value": f"저장 시각: {stored_at}", "variant": "muted"},
-            ),
-        ],
+        children=row_children,
     )
 
 
@@ -2236,15 +2265,19 @@ def _audit_log_card(audit_entries: list[dict]) -> Component:
 
 
 def _vault_card(vault_entries: list[dict] | None) -> Component:
-    """Render the credential vault management card.
+    """Render the credential vault management card with grouping by ID prefix.
 
     vault_entries=None  → db lacked list_settings_by_prefix (unavailable)
     vault_entries=[]    → db returned no entries (empty)
-    vault_entries=[...] → one row per entry + delete button each
+    vault_entries=[...] → entries grouped by prefix, with metadata kv per entry
     """
     children: list[Component] = [
         Component(type="heading", id="adv-vault-h", props={"value": "자격증명 금고", "level": 4}),
-        Component(type="text", id="adv-vault-d", props={"value": "저장된 자격증명을 관리합니다."}),
+        Component(
+            type="text",
+            id="adv-vault-d",
+            props={"value": "그룹별로 정리된 암호화 자격증명입니다. 회전(rotation)은 동일한 ID로 재저장하면 됩니다."},
+        ),
     ]
 
     if vault_entries is None:
@@ -2264,15 +2297,40 @@ def _vault_card(vault_entries: list[dict] | None) -> Component:
             )
         )
     else:
-        for i, entry in enumerate(vault_entries):
-            children.append(_vault_entry_row(entry, i))
+        # Group entries by prefix (the "group" field), sorted alphabetically.
+        groups: dict[str, list[dict]] = {}
+        for entry in vault_entries:
+            grp = entry.get("group", "기타")
+            groups.setdefault(grp, []).append(entry)
+
+        global_index = 0
+        for grp_name in sorted(groups.keys()):
+            grp_entries = groups[grp_name]
+            count = len(grp_entries)
+            children.append(
+                Component(
+                    type="heading",
+                    id=f"adv-vault-grp-{grp_name}-h",
+                    props={"value": f"{grp_name} ({count}개)", "level": 5},
+                )
+            )
+            for entry in grp_entries:
+                children.append(_vault_entry_row(entry, global_index))
+                global_index += 1
 
     # Add / rotate form — always present so users can add new credentials.
     children.append(
         Component(
             type="heading",
             id="adv-vault-form-h",
-            props={"value": "자격증명 추가 / 교체", "level": 5},
+            props={"value": "자격증명 추가 / 회전", "level": 5},
+        )
+    )
+    children.append(
+        Component(
+            type="text",
+            id="adv-vault-form-hint",
+            props={"value": "이미 존재하는 ID로 저장하면 기존 값이 교체됩니다 (회전)."},
         )
     )
     children.append(
@@ -2303,6 +2361,17 @@ def _vault_card(vault_entries: list[dict] | None) -> Component:
                         "label": "값 (비밀번호 / 토큰)",
                         "value": "",
                         "type": "password",
+                    },
+                ),
+                Component(
+                    type="field",
+                    id="adv-vault-form-description",
+                    props={
+                        "name": "description",
+                        "label": "설명 (선택)",
+                        "value": "",
+                        "type": "text",
+                        "placeholder": "예: Prod SSH key, alice 생성",
                     },
                 ),
             ],
