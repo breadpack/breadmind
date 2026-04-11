@@ -270,6 +270,43 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
         except Exception as exc:  # noqa: BLE001
             logger.warning("LLM hot-reload wiring skipped: %s", exc)
 
+        # Task 10: persona / custom_prompts / custom_instructions hot-reload.
+        try:
+            agent = getattr(app_state, "_agent", None)
+            if agent is not None and hasattr(agent, "reload_prompt_components"):
+                async def _reload_persona(ctx):
+                    try:
+                        agent.reload_prompt_components(persona=ctx["new"])
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("persona hot-reload failed: %s", exc)
+
+                async def _reload_custom_prompts(ctx):
+                    try:
+                        agent.reload_prompt_components(custom_prompts=ctx["new"])
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("custom_prompts hot-reload failed: %s", exc)
+
+                async def _reload_custom_instructions(ctx):
+                    try:
+                        agent.reload_prompt_components(custom_instructions=ctx["new"])
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "custom_instructions hot-reload failed: %s", exc,
+                        )
+
+                reload_registry.register("persona", _reload_persona)
+                reload_registry.register("custom_prompts", _reload_custom_prompts)
+                reload_registry.register(
+                    "custom_instructions", _reload_custom_instructions,
+                )
+            else:
+                logger.warning(
+                    "persona hot-reload wiring skipped: agent missing or lacks "
+                    "reload_prompt_components",
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("persona hot-reload wiring skipped: %s", exc)
+
         # Register the eight agent settings tools onto the CoreAgent's tool
         # registry so LLM-driven write paths also hit the shared service.
         # Guarded because some deployments (tests, minimal runtimes) may not

@@ -168,6 +168,46 @@ class CoreAgent:
             self._role = role
             self._rebuild_system_prompt()
 
+    def reload_prompt_components(
+        self,
+        *,
+        persona: str | dict | None = None,
+        custom_prompts: dict | None = None,
+        custom_instructions: str | None = None,
+    ) -> None:
+        """Rebuild the cached system prompt when prompt-related settings change.
+
+        Any argument left as ``None`` is kept at its current value. Called by
+        the settings reload registry when ``persona``, ``custom_prompts``, or
+        ``custom_instructions`` is written. ``persona`` may be either a preset
+        name (string) or a legacy dict payload accepted by ``set_persona``.
+        """
+        if persona is not None:
+            if isinstance(persona, str):
+                # New path: persona preset name. ``set_persona_name`` handles
+                # the PromptBuilder-based rebuild; fall back to set_persona
+                # for the legacy config path.
+                if self._prompt_builder:
+                    self.set_persona_name(persona)
+                else:
+                    self.set_persona({"preset": persona})
+            else:
+                self.set_persona(persona)
+        if custom_instructions is not None:
+            # Delegates to existing set_custom_instructions which rebuilds via
+            # PromptBuilder when available and falls back otherwise.
+            self.set_custom_instructions(custom_instructions)
+        if custom_prompts is not None:
+            # NOTE: PromptContext does not currently carry a custom_prompts
+            # field, so there is no prompt rebuild path for it. We stash the
+            # value on the agent for future wiring and log at debug level.
+            self._custom_prompts = custom_prompts
+            logger.debug(
+                "reload_prompt_components: custom_prompts stored (%d entries) "
+                "but no rebuild path yet",
+                len(custom_prompts) if hasattr(custom_prompts, "__len__") else 0,
+            )
+
     def _rebuild_system_prompt(self):
         """Rebuild system prompt from PromptBuilder."""
         if self._prompt_builder and self._prompt_context:
