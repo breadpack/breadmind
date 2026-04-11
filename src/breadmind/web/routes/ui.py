@@ -362,13 +362,7 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
             if plugin_manager_obj is not None:
                 async def _reload_skill_markets(ctx):
                     try:
-                        apply = getattr(plugin_manager_obj, "apply_markets", None)
-                        if apply is not None:
-                            await apply(ctx["new"])
-                        else:
-                            logger.debug(
-                                "skill_markets reload: plugin manager has no apply_markets",
-                            )
+                        await plugin_manager_obj.apply_markets(ctx["new"])
                     except Exception as exc:
                         logger.warning("skill_markets hot-reload failed: %s", exc)
 

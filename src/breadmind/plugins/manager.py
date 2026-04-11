@@ -33,6 +33,26 @@ class PluginManager:
         self._container = container or ServiceContainer()
         self._loaded: dict[str, LoadedComponents] = {}
         self._manifests: dict[str, PluginManifest] = {}
+        self._markets_config: list[dict] = []
+
+    async def apply_markets(self, markets: list[dict] | None) -> None:
+        """Record the new skill-market configuration.
+
+        Full marketplace sync (downloading/installing/removing plugins from
+        markets) is a separate feature — this method only updates the stored
+        config so the reloader chain has a real target and logs an info
+        message indicating that a process restart is required for the full
+        effect.
+        """
+        self._markets_config = list(markets or [])
+        logging.getLogger(__name__).info(
+            "plugin markets updated (%d entries); full sync requires restart",
+            len(self._markets_config),
+        )
+
+    def get_markets_config(self) -> list[dict]:
+        """Return the most recently applied markets config (for tests / debug)."""
+        return list(self._markets_config)
 
     @property
     def loaded_plugins(self) -> dict[str, LoadedComponents]:
