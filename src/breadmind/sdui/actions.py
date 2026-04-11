@@ -53,24 +53,25 @@ class ActionHandler:
         self._credential_vault = credential_vault
         self._event_bus = event_bus
 
-        if settings_service is None and settings_store is not None:
-            try:
+        if settings_service is None:
+            if settings_store is None:
+                # Legacy tests that only exercise non-settings actions
+                # construct the handler without either. Accept None and
+                # let write methods raise RuntimeError if called.
+                self._settings_service = None
+            else:
                 from breadmind.settings.reload_registry import SettingsReloadRegistry
                 from breadmind.settings.service import SettingsService
 
-                settings_service = SettingsService(
+                self._settings_service = SettingsService(
                     store=settings_store,
                     vault=credential_vault,
                     audit_sink=self._record_audit,
                     reload_registry=SettingsReloadRegistry(),
                     event_bus=event_bus,
                 )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "ActionHandler: failed to construct SettingsService: %s", exc
-                )
-                settings_service = None
-        self._settings_service = settings_service
+        else:
+            self._settings_service = settings_service
 
     async def handle(self, action: dict[str, Any], *, user_id: str) -> dict[str, Any]:
         kind = action.get("kind")
@@ -467,14 +468,10 @@ class ActionHandler:
 
         Whitelisted keys only — see ``_APPEND_ALLOWED_KEYS``.
         The incoming ``values`` payload is a *single item* (not the full list).
-        The handler reads the existing value, merges, re-validates the full
-        candidate via ``validate_value``, then persists.
+        The handler reads the existing value and delegates to
+        ``SettingsService.append`` / ``SettingsService.set`` which
+        re-validates the full candidate before persisting.
         """
-        from breadmind.sdui.settings_schema import (
-            SettingsValidationError,
-            validate_value,
-        )
-
         key = action.get("key")
         if key not in self._APPEND_ALLOWED_KEYS:
             return {"ok": False, "error": f"key not allowed for settings_append: {key}"}
@@ -514,7 +511,10 @@ class ActionHandler:
             if err is not None:
                 return {"ok": False, "error": err}
             if self._settings_service is None:
-                return await self._append_admin_user(item)  # fallback
+                raise RuntimeError(
+                    "ActionHandler.settings_service is None — construction failed "
+                    "or bypassed. Reload pipeline is not available.",
+                )
             result = await self._settings_service.set(
                 "safety_permissions",
                 merged_dict,
@@ -532,8 +532,9 @@ class ActionHandler:
             if err is not None:
                 return {"ok": False, "error": err}
             if self._settings_service is None:
-                return await self._append_blacklist_entry(
-                    item, validate_value, SettingsValidationError
+                raise RuntimeError(
+                    "ActionHandler.settings_service is None — construction failed "
+                    "or bypassed. Reload pipeline is not available.",
                 )
             result = await self._settings_service.set(
                 "safety_blacklist",
@@ -573,20 +574,10 @@ class ActionHandler:
             return {"ok": False, "error": err}
 
         if self._settings_service is None:
-            # Fallback path for handlers constructed without a service.
-            try:
-                cleaned = validate_value(key, existing_list + [coerced_item])
-            except SettingsValidationError as exc:
-                return {"ok": False, "error": str(exc)}
-            try:
-                await self._settings_store.set_setting(key, cleaned)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("settings_append set_setting failed: %s", exc)
-                return {"ok": False, "error": str(exc)}
-            await self._record_audit(
-                "settings_append", key, user_id, audit_summary,
+            raise RuntimeError(
+                "ActionHandler.settings_service is None — construction failed "
+                "or bypassed. Reload pipeline is not available.",
             )
-            return {"ok": True, "persisted": True, "refresh_view": "settings_view"}
 
         result = await self._settings_service.append(
             key, coerced_item, actor=f"user:{user_id}", audit_summary=audit_summary,
@@ -789,11 +780,6 @@ class ActionHandler:
         For ``mcp_servers``: args/env/enabled string values are parsed before
         merging using the same helpers as ``_settings_append``.
         """
-        from breadmind.sdui.settings_schema import (
-            SettingsValidationError,
-            validate_value,
-        )
-
         key = action.get("key")
         if key not in self._UPDATE_ITEM_ALLOWED_KEYS:
             return {"ok": False, "error": f"key not allowed for settings_update_item: {key}"}
@@ -838,23 +824,10 @@ class ActionHandler:
         audit_summary = self._audit_summary_settings_update_item(key, match_value)
 
         if self._settings_service is None:
-            # Fallback path for handlers constructed without a service.
-            original_item = existing_list[idx]
-            new_item = {**original_item, **parsed_values}
-            new_list = existing_list[:idx] + [new_item] + existing_list[idx + 1:]
-            try:
-                cleaned = validate_value(key, new_list)
-            except SettingsValidationError as exc:
-                return {"ok": False, "error": str(exc)}
-            try:
-                await self._settings_store.set_setting(key, cleaned)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("settings_update_item set_setting failed: %s", exc)
-                return {"ok": False, "error": str(exc)}
-            await self._record_audit(
-                "settings_update_item", key, user_id, audit_summary,
+            raise RuntimeError(
+                "ActionHandler.settings_service is None — construction failed "
+                "or bypassed. Reload pipeline is not available.",
             )
-            return {"ok": True, "persisted": True, "refresh_view": "settings_view"}
 
         result = await self._settings_service.update_item(
             key,
@@ -1059,140 +1032,3 @@ class ActionHandler:
         admin_users.append(user)
         return {**existing_perms, "admin_users": admin_users}, None
 
-    @staticmethod
-    def _merge_mcp_server(
-        existing: list, item: Any
-    ) -> tuple[list | None, str | None]:
-        if not isinstance(item, dict):
-            return None, "values must be an object"
-        name = item.get("name")
-        if not isinstance(name, str) or not name:
-            return None, "mcp_servers item: name must be a non-empty string"
-        if any(s.get("name") == name for s in existing):
-            return None, f"mcp_servers: duplicate name {name!r}"
-        # Parse string args/env/enabled when the form submits multiline text.
-        parsed_item, err = ActionHandler._parse_mcp_server_values(item)
-        if err is not None:
-            return None, err
-        return existing + [parsed_item], None
-
-    @staticmethod
-    def _merge_skill_market(
-        existing: list, item: Any
-    ) -> tuple[list | None, str | None]:
-        if not isinstance(item, dict):
-            return None, "values must be an object"
-        name = item.get("name")
-        if not isinstance(name, str) or not name:
-            return None, "skill_markets item: name must be a non-empty string"
-        if any(s.get("name") == name for s in existing):
-            return None, f"skill_markets: duplicate name {name!r}"
-        return existing + [item], None
-
-    @staticmethod
-    def _merge_safety_approval(
-        existing: list, item: Any
-    ) -> tuple[list | None, str | None]:
-        if not isinstance(item, dict):
-            return None, "values must be an object with a 'tool' field"
-        tool = item.get("tool")
-        if not isinstance(tool, str) or not tool:
-            return None, "safety_approval item: tool must be a non-empty string"
-        if tool in existing:
-            return None, f"safety_approval: duplicate tool {tool!r}"
-        return existing + [tool], None
-
-    @staticmethod
-    def _merge_scheduler_cron(
-        existing: list, item: Any
-    ) -> tuple[list | None, str | None]:
-        if not isinstance(item, dict):
-            return None, "values must be an object"
-        name = item.get("name")
-        if not isinstance(name, str) or not name:
-            return None, "scheduler_cron item: name must be a non-empty string"
-        if any(s.get("name") == name for s in existing):
-            return None, f"scheduler_cron: duplicate name {name!r}"
-        return existing + [item], None
-
-    async def _append_blacklist_entry(
-        self,
-        item: Any,
-        validate_value: Any,
-        SettingsValidationError: type,
-    ) -> dict[str, Any]:
-        if not isinstance(item, dict):
-            return {"ok": False, "error": "safety_blacklist item: values must be an object"}
-        domain = item.get("domain")
-        tool = item.get("tool")
-        if not isinstance(domain, str) or not domain:
-            return {"ok": False, "error": "safety_blacklist item: domain must be a non-empty string"}
-        if not isinstance(tool, str) or not tool:
-            return {"ok": False, "error": "safety_blacklist item: tool must be a non-empty string"}
-
-        try:
-            existing = await self._settings_store.get_setting("safety_blacklist")
-        except Exception:
-            existing = None
-
-        existing_dict: dict = existing if isinstance(existing, dict) else {}
-        domain_list: list = list(existing_dict.get(domain, []))
-
-        if tool in domain_list:
-            return {"ok": False, "error": f"safety_blacklist[{domain!r}]: duplicate tool {tool!r}"}
-
-        domain_list.append(tool)
-        candidate = {**existing_dict, domain: domain_list}
-
-        try:
-            cleaned = validate_value("safety_blacklist", candidate)
-        except SettingsValidationError as exc:
-            return {"ok": False, "error": str(exc)}
-
-        try:
-            await self._settings_store.set_setting("safety_blacklist", cleaned)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("settings_append set_setting (safety_blacklist) failed: %s", exc)
-            return {"ok": False, "error": str(exc)}
-
-        return {"ok": True, "persisted": True, "refresh_view": "settings_view"}
-
-    async def _append_admin_user(self, item: Any) -> dict[str, Any]:
-        """Append a user to safety_permissions.admin_users, preserving other fields."""
-        from breadmind.sdui.settings_schema import (
-            SettingsValidationError,
-            validate_value,
-        )
-
-        if not isinstance(item, dict):
-            return {"ok": False, "error": "safety_permissions_admin_users: values must be an object"}
-        user = item.get("user")
-        if not isinstance(user, str) or not user:
-            return {"ok": False, "error": "safety_permissions_admin_users: user must be a non-empty string"}
-
-        try:
-            existing = await self._settings_store.get_setting("safety_permissions")
-        except Exception:
-            existing = None
-
-        existing_perms: dict = existing if isinstance(existing, dict) else {}
-        admin_users: list = list(existing_perms.get("admin_users", []))
-
-        if user in admin_users:
-            return {"ok": False, "error": f"safety_permissions.admin_users: duplicate user {user!r}"}
-
-        admin_users.append(user)
-        candidate = {**existing_perms, "admin_users": admin_users}
-
-        try:
-            cleaned = validate_value("safety_permissions", candidate)
-        except SettingsValidationError as exc:
-            return {"ok": False, "error": str(exc)}
-
-        try:
-            await self._settings_store.set_setting("safety_permissions", cleaned)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("settings_append set_setting (safety_permissions) failed: %s", exc)
-            return {"ok": False, "error": str(exc)}
-
-        return {"ok": True, "persisted": True, "refresh_view": "settings_view"}
