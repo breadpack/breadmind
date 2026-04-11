@@ -134,10 +134,12 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
 
         # Shared SettingsService so SDUI (ActionHandler) and agent-tool
         # (ToolRegistry) write paths route through the same reload registry.
+        from breadmind.settings.approval_queue import PendingApprovalQueue
         from breadmind.settings.reload_registry import SettingsReloadRegistry
         from breadmind.settings.service import SettingsService
 
         reload_registry = SettingsReloadRegistry()
+        approval_queue = PendingApprovalQueue()
 
         # Build the service with a placeholder audit sink, then back-fill the
         # real one from ActionHandler below. Only after back-fill do we
@@ -152,6 +154,7 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
             audit_sink=_placeholder_audit,
             reload_registry=reload_registry,
             event_bus=flow_bus,
+            approval_queue=approval_queue,
         )
 
         action_handler = ActionHandler(
@@ -166,6 +169,7 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
         settings_service.set_audit_sink(action_handler._record_audit)
         app.state.settings_reload_registry = reload_registry
         app.state.settings_service = settings_service
+        app.state.settings_approval_queue = approval_queue
         app.state.sdui_action_handler = action_handler
 
         # Task 9: hot-reload LLM provider on `llm` / `apikey:*` changes.

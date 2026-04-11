@@ -19,6 +19,21 @@ from breadmind.settings.reload_registry import SettingsReloadRegistry
 AuditSink = Callable[..., Awaitable[int | None]]
 
 
+_ADMIN_ONLY_KEYS: frozenset[str] = frozenset({
+    "safety_blacklist",
+    "safety_approval",
+    "safety_permissions",
+    "safety_permissions_admin_users",
+    "tool_security",
+    "system_timeouts",
+    "retry_config",
+    "limits_config",
+    "polling_config",
+    "agent_timeouts",
+    "logging_config",
+})
+
+
 @dataclass
 class SetResult:
     ok: bool
@@ -63,13 +78,24 @@ class SettingsService:
         audit_sink: AuditSink,
         reload_registry: SettingsReloadRegistry,
         event_bus: EventBus | None = None,
+        approval_queue: Any = None,
     ) -> None:
         self._store = store
         self._vault = vault
         self._audit_sink = audit_sink
         self._registry = reload_registry
         self._bus = event_bus
+        self._approvals = approval_queue
         self._key_locks: dict[str, asyncio.Lock] = {}
+
+    def _requires_approval(self, key: str, actor: str) -> bool:
+        if not actor.startswith("agent:"):
+            return False
+        if self._approvals is None:
+            return False
+        if settings_schema.is_credential_key(key):
+            return True
+        return key in _ADMIN_ONLY_KEYS
 
     def _lock(self, key: str) -> asyncio.Lock:
         # ``setdefault`` is atomic for dict operations in CPython, so two
@@ -154,6 +180,30 @@ class SettingsService:
                 key=key,
                 error=f"key '{key}' is not allowed",
             )
+        if self._requires_approval(key, actor):
+            async def _run() -> SetResult:
+                return await self._set_internal(
+                    key, value, actor=actor, audit_summary=audit_summary
+                )
+            approval_id = self._approvals.submit(
+                purpose="settings_set", key=key, actor=actor, run=_run,
+            )
+            return SetResult(
+                ok=False, operation="set", key=key,
+                pending_approval_id=approval_id,
+            )
+        return await self._set_internal(
+            key, value, actor=actor, audit_summary=audit_summary,
+        )
+
+    async def _set_internal(
+        self,
+        key: str,
+        value: Any,
+        *,
+        actor: str,
+        audit_summary: str | None = None,
+    ) -> SetResult:
         try:
             normalized = settings_schema.validate_value(key, value)
         except settings_schema.SettingsValidationError as exc:
@@ -205,7 +255,30 @@ class SettingsService:
     ) -> SetResult:
         if not settings_schema.is_allowed_key(key):
             return SetResult(ok=False, operation="append", key=key, error=f"key '{key}' is not allowed")
+        if self._requires_approval(key, actor):
+            async def _run() -> SetResult:
+                return await self._append_internal(
+                    key, item, actor=actor, audit_summary=audit_summary
+                )
+            approval_id = self._approvals.submit(
+                purpose="settings_append", key=key, actor=actor, run=_run,
+            )
+            return SetResult(
+                ok=False, operation="append", key=key,
+                pending_approval_id=approval_id,
+            )
+        return await self._append_internal(
+            key, item, actor=actor, audit_summary=audit_summary,
+        )
 
+    async def _append_internal(
+        self,
+        key: str,
+        item: Any,
+        *,
+        actor: str,
+        audit_summary: str | None = None,
+    ) -> SetResult:
         async with self._lock(key):
             old = await self._store.get_setting(key) or []
             if not isinstance(old, list):
@@ -262,7 +335,42 @@ class SettingsService:
     ) -> SetResult:
         if not settings_schema.is_allowed_key(key):
             return SetResult(ok=False, operation="update_item", key=key, error=f"key '{key}' is not allowed")
+        if self._requires_approval(key, actor):
+            async def _run() -> SetResult:
+                return await self._update_item_internal(
+                    key,
+                    match_field=match_field,
+                    match_value=match_value,
+                    patch=patch,
+                    actor=actor,
+                    audit_summary=audit_summary,
+                )
+            approval_id = self._approvals.submit(
+                purpose="settings_update_item", key=key, actor=actor, run=_run,
+            )
+            return SetResult(
+                ok=False, operation="update_item", key=key,
+                pending_approval_id=approval_id,
+            )
+        return await self._update_item_internal(
+            key,
+            match_field=match_field,
+            match_value=match_value,
+            patch=patch,
+            actor=actor,
+            audit_summary=audit_summary,
+        )
 
+    async def _update_item_internal(
+        self,
+        key: str,
+        *,
+        match_field: str,
+        match_value: Any,
+        patch: dict[str, Any],
+        actor: str,
+        audit_summary: str | None = None,
+    ) -> SetResult:
         async with self._lock(key):
             old = await self._store.get_setting(key) or []
             if not isinstance(old, list):
@@ -328,7 +436,36 @@ class SettingsService:
     ) -> SetResult:
         if not settings_schema.is_allowed_key(key):
             return SetResult(ok=False, operation="delete_item", key=key, error=f"key '{key}' is not allowed")
+        if self._requires_approval(key, actor):
+            async def _run() -> SetResult:
+                return await self._delete_item_internal(
+                    key,
+                    match_field=match_field,
+                    match_value=match_value,
+                    actor=actor,
+                )
+            approval_id = self._approvals.submit(
+                purpose="settings_delete_item", key=key, actor=actor, run=_run,
+            )
+            return SetResult(
+                ok=False, operation="delete_item", key=key,
+                pending_approval_id=approval_id,
+            )
+        return await self._delete_item_internal(
+            key,
+            match_field=match_field,
+            match_value=match_value,
+            actor=actor,
+        )
 
+    async def _delete_item_internal(
+        self,
+        key: str,
+        *,
+        match_field: str,
+        match_value: Any,
+        actor: str,
+    ) -> SetResult:
         async with self._lock(key):
             old = await self._store.get_setting(key) or []
             if not isinstance(old, list):
@@ -396,6 +533,33 @@ class SettingsService:
                 key=key,
                 error=f"key '{key}' is not a credential key",
             )
+        if self._requires_approval(key, actor):
+            async def _run() -> SetResult:
+                return await self._set_credential_internal(
+                    key, value, actor=actor,
+                    description=description, audit_summary=audit_summary,
+                )
+            approval_id = self._approvals.submit(
+                purpose="credential_store", key=key, actor=actor, run=_run,
+            )
+            return SetResult(
+                ok=False, operation="credential_store", key=key,
+                pending_approval_id=approval_id,
+            )
+        return await self._set_credential_internal(
+            key, value, actor=actor,
+            description=description, audit_summary=audit_summary,
+        )
+
+    async def _set_credential_internal(
+        self,
+        key: str,
+        value: str,
+        *,
+        actor: str,
+        description: str = "",
+        audit_summary: str | None = None,
+    ) -> SetResult:
         metadata: dict[str, Any] = {}
         if description:
             metadata["description"] = description
@@ -450,6 +614,37 @@ class SettingsService:
         dispatch, and SETTINGS_CHANGED events — but plaintext is never
         passed to any of them.
         """
+        if (
+            actor.startswith("agent:")
+            and self._approvals is not None
+        ):
+            async def _run() -> SetResult:
+                return await self._store_vault_credential_internal(
+                    vault_id, value, metadata=metadata, actor=actor,
+                    audit_key=audit_key, audit_summary=audit_summary,
+                )
+            approval_id = self._approvals.submit(
+                purpose="credential_store", key=vault_id, actor=actor, run=_run,
+            )
+            return SetResult(
+                ok=False, operation="credential_store", key=vault_id,
+                pending_approval_id=approval_id,
+            )
+        return await self._store_vault_credential_internal(
+            vault_id, value, metadata=metadata, actor=actor,
+            audit_key=audit_key, audit_summary=audit_summary,
+        )
+
+    async def _store_vault_credential_internal(
+        self,
+        vault_id: str,
+        value: str,
+        *,
+        metadata: dict[str, Any] | None,
+        actor: str,
+        audit_key: str | None = None,
+        audit_summary: str | None = None,
+    ) -> SetResult:
         async with self._lock(vault_id):
             try:
                 await self._vault.store(vault_id, value, metadata)
@@ -498,6 +693,35 @@ class SettingsService:
         Returns ``ok=False`` with ``error="credential not found"`` when the
         vault reports no such id (matching the legacy SDUI action shape).
         """
+        if (
+            actor.startswith("agent:")
+            and self._approvals is not None
+        ):
+            async def _run() -> SetResult:
+                return await self._delete_vault_credential_internal(
+                    vault_id, actor=actor,
+                    audit_key=audit_key, audit_summary=audit_summary,
+                )
+            approval_id = self._approvals.submit(
+                purpose="credential_delete", key=vault_id, actor=actor, run=_run,
+            )
+            return SetResult(
+                ok=False, operation="credential_delete", key=vault_id,
+                pending_approval_id=approval_id,
+            )
+        return await self._delete_vault_credential_internal(
+            vault_id, actor=actor,
+            audit_key=audit_key, audit_summary=audit_summary,
+        )
+
+    async def _delete_vault_credential_internal(
+        self,
+        vault_id: str,
+        *,
+        actor: str,
+        audit_key: str | None = None,
+        audit_summary: str | None = None,
+    ) -> SetResult:
         async with self._lock(vault_id):
             try:
                 deleted = await self._vault.delete(vault_id)
@@ -546,6 +770,21 @@ class SettingsService:
                 key=key,
                 error=f"key '{key}' is not a credential key",
             )
+        if self._requires_approval(key, actor):
+            async def _run() -> SetResult:
+                return await self._delete_credential_internal(key, actor=actor)
+            approval_id = self._approvals.submit(
+                purpose="credential_delete", key=key, actor=actor, run=_run,
+            )
+            return SetResult(
+                ok=False, operation="credential_delete", key=key,
+                pending_approval_id=approval_id,
+            )
+        return await self._delete_credential_internal(key, actor=actor)
+
+    async def _delete_credential_internal(
+        self, key: str, *, actor: str,
+    ) -> SetResult:
         async with self._lock(key):
             await self._vault.delete(key)
             audit_id = await self._audit_sink(
@@ -573,3 +812,18 @@ class SettingsService:
             reload_errors=dict(dispatch.errors),
             audit_id=audit_id,
         )
+
+    async def resolve_approval(self, approval_id: str) -> SetResult:
+        """Execute a previously queued settings write after user approval."""
+        if self._approvals is None:
+            return SetResult(
+                ok=False, operation="resolve_approval", key="",
+                error="approval queue not configured",
+            )
+        try:
+            return await self._approvals.resolve(approval_id)
+        except KeyError:
+            return SetResult(
+                ok=False, operation="resolve_approval", key="",
+                error=f"unknown approval id: {approval_id}",
+            )
