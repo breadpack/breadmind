@@ -43,7 +43,11 @@ function Form(c, render, ctx) {
     }
   };
 
-  return html`<form class="sdui-form" id=${c.id} onSubmit=${onSubmit}>${c.children.map(ch => render(ch, childCtx))}</form>`;
+  const submitLabel = c.props.submit_label;
+  const submitButton = submitLabel
+    ? html`<button type="submit" class="sdui-button sdui-button--primary" style="align-self:flex-start;margin-top:4px">${submitLabel}</button>`
+    : null;
+  return html`<form class="sdui-form" id=${c.id} onSubmit=${onSubmit}>${c.children.map(ch => render(ch, childCtx))}${submitButton}</form>`;
 }
 
 function Field(c, render, ctx) {
