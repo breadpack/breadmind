@@ -486,30 +486,54 @@ class ActionHandler:
 
         item = action.get("values")
 
-        # Delegate to specialised helpers per key type.
+        audit_summary = self._audit_summary_settings_append(key, item)
+
+        # ------------------------------------------------------------------
+        # Dict-shaped keys: merge locally then delegate via SettingsService.set
+        # ------------------------------------------------------------------
         if key == "safety_permissions_admin_users":
-            result = await self._append_admin_user(item)
-            if result.get("ok"):
-                await self._record_audit(
-                    "settings_append",
-                    key,
-                    user_id,
-                    self._audit_summary_settings_append(key, item),
-                )
-            return result
+            merged_dict, err = await self._build_admin_users_candidate(item)
+            if err is not None:
+                return {"ok": False, "error": err}
+            if self._settings_service is None:
+                return await self._append_admin_user(item)  # fallback
+            result = await self._settings_service.set(
+                "safety_permissions",
+                merged_dict,
+                actor=f"user:{user_id}",
+                audit_summary=audit_summary,
+            )
+            if not result.ok:
+                return {"ok": False, "error": result.error or "set failed"}
+            # Override the auto-recorded audit entry key so the UI sees the
+            # legacy ``safety_permissions_admin_users`` action key rather
+            # than the underlying ``safety_permissions`` storage key.
+            await self._rewrite_last_audit(action_key="settings_append", key=key)
+            return {"ok": True, "persisted": True, "refresh_view": "settings_view"}
 
         if key == "safety_blacklist":
-            result = await self._append_blacklist_entry(item, validate_value, SettingsValidationError)
-            if result.get("ok"):
-                await self._record_audit(
-                    "settings_append",
-                    key,
-                    user_id,
-                    self._audit_summary_settings_append(key, item),
+            merged_dict, err = await self._build_blacklist_candidate(item)
+            if err is not None:
+                return {"ok": False, "error": err}
+            if self._settings_service is None:
+                return await self._append_blacklist_entry(
+                    item, validate_value, SettingsValidationError
                 )
-            return result
+            result = await self._settings_service.set(
+                "safety_blacklist",
+                merged_dict,
+                actor=f"user:{user_id}",
+                audit_summary=audit_summary,
+            )
+            if not result.ok:
+                return {"ok": False, "error": result.error or "set failed"}
+            await self._rewrite_last_audit(action_key="settings_append", key=key)
+            return {"ok": True, "persisted": True, "refresh_view": "settings_view"}
 
-        # All remaining keys are list-shaped; build candidate and validate.
+        # ------------------------------------------------------------------
+        # List-shaped keys: run duplicate/validation pre-checks, then delegate
+        # via SettingsService.append so hot-reload subscribers fire.
+        # ------------------------------------------------------------------
         try:
             existing = await self._settings_store.get_setting(key)
         except Exception:
@@ -518,37 +542,67 @@ class ActionHandler:
         existing_list: list = existing if isinstance(existing, list) else []
 
         if key == "mcp_servers":
-            merged, err = self._merge_mcp_server(existing_list, item)
+            coerced_item, err = self._prepare_mcp_server_item(existing_list, item)
         elif key == "skill_markets":
-            merged, err = self._merge_skill_market(existing_list, item)
+            coerced_item, err = self._prepare_skill_market_item(existing_list, item)
         elif key == "safety_approval":
-            merged, err = self._merge_safety_approval(existing_list, item)
+            coerced_item, err = self._prepare_safety_approval_item(existing_list, item)
         elif key == "scheduler_cron":
-            merged, err = self._merge_scheduler_cron(existing_list, item)
+            coerced_item, err = self._prepare_scheduler_cron_item(existing_list, item)
         else:
             return {"ok": False, "error": f"key not allowed for settings_append: {key}"}
 
         if err is not None:
             return {"ok": False, "error": err}
 
-        try:
-            cleaned = validate_value(key, merged)
-        except SettingsValidationError as exc:
-            return {"ok": False, "error": str(exc)}
+        if self._settings_service is None:
+            # Fallback path for handlers constructed without a service.
+            try:
+                cleaned = validate_value(key, existing_list + [coerced_item])
+            except SettingsValidationError as exc:
+                return {"ok": False, "error": str(exc)}
+            try:
+                await self._settings_store.set_setting(key, cleaned)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("settings_append set_setting failed: %s", exc)
+                return {"ok": False, "error": str(exc)}
+            await self._record_audit(
+                "settings_append", key, user_id, audit_summary,
+            )
+            return {"ok": True, "persisted": True, "refresh_view": "settings_view"}
 
-        try:
-            await self._settings_store.set_setting(key, cleaned)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("settings_append set_setting failed: %s", exc)
-            return {"ok": False, "error": str(exc)}
-
-        await self._record_audit(
-            "settings_append",
-            key,
-            user_id,
-            self._audit_summary_settings_append(key, item),
+        result = await self._settings_service.append(
+            key, coerced_item, actor=f"user:{user_id}", audit_summary=audit_summary,
         )
+        if not result.ok:
+            return {"ok": False, "error": result.error or "append failed"}
         return {"ok": True, "persisted": True, "refresh_view": "settings_view"}
+
+    async def _rewrite_last_audit(self, *, action_key: str, key: str) -> None:
+        """Rewrite the most recent audit entry's action/key fields in place.
+
+        Used when a translator delegated a dict-shaped setting through
+        ``SettingsService.set`` but wants the audit log to show the original
+        SDUI action name (e.g. ``settings_append`` targeting
+        ``safety_permissions_admin_users``) rather than the storage key
+        (``safety_permissions``).
+        """
+        if self._settings_store is None:
+            return
+        try:
+            existing = await self._settings_store.get_setting(self._AUDIT_KEY)
+        except Exception:  # noqa: BLE001
+            return
+        if not isinstance(existing, list) or not existing:
+            return
+        last = dict(existing[-1])
+        last["action"] = action_key
+        last["key"] = key
+        new_log = existing[:-1] + [last]
+        try:
+            await self._settings_store.set_setting(self._AUDIT_KEY, new_log)
+        except Exception:  # noqa: BLE001
+            pass
 
     # ------------------------------------------------------------------
     # Vault credential actions (admin-only; no bootstrap exception)
@@ -602,6 +656,31 @@ class ActionHandler:
         if metadata is not None and not isinstance(metadata, dict):
             return {"ok": False, "error": "metadata must be a dict if provided"}
 
+        if self._settings_service is not None:
+            result = await self._settings_service.store_vault_credential(
+                credential_id,
+                value,
+                metadata=metadata,
+                actor=f"user:{user_id}",
+                audit_key=f"vault:{credential_id}",
+                audit_summary="stored",
+            )
+            if not result.ok:
+                logger.warning(
+                    "credential_store delegation failed for %s: %s",
+                    credential_id,
+                    result.error,
+                )
+                return {"ok": False, "error": result.error or "credential_store failed"}
+            logger.info("credential_store: stored credential %s", credential_id)
+            return {
+                "ok": True,
+                "persisted": result.persisted,
+                "credential_id": credential_id,
+                "refresh_view": "settings_view",
+            }
+
+        # Fallback: no SettingsService available.
         try:
             await self._credential_vault.store(credential_id, value, metadata)
         except Exception as exc:  # noqa: BLE001
@@ -645,6 +724,28 @@ class ActionHandler:
                 ),
             }
 
+        if self._settings_service is not None:
+            result = await self._settings_service.delete_vault_credential(
+                credential_id,
+                actor=f"user:{user_id}",
+                audit_key=f"vault:{credential_id}",
+                audit_summary="deleted",
+            )
+            if not result.ok:
+                if result.error == "credential not found":
+                    logger.warning(
+                        "credential_delete: credential not found: %s", credential_id
+                    )
+                return {"ok": False, "error": result.error or "credential_delete failed"}
+            logger.info("credential_delete: deleted credential %s", credential_id)
+            return {
+                "ok": True,
+                "persisted": result.persisted,
+                "credential_id": credential_id,
+                "refresh_view": "settings_view",
+            }
+
+        # Fallback: no SettingsService available.
         try:
             deleted = await self._credential_vault.delete(credential_id)
         except Exception as exc:  # noqa: BLE001
@@ -743,29 +844,42 @@ class ActionHandler:
         else:
             parsed_values = dict(values)
 
-        # Merge: preserve existing item fields not present in new values (e.g. id).
-        original_item = existing_list[idx]
-        new_item = {**original_item, **parsed_values}
+        audit_summary = self._audit_summary_settings_update_item(key, match_value)
 
-        new_list = existing_list[:idx] + [new_item] + existing_list[idx + 1:]
+        if self._settings_service is None:
+            # Fallback path for handlers constructed without a service.
+            original_item = existing_list[idx]
+            new_item = {**original_item, **parsed_values}
+            new_list = existing_list[:idx] + [new_item] + existing_list[idx + 1:]
+            try:
+                cleaned = validate_value(key, new_list)
+            except SettingsValidationError as exc:
+                return {"ok": False, "error": str(exc)}
+            try:
+                await self._settings_store.set_setting(key, cleaned)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("settings_update_item set_setting failed: %s", exc)
+                return {"ok": False, "error": str(exc)}
+            await self._record_audit(
+                "settings_update_item", key, user_id, audit_summary,
+            )
+            return {"ok": True, "persisted": True, "refresh_view": "settings_view"}
 
-        try:
-            cleaned = validate_value(key, new_list)
-        except SettingsValidationError as exc:
-            return {"ok": False, "error": str(exc)}
-
-        try:
-            await self._settings_store.set_setting(key, cleaned)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("settings_update_item set_setting failed: %s", exc)
-            return {"ok": False, "error": str(exc)}
-
-        await self._record_audit(
-            "settings_update_item",
+        result = await self._settings_service.update_item(
             key,
-            user_id,
-            self._audit_summary_settings_update_item(key, match_value),
+            match_field=match_field,
+            match_value=match_value,
+            patch=parsed_values,
+            actor=f"user:{user_id}",
+            audit_summary=audit_summary,
         )
+        if not result.ok:
+            # Translate SettingsService's generic "no matching item" into the
+            # existing SDUI error string that tests assert on.
+            err = result.error or "update_item failed"
+            if "no matching item" in err:
+                err = f"{key}: item with {match_field}={match_value!r} not found"
+            return {"ok": False, "error": err}
         return {"ok": True, "persisted": True, "refresh_view": "settings_view"}
 
     # ------------------------------------------------------------------
@@ -840,6 +954,119 @@ class ActionHandler:
                 return None, str(exc)
 
         return result, None
+
+    # ------------------------------------------------------------------
+    # Per-key item preparation helpers (return (coerced_item, error|None)).
+    # These preserve the pre-check error strings that SDUI tests assert on,
+    # so they must stay in the translator (SettingsService does not see the
+    # raw incoming item before append).
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _prepare_mcp_server_item(
+        existing: list, item: Any
+    ) -> tuple[Any, str | None]:
+        if not isinstance(item, dict):
+            return None, "values must be an object"
+        name = item.get("name")
+        if not isinstance(name, str) or not name:
+            return None, "mcp_servers item: name must be a non-empty string"
+        if any(s.get("name") == name for s in existing):
+            return None, f"mcp_servers: duplicate name {name!r}"
+        parsed_item, err = ActionHandler._parse_mcp_server_values(item)
+        if err is not None:
+            return None, err
+        return parsed_item, None
+
+    @staticmethod
+    def _prepare_skill_market_item(
+        existing: list, item: Any
+    ) -> tuple[Any, str | None]:
+        if not isinstance(item, dict):
+            return None, "values must be an object"
+        name = item.get("name")
+        if not isinstance(name, str) or not name:
+            return None, "skill_markets item: name must be a non-empty string"
+        if any(s.get("name") == name for s in existing):
+            return None, f"skill_markets: duplicate name {name!r}"
+        return item, None
+
+    @staticmethod
+    def _prepare_safety_approval_item(
+        existing: list, item: Any
+    ) -> tuple[Any, str | None]:
+        if not isinstance(item, dict):
+            return None, "values must be an object with a 'tool' field"
+        tool = item.get("tool")
+        if not isinstance(tool, str) or not tool:
+            return None, "safety_approval item: tool must be a non-empty string"
+        if tool in existing:
+            return None, f"safety_approval: duplicate tool {tool!r}"
+        return tool, None
+
+    @staticmethod
+    def _prepare_scheduler_cron_item(
+        existing: list, item: Any
+    ) -> tuple[Any, str | None]:
+        if not isinstance(item, dict):
+            return None, "values must be an object"
+        name = item.get("name")
+        if not isinstance(name, str) or not name:
+            return None, "scheduler_cron item: name must be a non-empty string"
+        if any(s.get("name") == name for s in existing):
+            return None, f"scheduler_cron: duplicate name {name!r}"
+        return item, None
+
+    async def _build_blacklist_candidate(
+        self, item: Any
+    ) -> tuple[dict | None, str | None]:
+        """Pre-check and build the full safety_blacklist dict for delegation."""
+        if not isinstance(item, dict):
+            return None, "safety_blacklist item: values must be an object"
+        domain = item.get("domain")
+        tool = item.get("tool")
+        if not isinstance(domain, str) or not domain:
+            return None, "safety_blacklist item: domain must be a non-empty string"
+        if not isinstance(tool, str) or not tool:
+            return None, "safety_blacklist item: tool must be a non-empty string"
+
+        try:
+            existing = await self._settings_store.get_setting("safety_blacklist")
+        except Exception:  # noqa: BLE001
+            existing = None
+
+        existing_dict: dict = existing if isinstance(existing, dict) else {}
+        domain_list: list = list(existing_dict.get(domain, []))
+
+        if tool in domain_list:
+            return None, f"safety_blacklist[{domain!r}]: duplicate tool {tool!r}"
+
+        domain_list.append(tool)
+        return {**existing_dict, domain: domain_list}, None
+
+    async def _build_admin_users_candidate(
+        self, item: Any
+    ) -> tuple[dict | None, str | None]:
+        """Pre-check and build the full safety_permissions dict for delegation."""
+        if not isinstance(item, dict):
+            return None, "safety_permissions_admin_users: values must be an object"
+        user = item.get("user")
+        if not isinstance(user, str) or not user:
+            return None, "safety_permissions_admin_users: user must be a non-empty string"
+
+        try:
+            existing = await self._settings_store.get_setting("safety_permissions")
+        except Exception:  # noqa: BLE001
+            existing = None
+
+        existing_perms: dict = existing if isinstance(existing, dict) else {}
+        admin_users: list = list(existing_perms.get("admin_users", []))
+
+        if user in admin_users:
+            return None, f"safety_permissions.admin_users: duplicate user {user!r}"
+
+        admin_users.append(user)
+        return {**existing_perms, "admin_users": admin_users}, None
 
     @staticmethod
     def _merge_mcp_server(

@@ -129,7 +129,14 @@ class SettingsService:
             return "●●●●"
         return await self._store.get_setting(key)
 
-    async def set(self, key: str, value: Any, *, actor: str) -> SetResult:
+    async def set(
+        self,
+        key: str,
+        value: Any,
+        *,
+        actor: str,
+        audit_summary: str | None = None,
+    ) -> SetResult:
         if not settings_schema.is_allowed_key(key):
             return SetResult(
                 ok=False,
@@ -156,6 +163,7 @@ class SettingsService:
                 actor=actor,
                 old_preview=old,
                 new_preview=normalized,
+                summary=audit_summary,
             )
             dispatch = await self._registry.dispatch(
                 key=key, operation="set", old=old, new=normalized
@@ -177,7 +185,14 @@ class SettingsService:
             audit_id=audit_id,
         )
 
-    async def append(self, key: str, item: Any, *, actor: str) -> SetResult:
+    async def append(
+        self,
+        key: str,
+        item: Any,
+        *,
+        actor: str,
+        audit_summary: str | None = None,
+    ) -> SetResult:
         if not settings_schema.is_allowed_key(key):
             return SetResult(ok=False, operation="append", key=key, error=f"key '{key}' is not allowed")
 
@@ -203,6 +218,7 @@ class SettingsService:
                 actor=actor,
                 old_preview=old,
                 new_preview=normalized,
+                summary=audit_summary,
             )
             dispatch = await self._registry.dispatch(
                 key=key, operation="append", old=old, new=normalized
@@ -232,6 +248,7 @@ class SettingsService:
         match_value: Any,
         patch: dict[str, Any],
         actor: str,
+        audit_summary: str | None = None,
     ) -> SetResult:
         if not settings_schema.is_allowed_key(key):
             return SetResult(ok=False, operation="update_item", key=key, error=f"key '{key}' is not allowed")
@@ -269,6 +286,7 @@ class SettingsService:
                 actor=actor,
                 old_preview=old,
                 new_preview=normalized,
+                summary=audit_summary,
             )
             dispatch = await self._registry.dispatch(
                 key=key, operation="update_item", old=old, new=normalized
@@ -397,6 +415,113 @@ class SettingsService:
             persisted=True,
             hot_reloaded=dispatch.all_ok,
             restart_required=settings_schema.requires_restart(key),
+            reload_errors=dict(dispatch.errors),
+            audit_id=audit_id,
+        )
+
+    async def store_vault_credential(
+        self,
+        vault_id: str,
+        value: str,
+        *,
+        metadata: dict[str, Any] | None,
+        actor: str,
+        audit_key: str | None = None,
+        audit_summary: str | None = None,
+    ) -> SetResult:
+        """Store a raw vault credential without the ``apikey:`` key check.
+
+        Unlike :meth:`set_credential` this accepts any vault id (e.g.
+        ``ssh:prod``) and is intended for the SDUI credential_store action
+        path, which uses a separate vault id namespace from whitelisted
+        ``apikey:*`` settings. The pipeline still fires audit, reload
+        dispatch, and SETTINGS_CHANGED events — but plaintext is never
+        passed to any of them.
+        """
+        async with self._lock(vault_id):
+            try:
+                await self._vault.store(vault_id, value, metadata)
+            except Exception as exc:  # noqa: BLE001
+                return SetResult(
+                    ok=False, operation="credential_store", key=vault_id,
+                    error=str(exc),
+                )
+            audit_id = await self._audit_sink(
+                kind="credential_store",
+                key=audit_key or vault_id,
+                actor=actor,
+                old_preview=None,
+                new_preview=None,
+                summary=audit_summary,
+            )
+            dispatch = await self._registry.dispatch(
+                key=vault_id, operation="credential_store", old=None, new=None,
+            )
+            event_payload = self._build_event_payload(
+                key=vault_id, operation="credential_store", old=None, new=None,
+                actor=actor, audit_id=audit_id,
+            )
+        await self._emit_payload(event_payload)
+        return SetResult(
+            ok=True,
+            operation="credential_store",
+            key=vault_id,
+            persisted=True,
+            hot_reloaded=dispatch.all_ok,
+            restart_required=False,
+            reload_errors=dict(dispatch.errors),
+            audit_id=audit_id,
+        )
+
+    async def delete_vault_credential(
+        self,
+        vault_id: str,
+        *,
+        actor: str,
+        audit_key: str | None = None,
+        audit_summary: str | None = None,
+    ) -> SetResult:
+        """Delete a raw vault credential without the ``apikey:`` key check.
+
+        Returns ``ok=False`` with ``error="credential not found"`` when the
+        vault reports no such id (matching the legacy SDUI action shape).
+        """
+        async with self._lock(vault_id):
+            try:
+                deleted = await self._vault.delete(vault_id)
+            except Exception as exc:  # noqa: BLE001
+                return SetResult(
+                    ok=False, operation="credential_delete", key=vault_id,
+                    error=str(exc),
+                )
+            if not deleted:
+                return SetResult(
+                    ok=False, operation="credential_delete", key=vault_id,
+                    error="credential not found",
+                )
+            audit_id = await self._audit_sink(
+                kind="credential_delete",
+                key=audit_key or vault_id,
+                actor=actor,
+                old_preview=None,
+                new_preview=None,
+                summary=audit_summary,
+            )
+            dispatch = await self._registry.dispatch(
+                key=vault_id, operation="credential_delete", old=None, new=None,
+            )
+            event_payload = self._build_event_payload(
+                key=vault_id, operation="credential_delete", old=None, new=None,
+                actor=actor, audit_id=audit_id,
+            )
+        await self._emit_payload(event_payload)
+        return SetResult(
+            ok=True,
+            operation="credential_delete",
+            key=vault_id,
+            persisted=True,
+            hot_reloaded=dispatch.all_ok,
+            restart_required=False,
             reload_errors=dict(dispatch.errors),
             audit_id=audit_id,
         )
