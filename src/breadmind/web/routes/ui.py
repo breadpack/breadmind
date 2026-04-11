@@ -342,27 +342,13 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
             if mcp_manager_obj is not None:
                 async def _reload_mcp_global(ctx):
                     try:
-                        apply = getattr(mcp_manager_obj, "apply_config", None)
-                        if apply is not None:
-                            await apply(mcp_cfg=ctx["new"])
-                        else:
-                            # Fallback: emit a legacy event so the existing
-                            # MCP server manager can restart via its own path.
-                            await flow_bus.async_emit(
-                                "mcp_server_reload", {"config": ctx["new"]},
-                            )
+                        await mcp_manager_obj.apply_config(mcp_cfg=ctx["new"])
                     except Exception as exc:
                         logger.warning("mcp hot-reload failed: %s", exc)
 
                 async def _reload_mcp_servers(ctx):
                     try:
-                        apply = getattr(mcp_manager_obj, "apply_config", None)
-                        if apply is not None:
-                            await apply(servers=ctx["new"])
-                        else:
-                            await flow_bus.async_emit(
-                                "mcp_server_reload", {"servers": ctx["new"]},
-                            )
+                        await mcp_manager_obj.apply_config(servers=ctx["new"])
                     except Exception as exc:
                         logger.warning("mcp_servers hot-reload failed: %s", exc)
 
