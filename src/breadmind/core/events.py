@@ -99,6 +99,7 @@ class EventType(str, Enum):
     MCP_SERVER_ERROR = "mcp_server_error"
     MCP_TOOLS_UPDATED = "mcp_tools_updated"
     APPROVAL_REQUESTED = "approval_requested"
+    SETTINGS_CHANGED = "settings_changed"
     PROGRESS = "progress"
 
 
