@@ -66,11 +66,13 @@ def build_settings_tools(
 
     @tool(
         description=(
-            "Overwrite a BreadMind runtime setting. `value` is a JSON-encoded "
-            "string: '\"friendly\"', '{\"default_provider\":\"gemini\"}', "
-            "'[1,2,3]', etc. Triggers hot reload when the setting's owner "
-            "subscribes. Returns 'OK ...' on success or 'ERROR: ...' otherwise."
+            "Overwrite a BreadMind runtime setting. `value` MUST be valid JSON, "
+            "including scalar strings — use '\"friendly\"' not 'friendly'. "
+            "Examples: '\"friendly\"', '{\"default_provider\":\"gemini\"}', '[1,2,3]'. "
+            "Triggers hot reload when the setting's owner subscribes. "
+            "Returns 'OK ...' on success or 'ERROR: ...' otherwise."
         ),
+        concurrency_safe=False,
     )
     async def breadmind_set_setting(key: str, value: str) -> str:
         parsed, err = _parse_json(value, "value")
@@ -82,9 +84,10 @@ def build_settings_tools(
     @tool(
         description=(
             "Append an item to a list-valued setting (e.g. mcp_servers, "
-            "skill_markets, safety_blacklist). `item` is a JSON object or "
-            "scalar. Returns 'OK ...' or 'ERROR: ...'."
+            "skill_markets, safety_blacklist). `item` MUST be valid JSON — "
+            "wrap scalar strings in double quotes. Returns 'OK ...' or 'ERROR: ...'."
         ),
+        concurrency_safe=False,
     )
     async def breadmind_append_setting(key: str, item: str) -> str:
         parsed, err = _parse_json(item, "item")
@@ -96,10 +99,11 @@ def build_settings_tools(
     @tool(
         description=(
             "Update a single item inside a list-valued setting by matching "
-            "one field. `patch` is a JSON object merged into the matched item. "
-            "Example: update_setting_item('mcp_servers', 'name', 'github', "
-            "'{\"enabled\":false}')."
+            "one field. `patch` is a JSON object merged into the matched item "
+            "(must be valid JSON). Example: update_setting_item('mcp_servers', "
+            "'name', 'github', '{\"enabled\":false}')."
         ),
+        concurrency_safe=False,
     )
     async def breadmind_update_setting_item(
         key: str, match_field: str, match_value: str, patch: str
@@ -121,6 +125,7 @@ def build_settings_tools(
             "Delete a single item from a list-valued setting by matching one "
             "field. Example: delete_setting_item('mcp_servers','name','github')."
         ),
+        concurrency_safe=False,
     )
     async def breadmind_delete_setting_item(
         key: str, match_field: str, match_value: str
@@ -140,6 +145,7 @@ def build_settings_tools(
             "logged. Writes that target sensitive keys may require user "
             "approval - in that case the return starts with 'PENDING:'."
         ),
+        concurrency_safe=False,
     )
     async def breadmind_set_credential(
         key: str, value: str, description: str = ""
@@ -151,6 +157,7 @@ def build_settings_tools(
 
     @tool(
         description="Delete a stored credential by its full key.",
+        concurrency_safe=False,
     )
     async def breadmind_delete_credential(key: str) -> str:
         result = await service.delete_credential(key, actor=actor)
