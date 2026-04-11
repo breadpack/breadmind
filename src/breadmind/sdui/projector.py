@@ -123,15 +123,20 @@ def _wrap_with_shell(spec: UISpec, *, active_view: str) -> UISpec:
     content = Component(
         type="stack",
         id="page-content",
-        props={"gap": "md"},
+        props={"gap": "md", "variant": "content"},
         children=inner_root.children,
     )
 
-    # Wrap in a new outer page that contains nav + content.
+    # Wrap in a new outer page that contains nav + content. The "shell"
+    # variant tells the renderer to switch to the sidebar layout (or the
+    # mobile top-nav layout below 900px wide).
     wrapped = Component(
         type="page",
         id=f"shell-{inner_root.id}",
-        props={"title": inner_root.props.get("title", "BreadMind")},
+        props={
+            "title": inner_root.props.get("title", "BreadMind"),
+            "variant": "shell",
+        },
         children=[nav_bar, content],
     )
 

@@ -1,66 +1,295 @@
 :root {
   --bg: #0f172a;
   --bg-2: #1e293b;
+  --bg-3: #233047;
   --border: #334155;
   --fg: #e2e8f0;
   --fg-muted: #94a3b8;
   --accent: #3b82f6;
+  --accent-2: #6366f1;
   --success: #10b981;
   --danger: #ef4444;
   --warning: #f59e0b;
   --radius-sm: 6px;
   --radius-md: 10px;
+  --radius-lg: 14px;
   --gap-sm: 8px;
   --gap-md: 16px;
   --gap-lg: 24px;
+  --sidebar-w: 220px;
+  --header-h: 56px;
 }
 * { box-sizing: border-box; }
+html, body { height: 100%; }
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Pretendard", "Apple SD Gothic Neo", sans-serif;
   background: var(--bg);
   color: var(--fg);
   min-height: 100vh;
+  font-size: 14px;
+  line-height: 1.5;
 }
-.sdui-page { padding: var(--gap-lg); max-width: 1200px; margin: 0 auto; }
+
+/* ========== Shell layout ========== */
+/* The outermost wrapping page produced by `_wrap_with_shell` uses
+   variant="shell". On desktop it becomes a sidebar + content grid; on
+   mobile it falls back to a stacked top-nav + content. */
+.sdui-page {
+  padding: var(--gap-lg);
+  max-width: 1200px;
+  margin: 0 auto;
+}
+.sdui-page--shell {
+  padding: 0;
+  max-width: none;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Sidebar / nav */
+/* Mobile default: horizontal scrollable strip so 8 buttons stay on one row. */
+.sdui-stack--nav {
+  flex-direction: row;
+  flex-wrap: nowrap;
+  gap: 6px;
+  padding: 10px 14px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+.sdui-stack--nav .sdui-button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+/* Content region for the inner view body */
+.sdui-stack--content {
+  padding: var(--gap-lg);
+  max-width: 1200px;
+  width: 100%;
+  margin: 0 auto;
+  flex: 1 1 auto;
+}
+
+/* Desktop: sidebar layout (>= 900px) */
+@media (min-width: 900px) {
+  .sdui-page--shell {
+    display: grid;
+    grid-template-columns: var(--sidebar-w) 1fr;
+    grid-template-rows: 1fr;
+  }
+  .sdui-stack--nav {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    width: var(--sidebar-w);
+    height: 100vh;
+    padding: 18px 14px;
+    gap: 6px;
+    border-right: 1px solid var(--border);
+    border-bottom: none;
+    overflow-y: auto;
+  }
+  .sdui-stack--nav .sdui-button {
+    width: 100%;
+    text-align: left;
+    flex: 0 0 auto;
+  }
+  .sdui-stack--nav::before {
+    content: "BreadMind";
+    display: block;
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--fg);
+    padding: 4px 8px 14px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 8px;
+  }
+  .sdui-stack--content {
+    padding: var(--gap-lg) 36px;
+    max-width: 1100px;
+    width: auto;
+  }
+}
+
+/* ========== Stack ========== */
+/* Base stack must come BEFORE the nav variant override below the shell
+   layout block. Specificity is equal so order decides which wins. */
 .sdui-stack { display: flex; flex-direction: column; }
 .sdui-stack--sm { gap: var(--gap-sm); }
 .sdui-stack--md { gap: var(--gap-md); }
 .sdui-stack--lg { gap: var(--gap-lg); }
-.sdui-heading { margin: 0; }
-.sdui-text { margin: 0; }
+
+/* Re-apply the nav variant after the base stack so it wins. */
+.sdui-stack.sdui-stack--nav {
+  flex-direction: row;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+@media (min-width: 900px) {
+  .sdui-stack.sdui-stack--nav {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    overflow-x: visible;
+    overflow-y: auto;
+  }
+}
+
+/* ========== Typography ========== */
+.sdui-heading { margin: 0; font-weight: 600; }
+h1.sdui-heading { font-size: 28px; }
+h2.sdui-heading { font-size: 22px; }
+h3.sdui-heading { font-size: 18px; }
+h4.sdui-heading { font-size: 15px; }
+.sdui-text { margin: 0; color: var(--fg); }
+.sdui-text:empty { display: none; }
+
+/* ========== Badges ========== */
 .sdui-badge {
-  display: inline-block; padding: 2px 8px; border-radius: 999px;
-  font-size: 12px; background: var(--bg-2); border: 1px solid var(--border);
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  color: var(--fg-muted);
+  letter-spacing: 0.02em;
 }
 .sdui-badge--success { background: var(--success); color: #fff; border-color: transparent; }
 .sdui-badge--danger { background: var(--danger); color: #fff; border-color: transparent; }
-.sdui-badge--warning { background: var(--warning); color: #000; border-color: transparent; }
+.sdui-badge--warning { background: var(--warning); color: #1a1a1a; border-color: transparent; }
 .sdui-badge--info { background: var(--accent); color: #fff; border-color: transparent; }
+
+/* ========== Buttons ========== */
 .sdui-button {
-  background: var(--accent); color: #fff; border: none;
-  padding: 8px 14px; border-radius: var(--radius-sm); cursor: pointer;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
   font-size: 14px;
+  font-family: inherit;
+  font-weight: 500;
+  transition: filter 0.12s ease, background 0.12s ease;
 }
-.sdui-button:hover { filter: brightness(1.1); }
-.sdui-button--ghost { background: transparent; border: 1px solid var(--border); color: var(--fg); }
+.sdui-button:hover { filter: brightness(1.12); }
+.sdui-button:active { filter: brightness(0.92); }
+.sdui-button--ghost {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg);
+}
+.sdui-button--ghost:hover {
+  background: var(--bg-3);
+}
+
+/* ========== Forms ========== */
 .sdui-field { display: flex; flex-direction: column; gap: 4px; }
-.sdui-field input, .sdui-field textarea {
-  background: var(--bg-2); color: var(--fg); border: 1px solid var(--border);
-  padding: 8px 12px; border-radius: var(--radius-sm); font-size: 14px;
+.sdui-field > span { font-size: 12px; color: var(--fg-muted); }
+.sdui-field input,
+.sdui-field textarea,
+.sdui-field select {
+  background: var(--bg-2);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
   font-family: inherit;
 }
+.sdui-field input:focus,
+.sdui-field textarea:focus,
+.sdui-field select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+.sdui-form { display: flex; flex-direction: column; gap: 10px; }
+
+/* ========== Tabs ========== */
+.sdui-tabs { display: flex; flex-direction: column; gap: var(--gap-md); }
+.sdui-tabs__bar {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0;
+}
+.sdui-tab-pill {
+  background: transparent;
+  color: var(--fg-muted);
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 10px 16px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: -1px;
+}
+.sdui-tab-pill:hover { color: var(--fg); }
+.sdui-tab-pill--active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.sdui-tab-panel { padding-top: var(--gap-md); }
+
+/* ========== Lists & cards ========== */
+.sdui-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  background: var(--bg-2);
+}
+
+/* ========== KV ========== */
+.sdui-kv dt { color: var(--fg-muted); font-size: 13px; }
+.sdui-kv dd { color: var(--fg); margin: 0; font-size: 13px; }
+
+/* ========== Step / DAG / Flow ========== */
 .sdui-step-card {
-  border: 1px solid var(--border); border-radius: var(--radius-md); padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px;
   background: var(--bg-2);
 }
 .sdui-step-card__title { font-weight: 600; margin-bottom: 4px; }
 .sdui-step-card__meta { font-size: 12px; color: var(--fg-muted); }
 .sdui-dag-view {
-  border: 1px solid var(--border); border-radius: var(--radius-md);
-  padding: 16px; background: var(--bg-2); min-height: 160px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  background: var(--bg-2);
+  min-height: 160px;
 }
+
+/* ========== Tables ========== */
+.sdui-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.sdui-table th, .sdui-table td {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.sdui-table th { color: var(--fg-muted); font-weight: 500; background: var(--bg-2); }
+.sdui-table tr:hover td { background: rgba(255, 255, 255, 0.02); }
+
+/* ========== Misc ========== */
+.sdui-divider { border: 0; border-top: 1px solid var(--border); margin: 4px 0; }
 .sdui-unknown {
-  color: var(--danger); padding: 8px;
-  border: 1px dashed var(--danger); border-radius: var(--radius-sm);
+  color: var(--danger);
+  padding: 8px;
+  border: 1px dashed var(--danger);
+  border-radius: var(--radius-sm);
 }
