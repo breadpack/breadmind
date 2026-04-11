@@ -103,7 +103,7 @@ async def test_safe_list_vault_entries_extracts_id_and_stored_at(test_db):
 
 
 async def test_safe_list_vault_entries_has_metadata_flag(test_db):
-    """_safe_list_vault_entries sets has_metadata=True only when metadata key exists."""
+    """_safe_list_vault_entries includes full metadata dict (None when absent)."""
 
     class DB:
         async def list_settings_by_prefix(self, prefix):
@@ -118,8 +118,8 @@ async def test_safe_list_vault_entries_has_metadata_flag(test_db):
 
     result = await settings_view._safe_list_vault_entries(DB())
     by_id = {e["id"]: e for e in result}
-    assert by_id["no_meta"]["has_metadata"] is False
-    assert by_id["with_meta"]["has_metadata"] is True
+    assert by_id["no_meta"]["metadata"] is None
+    assert by_id["with_meta"]["metadata"] == {"k": "v"}
 
 
 async def test_safe_list_vault_entries_returns_none_on_exception(test_db):

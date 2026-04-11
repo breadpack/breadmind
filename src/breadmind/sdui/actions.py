@@ -487,7 +487,19 @@ class ActionHandler:
         if len(value) > _MAX_VAULT_VALUE_LEN:
             return {"ok": False, "error": f"value exceeds maximum size of {_MAX_VAULT_VALUE_LEN} bytes"}
 
-        metadata = action.get("metadata") if "metadata" in action else values.get("metadata")
+        # action.metadata takes precedence; fall back to values.metadata; then description field.
+        if "metadata" in action:
+            metadata = action.get("metadata")
+        elif "metadata" in values:
+            metadata = values.get("metadata")
+        else:
+            # Build metadata from the optional description field in the form values.
+            description = values.get("description")
+            if isinstance(description, str) and description.strip():
+                metadata = {"description": description.strip()}
+            else:
+                metadata = None
+
         if metadata is not None and not isinstance(metadata, dict):
             return {"ok": False, "error": "metadata must be a dict if provided"}
 

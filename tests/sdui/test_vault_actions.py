@@ -406,3 +406,90 @@ async def test_unknown_action_kind_returns_error(bus):
     )
     assert result["ok"] is False
     assert "unknown" in result["error"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Phase 10: description field in values wraps into metadata
+# ---------------------------------------------------------------------------
+
+async def test_credential_store_description_in_values_stored_as_metadata(bus):
+    """credential_store with 'description' in form values stores it as metadata dict."""
+    vault = FakeVault()
+    handler = make_handler(bus, vault=vault)
+    result = await handler.handle(
+        {
+            "kind": "credential_store",
+            "values": {
+                "credential_id": "ssh:prod",
+                "value": "s3cr3t",
+                "description": "Prod SSH key",
+            },
+        },
+        user_id="alice",
+    )
+    assert result["ok"] is True
+    stored_metadata = vault._store["ssh:prod"]["metadata"]
+    assert isinstance(stored_metadata, dict)
+    assert stored_metadata.get("description") == "Prod SSH key"
+
+
+async def test_credential_store_empty_description_not_stored_as_metadata(bus):
+    """credential_store with empty 'description' in values does not create metadata."""
+    vault = FakeVault()
+    handler = make_handler(bus, vault=vault)
+    result = await handler.handle(
+        {
+            "kind": "credential_store",
+            "values": {
+                "credential_id": "ssh:prod",
+                "value": "s3cr3t",
+                "description": "",
+            },
+        },
+        user_id="alice",
+    )
+    assert result["ok"] is True
+    stored_metadata = vault._store["ssh:prod"]["metadata"]
+    assert stored_metadata is None
+
+
+async def test_credential_store_explicit_metadata_takes_precedence_over_description(bus):
+    """When action.metadata is provided, it takes precedence over description in values."""
+    vault = FakeVault()
+    handler = make_handler(bus, vault=vault)
+    explicit_meta = {"custom": "data", "description": "from metadata"}
+    result = await handler.handle(
+        {
+            "kind": "credential_store",
+            "credential_id": "ssh:prod",
+            "value": "s3cr3t",
+            "metadata": explicit_meta,
+            "values": {
+                "description": "this should be ignored",
+            },
+        },
+        user_id="alice",
+    )
+    assert result["ok"] is True
+    stored_metadata = vault._store["ssh:prod"]["metadata"]
+    assert stored_metadata == explicit_meta
+
+
+async def test_credential_store_description_whitespace_only_not_stored(bus):
+    """credential_store with whitespace-only description does not create metadata."""
+    vault = FakeVault()
+    handler = make_handler(bus, vault=vault)
+    result = await handler.handle(
+        {
+            "kind": "credential_store",
+            "values": {
+                "credential_id": "ssh:prod",
+                "value": "s3cr3t",
+                "description": "   ",
+            },
+        },
+        user_id="alice",
+    )
+    assert result["ok"] is True
+    stored_metadata = vault._store["ssh:prod"]["metadata"]
+    assert stored_metadata is None
