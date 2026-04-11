@@ -57,6 +57,79 @@ _EMBEDDING_PROVIDER_OPTIONS = [
     {"value": "off", "label": "비활성화"},
 ]
 
+# ── Phase 3 defaults ───────────────────────────────────────────────────────
+
+_MEMORY_GC_DEFAULTS: dict[str, Any] = {
+    "interval_seconds": 3600,
+    "decay_threshold": 0.1,
+    "max_cached_notes": 500,
+    "kg_max_age_days": 90,
+    "env_refresh_interval": 6,
+}
+
+_SYSTEM_TIMEOUTS_DEFAULTS: dict[str, Any] = {
+    "tool_call": 60,
+    "llm_api": 120,
+    "ssh_command": 60,
+    "health_check": 10,
+    "pypi_check": 30,
+    "http_default": 30,
+    "skill_discovery": 60,
+}
+
+_RETRY_CONFIG_DEFAULTS: dict[str, Any] = {
+    "max_retries": 3,
+    "llm_max_retries": 3,
+    "gateway_max_retries": 3,
+    "base_backoff": 5,
+    "max_backoff": 60,
+    "health_check_interval": 30,
+}
+
+_LIMITS_CONFIG_DEFAULTS: dict[str, Any] = {
+    "max_tools": 50,
+    "max_context_tokens": 100000,
+    "max_per_domain_skills": 10,
+    "audit_log_recent": 100,
+    "embedding_cache_size": 1000,
+    "top_roles_limit": 10,
+    "smart_retriever_token_budget": 4000,
+    "smart_retriever_limit": 10,
+    "low_performance_threshold": 0.5,
+}
+
+_POLLING_CONFIG_DEFAULTS: dict[str, Any] = {
+    "signal_interval": 60,
+    "gmail_interval": 300,
+    "update_check_interval": 86400,
+    "data_flush_interval": 60,
+    "auto_cleanup_interval": 3600,
+}
+
+_AGENT_TIMEOUTS_DEFAULTS: dict[str, Any] = {
+    "tool_timeout": 60,
+    "chat_timeout": 300,
+    "max_turns": 20,
+}
+
+_LOGGING_CONFIG_DEFAULTS: dict[str, Any] = {
+    "level": "INFO",
+    "format": "text",
+}
+
+_LOG_LEVEL_OPTIONS = [
+    {"value": "DEBUG", "label": "DEBUG"},
+    {"value": "INFO", "label": "INFO"},
+    {"value": "WARNING", "label": "WARNING"},
+    {"value": "ERROR", "label": "ERROR"},
+    {"value": "CRITICAL", "label": "CRITICAL"},
+]
+
+_LOG_FORMAT_OPTIONS = [
+    {"value": "json", "label": "JSON"},
+    {"value": "text", "label": "텍스트"},
+]
+
 
 async def build(db: Any, *, settings_store: Any = None, **_kwargs: Any) -> UISpec:
     # Phase 1 data
@@ -80,6 +153,16 @@ async def build(db: Any, *, settings_store: Any = None, **_kwargs: Any) -> UISpe
     monitoring_config = await _safe_get(settings_store, "monitoring_config", {}) or {}
     scheduler_cron = await _safe_get(settings_store, "scheduler_cron", []) or []
 
+    # Phase 3 data
+    memory_gc_config = await _safe_get(settings_store, "memory_gc_config", {}) or {}
+    system_timeouts = await _safe_get(settings_store, "system_timeouts", {}) or {}
+    retry_config = await _safe_get(settings_store, "retry_config", {}) or {}
+    limits_config = await _safe_get(settings_store, "limits_config", {}) or {}
+    polling_config = await _safe_get(settings_store, "polling_config", {}) or {}
+    agent_timeouts = await _safe_get(settings_store, "agent_timeouts", {}) or {}
+    logging_config = await _safe_get(settings_store, "logging_config", {}) or {}
+    vault_keys = await _safe_list_prefix(db, "vault:")
+
     return UISpec(
         schema_version=1,
         root=Component(
@@ -98,8 +181,16 @@ async def build(db: Any, *, settings_store: Any = None, **_kwargs: Any) -> UISpe
                         _integrations_tab(mcp_config, mcp_servers, skill_markets),
                         _safety_tab(safety_blacklist, safety_approval, safety_permissions, tool_security),
                         _monitoring_tab(monitoring_config, scheduler_cron),
-                        _placeholder_tab("tab-memory", "메모리", "Phase 3에서 사용 가능."),
-                        _placeholder_tab("tab-advanced", "고급", "Phase 3에서 사용 가능."),
+                        _memory_tab(memory_gc_config),
+                        _advanced_tab(
+                            system_timeouts,
+                            retry_config,
+                            limits_config,
+                            polling_config,
+                            agent_timeouts,
+                            logging_config,
+                            vault_keys,
+                        ),
                     ],
                 ),
             ],
@@ -119,6 +210,21 @@ async def _safe_get(store: Any, key: str, default: Any) -> Any:
     except Exception as exc:  # noqa: BLE001
         logger.debug("settings_view: get_setting(%s) failed: %s", key, exc)
         return default
+
+
+async def _safe_list_prefix(store: Any, prefix: str) -> list[str]:
+    """Return keys from store matching prefix; returns [] on any failure."""
+    if store is None:
+        return []
+    try:
+        lister = getattr(store, "list_settings_by_prefix", None)
+        if lister is None:
+            return []
+        result = await lister(prefix)
+        return result if isinstance(result, list) else []
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("settings_view: list_settings_by_prefix(%s) failed: %s", prefix, exc)
+        return []
 
 
 # ── Tab: Quick Start ───────────────────────────────────────────────────────
@@ -1068,6 +1174,415 @@ def _scheduler_cron_card(scheduler_cron: list) -> Component:
     return Component(
         type="list",
         id="mon-scheduler-cron",
+        props={"variant": "settings-card"},
+        children=children,
+    )
+
+
+# ── Helper: resolve field value from store dict, falling back to defaults ──
+
+def _resolve(store_dict: dict, defaults: dict, key: str) -> Any:
+    """Return store value if present, else the default."""
+    if isinstance(store_dict, dict) and key in store_dict:
+        return store_dict[key]
+    return defaults.get(key)
+
+
+# ── Tab: Memory ────────────────────────────────────────────────────────────
+
+def _memory_tab(memory_gc_config: dict) -> Component:
+    return Component(
+        type="stack",
+        id="tab-memory",
+        props={"label": "메모리", "gap": "md"},
+        children=[
+            Component(type="heading", id="mem-h", props={"value": "메모리", "level": 3}),
+            _memory_gc_card(memory_gc_config),
+        ],
+    )
+
+
+def _memory_gc_card(memory_gc_config: dict) -> Component:
+    def _v(key: str) -> str:
+        return str(_resolve(memory_gc_config, _MEMORY_GC_DEFAULTS, key))
+
+    return Component(
+        type="list",
+        id="mem-gc",
+        props={"variant": "settings-card"},
+        children=[
+            Component(type="heading", id="mem-gc-h", props={"value": "메모리 GC 설정", "level": 4}),
+            Component(type="text", id="mem-gc-d", props={"value": "메모리 가비지 컬렉션 주기 및 임계값을 설정합니다."}),
+            Component(
+                type="form",
+                id="mem-gc-form",
+                props={
+                    "action": {"kind": "settings_write", "key": "memory_gc_config"},
+                    "submit_label": "저장",
+                },
+                children=[
+                    Component(
+                        type="field",
+                        id="mem-gc-interval",
+                        props={
+                            "name": "interval_seconds",
+                            "label": "GC 주기 (초, 60-86400)",
+                            "value": _v("interval_seconds"),
+                            "type": "number",
+                        },
+                    ),
+                    Component(
+                        type="field",
+                        id="mem-gc-decay",
+                        props={
+                            "name": "decay_threshold",
+                            "label": "감쇠 임계값 (0.01-1.0)",
+                            "value": _v("decay_threshold"),
+                            "type": "number",
+                            "step": "0.01",
+                        },
+                    ),
+                    Component(
+                        type="field",
+                        id="mem-gc-notes",
+                        props={
+                            "name": "max_cached_notes",
+                            "label": "최대 캐시 노트 수 (10-10000)",
+                            "value": _v("max_cached_notes"),
+                            "type": "number",
+                        },
+                    ),
+                    Component(
+                        type="field",
+                        id="mem-gc-age",
+                        props={
+                            "name": "kg_max_age_days",
+                            "label": "지식 그래프 최대 보존 기간 (일, 1-365)",
+                            "value": _v("kg_max_age_days"),
+                            "type": "number",
+                        },
+                    ),
+                    Component(
+                        type="field",
+                        id="mem-gc-env-refresh",
+                        props={
+                            "name": "env_refresh_interval",
+                            "label": "환경 갱신 주기 (초, 1-3600)",
+                            "value": _v("env_refresh_interval"),
+                            "type": "number",
+                        },
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
+# ── Tab: Advanced ──────────────────────────────────────────────────────────
+
+def _advanced_tab(
+    system_timeouts: dict,
+    retry_config: dict,
+    limits_config: dict,
+    polling_config: dict,
+    agent_timeouts: dict,
+    logging_config: dict,
+    vault_keys: list[str],
+) -> Component:
+    return Component(
+        type="stack",
+        id="tab-advanced",
+        props={"label": "고급", "gap": "md"},
+        children=[
+            Component(type="heading", id="adv-h", props={"value": "고급", "level": 3}),
+            _system_timeouts_card(system_timeouts),
+            _retry_card(retry_config),
+            _limits_card(limits_config),
+            _polling_card(polling_config),
+            _agent_timeouts_card(agent_timeouts),
+            _logging_card(logging_config),
+            _vault_card(vault_keys),
+        ],
+    )
+
+
+def _system_timeouts_card(system_timeouts: dict) -> Component:
+    def _v(key: str) -> str:
+        return str(_resolve(system_timeouts, _SYSTEM_TIMEOUTS_DEFAULTS, key))
+
+    fields = [
+        ("tool_call", "도구 호출 타임아웃 (초, 1-3600)"),
+        ("llm_api", "LLM API 타임아웃 (초, 1-3600)"),
+        ("ssh_command", "SSH 명령 타임아웃 (초, 1-3600)"),
+        ("health_check", "헬스 체크 타임아웃 (초, 1-3600)"),
+        ("pypi_check", "PyPI 확인 타임아웃 (초, 1-3600)"),
+        ("http_default", "HTTP 기본 타임아웃 (초, 1-3600)"),
+        ("skill_discovery", "스킬 탐색 타임아웃 (초, 1-3600)"),
+    ]
+    return Component(
+        type="list",
+        id="adv-system-timeouts",
+        props={"variant": "settings-card"},
+        children=[
+            Component(type="heading", id="adv-st-h", props={"value": "시스템 타임아웃", "level": 4}),
+            Component(type="text", id="adv-st-d", props={"value": "각 작업 유형별 타임아웃을 설정합니다."}),
+            Component(
+                type="form",
+                id="adv-st-form",
+                props={
+                    "action": {"kind": "settings_write", "key": "system_timeouts"},
+                    "submit_label": "저장",
+                },
+                children=[
+                    Component(
+                        type="field",
+                        id=f"adv-st-{name}",
+                        props={"name": name, "label": label, "value": _v(name), "type": "number"},
+                    )
+                    for name, label in fields
+                ],
+            ),
+        ],
+    )
+
+
+def _retry_card(retry_config: dict) -> Component:
+    def _v(key: str) -> str:
+        return str(_resolve(retry_config, _RETRY_CONFIG_DEFAULTS, key))
+
+    fields = [
+        ("max_retries", "최대 재시도 횟수 (1-50)"),
+        ("llm_max_retries", "LLM 최대 재시도 횟수 (1-50)"),
+        ("gateway_max_retries", "게이트웨이 최대 재시도 횟수 (1-50)"),
+        ("base_backoff", "기본 백오프 (초, 1-600)"),
+        ("max_backoff", "최대 백오프 (초, 1-600)"),
+        ("health_check_interval", "헬스 체크 간격 (초, 5-3600)"),
+    ]
+    return Component(
+        type="list",
+        id="adv-retry",
+        props={"variant": "settings-card"},
+        children=[
+            Component(type="heading", id="adv-retry-h", props={"value": "재시도 정책", "level": 4}),
+            Component(type="text", id="adv-retry-d", props={"value": "요청 실패 시 재시도 동작을 설정합니다."}),
+            Component(
+                type="form",
+                id="adv-retry-form",
+                props={
+                    "action": {"kind": "settings_write", "key": "retry_config"},
+                    "submit_label": "저장",
+                },
+                children=[
+                    Component(
+                        type="field",
+                        id=f"adv-retry-{name}",
+                        props={"name": name, "label": label, "value": _v(name), "type": "number"},
+                    )
+                    for name, label in fields
+                ],
+            ),
+        ],
+    )
+
+
+def _limits_card(limits_config: dict) -> Component:
+    def _v(key: str) -> str:
+        return str(_resolve(limits_config, _LIMITS_CONFIG_DEFAULTS, key))
+
+    int_fields = [
+        ("max_tools", "최대 도구 수 (1-200)"),
+        ("max_context_tokens", "최대 컨텍스트 토큰 (100-1000000)"),
+        ("max_per_domain_skills", "도메인별 최대 스킬 수 (1-50)"),
+        ("audit_log_recent", "감사 로그 보존 수 (1-10000)"),
+        ("embedding_cache_size", "임베딩 캐시 크기 (10-100000)"),
+        ("top_roles_limit", "상위 역할 제한 (1-100)"),
+        ("smart_retriever_token_budget", "스마트 검색 토큰 예산 (100-1000000)"),
+        ("smart_retriever_limit", "스마트 검색 결과 제한 (1-100)"),
+    ]
+    children: list[Component] = [
+        Component(type="heading", id="adv-limits-h", props={"value": "리소스 제한", "level": 4}),
+        Component(type="text", id="adv-limits-d", props={"value": "시스템 리소스 및 작업 한도를 설정합니다."}),
+    ]
+    field_components: list[Component] = [
+        Component(
+            type="field",
+            id=f"adv-limits-{name}",
+            props={"name": name, "label": label, "value": _v(name), "type": "number"},
+        )
+        for name, label in int_fields
+    ]
+    field_components.append(
+        Component(
+            type="field",
+            id="adv-limits-low-perf",
+            props={
+                "name": "low_performance_threshold",
+                "label": "저성능 임계값 (0.0-1.0)",
+                "value": _v("low_performance_threshold"),
+                "type": "number",
+                "step": "0.01",
+            },
+        )
+    )
+    children.append(
+        Component(
+            type="form",
+            id="adv-limits-form",
+            props={
+                "action": {"kind": "settings_write", "key": "limits_config"},
+                "submit_label": "저장",
+            },
+            children=field_components,
+        )
+    )
+    return Component(
+        type="list",
+        id="adv-limits",
+        props={"variant": "settings-card"},
+        children=children,
+    )
+
+
+def _polling_card(polling_config: dict) -> Component:
+    def _v(key: str) -> str:
+        return str(_resolve(polling_config, _POLLING_CONFIG_DEFAULTS, key))
+
+    fields = [
+        ("signal_interval", "Signal 폴링 간격 (초, 1-86400)"),
+        ("gmail_interval", "Gmail 폴링 간격 (초, 1-86400)"),
+        ("update_check_interval", "업데이트 확인 간격 (초, 1-86400)"),
+        ("data_flush_interval", "데이터 플러시 간격 (초, 1-86400)"),
+        ("auto_cleanup_interval", "자동 정리 간격 (초, 1-86400)"),
+    ]
+    return Component(
+        type="list",
+        id="adv-polling",
+        props={"variant": "settings-card"},
+        children=[
+            Component(type="heading", id="adv-polling-h", props={"value": "폴링 간격", "level": 4}),
+            Component(type="text", id="adv-polling-d", props={"value": "각 서비스의 폴링 주기를 설정합니다."}),
+            Component(
+                type="form",
+                id="adv-polling-form",
+                props={
+                    "action": {"kind": "settings_write", "key": "polling_config"},
+                    "submit_label": "저장",
+                },
+                children=[
+                    Component(
+                        type="field",
+                        id=f"adv-polling-{name}",
+                        props={"name": name, "label": label, "value": _v(name), "type": "number"},
+                    )
+                    for name, label in fields
+                ],
+            ),
+        ],
+    )
+
+
+def _agent_timeouts_card(agent_timeouts: dict) -> Component:
+    def _v(key: str) -> str:
+        return str(_resolve(agent_timeouts, _AGENT_TIMEOUTS_DEFAULTS, key))
+
+    fields = [
+        ("tool_timeout", "도구 타임아웃 (초, 1-3600)"),
+        ("chat_timeout", "채팅 타임아웃 (초, 1-3600)"),
+        ("max_turns", "최대 턴 수 (1-100)"),
+    ]
+    return Component(
+        type="list",
+        id="adv-agent-timeouts",
+        props={"variant": "settings-card"},
+        children=[
+            Component(type="heading", id="adv-at-h", props={"value": "에이전트 타임아웃", "level": 4}),
+            Component(type="text", id="adv-at-d", props={"value": "에이전트 작업별 타임아웃 및 턴 제한을 설정합니다."}),
+            Component(
+                type="form",
+                id="adv-at-form",
+                props={
+                    "action": {"kind": "settings_write", "key": "agent_timeouts"},
+                    "submit_label": "저장",
+                },
+                children=[
+                    Component(
+                        type="field",
+                        id=f"adv-at-{name}",
+                        props={"name": name, "label": label, "value": _v(name), "type": "number"},
+                    )
+                    for name, label in fields
+                ],
+            ),
+        ],
+    )
+
+
+def _logging_card(logging_config: dict) -> Component:
+    def _v(key: str) -> str:
+        return str(_resolve(logging_config, _LOGGING_CONFIG_DEFAULTS, key))
+
+    return Component(
+        type="list",
+        id="adv-logging",
+        props={"variant": "settings-card"},
+        children=[
+            Component(type="heading", id="adv-log-h", props={"value": "로깅", "level": 4}),
+            Component(type="text", id="adv-log-d", props={"value": "로그 레벨과 출력 형식을 설정합니다."}),
+            Component(
+                type="form",
+                id="adv-log-form",
+                props={
+                    "action": {"kind": "settings_write", "key": "logging_config"},
+                    "submit_label": "저장",
+                },
+                children=[
+                    Component(
+                        type="select",
+                        id="adv-log-level",
+                        props={
+                            "name": "level",
+                            "label": "로그 레벨",
+                            "value": _v("level"),
+                            "options": _LOG_LEVEL_OPTIONS,
+                        },
+                    ),
+                    Component(
+                        type="select",
+                        id="adv-log-format",
+                        props={
+                            "name": "format",
+                            "label": "로그 형식",
+                            "value": _v("format"),
+                            "options": _LOG_FORMAT_OPTIONS,
+                        },
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
+def _vault_card(vault_keys: list[str]) -> Component:
+    children: list[Component] = [
+        Component(type="heading", id="adv-vault-h", props={"value": "자격증명 금고", "level": 4}),
+        Component(type="text", id="adv-vault-d", props={"value": "저장된 자격증명 목록입니다. (읽기 전용)"}),
+    ]
+    if not vault_keys:
+        children.append(
+            Component(
+                type="text",
+                id="adv-vault-empty",
+                props={"value": "자격증명 금고 목록을 불러올 수 없습니다."},
+            )
+        )
+    else:
+        kv_items = [{"key": k, "value": "저장됨"} for k in vault_keys]
+        children.append(
+            Component(type="kv", id="adv-vault-kv", props={"items": kv_items})
+        )
+    return Component(
+        type="list",
+        id="adv-vault",
         props={"variant": "settings-card"},
         children=children,
     )
