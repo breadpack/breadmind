@@ -131,13 +131,59 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
         )
         app.state.flow_event_bus = flow_bus
         app.state.uispec_projector = projector
-        app.state.sdui_action_handler = ActionHandler(
+
+        # Shared SettingsService so SDUI (ActionHandler) and agent-tool
+        # (ToolRegistry) write paths route through the same reload registry.
+        from breadmind.settings.reload_registry import SettingsReloadRegistry
+        from breadmind.settings.service import SettingsService
+
+        reload_registry = SettingsReloadRegistry()
+
+        # Placeholder audit sink; back-filled with ActionHandler._record_audit
+        # immediately after the handler is constructed below.
+        async def _placeholder_audit(**kwargs):
+            return None
+
+        settings_service = SettingsService(
+            store=settings_store,
+            vault=credential_vault,
+            audit_sink=_placeholder_audit,
+            reload_registry=reload_registry,
+            event_bus=flow_bus,
+        )
+        app.state.settings_reload_registry = reload_registry
+        app.state.settings_service = settings_service
+
+        action_handler = ActionHandler(
             bus=flow_bus,
             message_handler=message_handler,
             working_memory=working_memory,
             settings_store=settings_store,
             credential_vault=credential_vault,
+            event_bus=flow_bus,
+            settings_service=settings_service,
         )
+        # Back-fill the real audit sink now that ActionHandler exists.
+        settings_service._audit_sink = action_handler._record_audit
+        app.state.sdui_action_handler = action_handler
+
+        # Register the eight agent settings tools onto the CoreAgent's tool
+        # registry so LLM-driven write paths also hit the shared service.
+        # Guarded because some deployments (tests, minimal runtimes) may not
+        # have a tool registry attached to ``app_state``.
+        tool_registry = getattr(app_state, "_tool_registry", None)
+        if tool_registry is not None:
+            from breadmind.tools.settings_tool_registration import (
+                register_settings_tools,
+            )
+            try:
+                register_settings_tools(
+                    tool_registry,
+                    service=settings_service,
+                    actor="agent:core",
+                )
+            except Exception as exc:
+                logger.warning("register_settings_tools failed: %s", exc)
         return projector, flow_bus
 
 
