@@ -36,10 +36,14 @@ function Form(c, render, ctx) {
     ev.preventDefault();
     if (c.props.action) {
       ctx.dispatch({ ...c.props.action, values });
-      // Reset form values after submit
-      const reset = {};
-      Object.keys(initial).forEach(k => { reset[k] = ''; });
-      setValues(reset);
+      // Only reset for chat input and other one-shot composer style forms.
+      // Settings forms keep their values so the user can see what was sent
+      // and so a second submit click does not blast empties at the server.
+      if (c.props.reset_on_submit || c.props.action.kind === 'chat_input') {
+        const reset = {};
+        Object.keys(initial).forEach(k => { reset[k] = ''; });
+        setValues(reset);
+      }
     }
   };
 
