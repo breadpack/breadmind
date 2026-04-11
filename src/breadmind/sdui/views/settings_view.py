@@ -182,6 +182,13 @@ async def build(
     logging_config = await _safe_get(settings_store, "logging_config", {}) or {}
     vault_entries = await _safe_list_vault_entries(db)
 
+    # Phase 8: audit log
+    audit_entries: list[dict] = (
+        await _safe_get(settings_store, "sdui_audit_log", []) or []
+    )
+    if not isinstance(audit_entries, list):
+        audit_entries = []
+
     # Phase 4: admin gating — 안전 & 권한 and 고급 tabs are admin-only.
     # If admin_users is empty/missing, NOBODY is admin (closed by default).
     admin_users: list = (
@@ -211,6 +218,7 @@ async def build(
                 agent_timeouts,
                 logging_config,
                 vault_entries,
+                audit_entries=audit_entries,
             )
         )
 
@@ -1703,6 +1711,7 @@ def _advanced_tab(
     agent_timeouts: dict,
     logging_config: dict,
     vault_entries: list[dict] | None,
+    audit_entries: list[dict] | None = None,
 ) -> Component:
     return Component(
         type="stack",
@@ -1710,6 +1719,7 @@ def _advanced_tab(
         props={"label": "고급", "gap": "md"},
         children=[
             Component(type="heading", id="adv-h", props={"value": "고급", "level": 3}),
+            _audit_log_card(audit_entries or []),
             _system_timeouts_card(system_timeouts),
             _retry_card(retry_config),
             _limits_card(limits_config),
@@ -2022,6 +2032,60 @@ def _vault_entry_row(entry: dict, index: int) -> Component:
                 props={"value": f"저장 시각: {stored_at}", "variant": "muted"},
             ),
         ],
+    )
+
+
+def _audit_log_card(audit_entries: list[dict]) -> Component:
+    """Render the settings audit log card (read-only, newest first, up to 30 rows)."""
+    children: list[Component] = [
+        Component(type="heading", id="adv-audit-h", props={"value": "변경 이력", "level": 4}),
+        Component(
+            type="text",
+            id="adv-audit-d",
+            props={"value": "최근 200개의 설정 변경 기록입니다."},
+        ),
+    ]
+
+    visible = list(reversed(audit_entries))[:30]
+
+    if not visible:
+        children.append(
+            Component(
+                type="text",
+                id="adv-audit-empty",
+                props={"value": "기록이 없습니다."},
+            )
+        )
+    else:
+        rows = []
+        for i, entry in enumerate(visible):
+            ts_str = _format_timestamp(entry.get("ts"))
+            user = str(entry.get("user") or "-")
+            action = str(entry.get("action") or "-")
+            key = str(entry.get("key") or "-")
+            summary = str(entry.get("summary") or "-")
+            rows.append(
+                Component(
+                    type="kv",
+                    id=f"adv-audit-row-{i}",
+                    props={
+                        "items": [
+                            {"key": "시각", "value": ts_str},
+                            {"key": "사용자", "value": user},
+                            {"key": "작업", "value": action},
+                            {"key": "키", "value": key},
+                            {"key": "요약", "value": summary},
+                        ]
+                    },
+                )
+            )
+        children.extend(rows)
+
+    return Component(
+        type="list",
+        id="adv-audit",
+        props={"variant": "settings-card"},
+        children=children,
     )
 
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import Any, Awaitable, Callable
 from uuid import UUID
 
@@ -207,6 +208,12 @@ class ActionHandler:
                 logger.warning("settings_write set_setting failed: %s", exc)
                 return {"ok": False, "error": str(exc)}
 
+        await self._record_audit(
+            "settings_write",
+            key,
+            user_id,
+            self._audit_summary_settings_write(key, cleaned),
+        )
         return {
             "ok": True,
             "persisted": True,
@@ -249,6 +256,78 @@ class ActionHandler:
             return False
         admin_users = perms.get("admin_users") or []
         return bool(user_id and user_id in admin_users)
+
+    # ------------------------------------------------------------------
+    # Audit log
+    # ------------------------------------------------------------------
+
+    _AUDIT_KEY = "sdui_audit_log"
+    _AUDIT_MAX = 200
+    _AUDIT_DISPLAY = 30
+
+    async def _record_audit(
+        self,
+        action_kind: str,
+        key: str,
+        user_id: str,
+        summary: str,
+    ) -> None:
+        """Append an entry to the sdui_audit_log capped list.
+
+        Never logs sensitive values. Failures are swallowed so audit errors
+        never propagate to the caller.
+        """
+        if self._settings_store is None:
+            return
+        try:
+            existing = await self._settings_store.get_setting(self._AUDIT_KEY)
+        except Exception:  # noqa: BLE001
+            existing = []
+        if not isinstance(existing, list):
+            existing = []
+
+        entry = {
+            "ts": time.time(),
+            "action": action_kind,
+            "key": key,
+            "user": user_id,
+            "summary": summary[:200],
+        }
+        capped = (existing + [entry])[-self._AUDIT_MAX:]
+
+        try:
+            await self._settings_store.set_setting(self._AUDIT_KEY, capped)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("_record_audit: failed to persist audit log: %s", exc)
+
+    # ------------------------------------------------------------------
+    # Audit summary builders (no sensitive values may appear)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _audit_summary_settings_write(key: str, cleaned: Any) -> str:
+        """Build a safe summary for settings_write."""
+        if key.startswith("apikey:"):
+            name = key[len("apikey:"):]
+            return f"key=apikey:{name} (vault)"
+        if isinstance(cleaned, dict):
+            fields = list(cleaned.keys())
+            return f"{len(fields)} field(s) updated: {', '.join(fields)}"
+        return "1 field(s) updated"
+
+    @staticmethod
+    def _audit_summary_settings_append(key: str, item: Any) -> str:
+        """Build a safe summary for settings_append."""
+        if isinstance(item, dict):
+            name = item.get("name") or item.get("tool") or item.get("user")
+            if name:
+                return f"appended {key} item: {name}"
+        return f"appended {key} item"
+
+    @staticmethod
+    def _audit_summary_settings_update_item(key: str, match_value: str) -> str:
+        """Build a safe summary for settings_update_item."""
+        return f"updated {key} item: {match_value}"
 
     # ------------------------------------------------------------------
     # Allowed keys for settings_append (list/dict-shaped settings only)
@@ -310,10 +389,26 @@ class ActionHandler:
 
         # Delegate to specialised helpers per key type.
         if key == "safety_permissions_admin_users":
-            return await self._append_admin_user(item)
+            result = await self._append_admin_user(item)
+            if result.get("ok"):
+                await self._record_audit(
+                    "settings_append",
+                    key,
+                    user_id,
+                    self._audit_summary_settings_append(key, item),
+                )
+            return result
 
         if key == "safety_blacklist":
-            return await self._append_blacklist_entry(item, validate_value, SettingsValidationError)
+            result = await self._append_blacklist_entry(item, validate_value, SettingsValidationError)
+            if result.get("ok"):
+                await self._record_audit(
+                    "settings_append",
+                    key,
+                    user_id,
+                    self._audit_summary_settings_append(key, item),
+                )
+            return result
 
         # All remaining keys are list-shaped; build candidate and validate.
         try:
@@ -348,6 +443,12 @@ class ActionHandler:
             logger.warning("settings_append set_setting failed: %s", exc)
             return {"ok": False, "error": str(exc)}
 
+        await self._record_audit(
+            "settings_append",
+            key,
+            user_id,
+            self._audit_summary_settings_append(key, item),
+        )
         return {"ok": True, "persisted": True, "refresh_view": "settings_view"}
 
     # ------------------------------------------------------------------
@@ -397,6 +498,12 @@ class ActionHandler:
             return {"ok": False, "error": str(exc)}
 
         logger.info("credential_store: stored credential %s", credential_id)
+        await self._record_audit(
+            "credential_store",
+            f"vault:{credential_id}",
+            user_id,
+            "stored",
+        )
         return {
             "ok": True,
             "persisted": True,
@@ -438,6 +545,12 @@ class ActionHandler:
             return {"ok": False, "error": "credential not found"}
 
         logger.info("credential_delete: deleted credential %s", credential_id)
+        await self._record_audit(
+            "credential_delete",
+            f"vault:{credential_id}",
+            user_id,
+            "deleted",
+        )
         return {
             "ok": True,
             "persisted": True,
@@ -536,6 +649,12 @@ class ActionHandler:
             logger.warning("settings_update_item set_setting failed: %s", exc)
             return {"ok": False, "error": str(exc)}
 
+        await self._record_audit(
+            "settings_update_item",
+            key,
+            user_id,
+            self._audit_summary_settings_update_item(key, match_value),
+        )
         return {"ok": True, "persisted": True, "refresh_view": "settings_view"}
 
     # ------------------------------------------------------------------
