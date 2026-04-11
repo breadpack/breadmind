@@ -322,7 +322,7 @@ class SettingsService:
             key=key,
             persisted=True,
             hot_reloaded=dispatch.all_ok,
-            restart_required=False,
+            restart_required=settings_schema.requires_restart(key),
             reload_errors=dict(dispatch.errors),
             audit_id=audit_id,
         )
@@ -353,7 +353,7 @@ class SettingsService:
             key=key,
             persisted=True,
             hot_reloaded=dispatch.all_ok,
-            restart_required=False,
+            restart_required=settings_schema.requires_restart(key),
             reload_errors=dict(dispatch.errors),
             audit_id=audit_id,
         )
