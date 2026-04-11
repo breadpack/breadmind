@@ -77,8 +77,50 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
         working_memory = getattr(app_state, "_working_memory", None)
         message_handler = getattr(app_state, "_message_handler", None)
 
+        # Optional dependencies for the SDUI views beyond the chat experience.
+        # Each is fetched best-effort against the actual attribute names used
+        # in this codebase (see other routes/*.py for the canonical patterns).
+        # Views always fall back to graceful placeholders when missing.
+        settings_store = (
+            getattr(app_state, "_settings_store", None)
+            or getattr(app_state, "_db", None)  # FileSettingsStore lives on the db helper for now
+        )
+        plugin_manager = getattr(app_state, "_plugin_mgr", None)
+        messenger_router = getattr(app_state, "_message_router", None)
+
+        # Browser engine: try the container slot first, then plugin path.
+        browser_engine = None
+        try:
+            container = getattr(app_state, "_container", None)
+            if container:
+                browser_engine = container.get("browser_engine")
+        except Exception:
+            browser_engine = None
+        if browser_engine is None and plugin_manager is not None:
+            try:
+                for p in getattr(plugin_manager, "_plugins", {}).values():
+                    eng = getattr(p, "_engine", None)
+                    if eng is not None:
+                        browser_engine = eng
+                        break
+            except Exception:
+                browser_engine = None
+
+        try:
+            from breadmind.coding.job_tracker import JobTracker
+            job_tracker = JobTracker.get_instance()
+        except Exception:
+            job_tracker = None
+
         projector = UISpecProjector(
-            db=database, bus=flow_bus, working_memory=working_memory,
+            db=database,
+            bus=flow_bus,
+            working_memory=working_memory,
+            settings_store=settings_store,
+            plugin_manager=plugin_manager,
+            browser_engine=browser_engine,
+            messenger_router=messenger_router,
+            job_tracker=job_tracker,
         )
         app.state.flow_event_bus = flow_bus
         app.state.uispec_projector = projector
