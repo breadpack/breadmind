@@ -135,11 +135,13 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
         # Shared SettingsService so SDUI (ActionHandler) and agent-tool
         # (ToolRegistry) write paths route through the same reload registry.
         from breadmind.settings.approval_queue import PendingApprovalQueue
+        from breadmind.settings.rate_limiter import SlidingWindowRateLimiter
         from breadmind.settings.reload_registry import SettingsReloadRegistry
         from breadmind.settings.service import SettingsService
 
         reload_registry = SettingsReloadRegistry()
         approval_queue = PendingApprovalQueue()
+        rate_limiter = SlidingWindowRateLimiter(window_seconds=60, max_events=20)
 
         # Build the service with a placeholder audit sink, then back-fill the
         # real one from ActionHandler below. Only after back-fill do we
@@ -155,7 +157,9 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
             reload_registry=reload_registry,
             event_bus=flow_bus,
             approval_queue=approval_queue,
+            rate_limiter=rate_limiter,
         )
+        app.state.settings_rate_limiter = rate_limiter
 
         action_handler = ActionHandler(
             bus=flow_bus,

@@ -79,6 +79,7 @@ class SettingsService:
         reload_registry: SettingsReloadRegistry,
         event_bus: EventBus | None = None,
         approval_queue: Any = None,
+        rate_limiter: Any = None,
     ) -> None:
         self._store = store
         self._vault = vault
@@ -86,7 +87,22 @@ class SettingsService:
         self._registry = reload_registry
         self._bus = event_bus
         self._approvals = approval_queue
+        self._rate_limiter = rate_limiter
         self._key_locks: dict[str, asyncio.Lock] = {}
+
+    def _check_rate(self, actor: str, operation: str, key: str) -> SetResult | None:
+        if self._rate_limiter is None:
+            return None
+        if not actor.startswith("agent:"):
+            return None
+        if self._rate_limiter.check(actor):
+            return None
+        return SetResult(
+            ok=False,
+            operation=operation,
+            key=key,
+            error=f"rate limit exceeded for {actor}",
+        )
 
     def _requires_approval(self, key: str, actor: str) -> bool:
         if not actor.startswith("agent:"):
@@ -180,6 +196,9 @@ class SettingsService:
                 key=key,
                 error=f"key '{key}' is not allowed",
             )
+        rl = self._check_rate(actor, "set", key)
+        if rl is not None:
+            return rl
         if self._requires_approval(key, actor):
             async def _run() -> SetResult:
                 return await self._set_internal(
@@ -255,6 +274,9 @@ class SettingsService:
     ) -> SetResult:
         if not settings_schema.is_allowed_key(key):
             return SetResult(ok=False, operation="append", key=key, error=f"key '{key}' is not allowed")
+        rl = self._check_rate(actor, "append", key)
+        if rl is not None:
+            return rl
         if self._requires_approval(key, actor):
             async def _run() -> SetResult:
                 return await self._append_internal(
@@ -335,6 +357,9 @@ class SettingsService:
     ) -> SetResult:
         if not settings_schema.is_allowed_key(key):
             return SetResult(ok=False, operation="update_item", key=key, error=f"key '{key}' is not allowed")
+        rl = self._check_rate(actor, "update_item", key)
+        if rl is not None:
+            return rl
         if self._requires_approval(key, actor):
             async def _run() -> SetResult:
                 return await self._update_item_internal(
@@ -436,6 +461,9 @@ class SettingsService:
     ) -> SetResult:
         if not settings_schema.is_allowed_key(key):
             return SetResult(ok=False, operation="delete_item", key=key, error=f"key '{key}' is not allowed")
+        rl = self._check_rate(actor, "delete_item", key)
+        if rl is not None:
+            return rl
         if self._requires_approval(key, actor):
             async def _run() -> SetResult:
                 return await self._delete_item_internal(
@@ -533,6 +561,9 @@ class SettingsService:
                 key=key,
                 error=f"key '{key}' is not a credential key",
             )
+        rl = self._check_rate(actor, "credential_store", key)
+        if rl is not None:
+            return rl
         if self._requires_approval(key, actor):
             async def _run() -> SetResult:
                 return await self._set_credential_internal(
@@ -614,6 +645,9 @@ class SettingsService:
         dispatch, and SETTINGS_CHANGED events — but plaintext is never
         passed to any of them.
         """
+        rl = self._check_rate(actor, "credential_store", vault_id)
+        if rl is not None:
+            return rl
         if (
             actor.startswith("agent:")
             and self._approvals is not None
@@ -693,6 +727,9 @@ class SettingsService:
         Returns ``ok=False`` with ``error="credential not found"`` when the
         vault reports no such id (matching the legacy SDUI action shape).
         """
+        rl = self._check_rate(actor, "credential_delete", vault_id)
+        if rl is not None:
+            return rl
         if (
             actor.startswith("agent:")
             and self._approvals is not None
@@ -770,6 +807,9 @@ class SettingsService:
                 key=key,
                 error=f"key '{key}' is not a credential key",
             )
+        rl = self._check_rate(actor, "credential_delete", key)
+        if rl is not None:
+            return rl
         if self._requires_approval(key, actor):
             async def _run() -> SetResult:
                 return await self._delete_credential_internal(key, actor=actor)
