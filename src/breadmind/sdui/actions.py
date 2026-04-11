@@ -60,6 +60,8 @@ class ActionHandler:
             return await self._chat_input(action, user_id)
         if kind == "settings_write":
             return await self._settings_write(action, user_id)
+        if kind == "settings_append":
+            return await self._settings_append(action, user_id)
         if kind == "dev_inject_assistant":
             return await self._dev_inject_assistant(action, user_id)
         return {"ok": False, "error": f"unknown action kind: {kind}"}
@@ -196,3 +198,221 @@ class ActionHandler:
             "restart_required": requires_restart(key),
             "refresh_view": "settings_view",
         }
+
+    # ------------------------------------------------------------------
+    # Allowed keys for settings_append (list/dict-shaped settings only)
+    # ------------------------------------------------------------------
+    _APPEND_ALLOWED_KEYS = frozenset(
+        {
+            "mcp_servers",
+            "skill_markets",
+            "safety_approval",
+            "safety_blacklist",
+            "safety_permissions_admin_users",
+            "scheduler_cron",
+        }
+    )
+
+    async def _settings_append(
+        self, action: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
+        """Append a single item to a list- or dict-shaped setting.
+
+        Whitelisted keys only — see ``_APPEND_ALLOWED_KEYS``.
+        The incoming ``values`` payload is a *single item* (not the full list).
+        The handler reads the existing value, merges, re-validates the full
+        candidate via ``validate_value``, then persists.
+        """
+        from breadmind.sdui.settings_schema import (
+            SettingsValidationError,
+            validate_value,
+        )
+
+        key = action.get("key")
+        if key not in self._APPEND_ALLOWED_KEYS:
+            return {"ok": False, "error": f"key not allowed for settings_append: {key}"}
+
+        if self._settings_store is None:
+            return {"ok": False, "error": "settings_store not configured"}
+
+        item = action.get("values")
+
+        # Delegate to specialised helpers per key type.
+        if key == "safety_permissions_admin_users":
+            return await self._append_admin_user(item)
+
+        if key == "safety_blacklist":
+            return await self._append_blacklist_entry(item, validate_value, SettingsValidationError)
+
+        # All remaining keys are list-shaped; build candidate and validate.
+        try:
+            existing = await self._settings_store.get_setting(key)
+        except Exception:
+            existing = None
+
+        existing_list: list = existing if isinstance(existing, list) else []
+
+        if key == "mcp_servers":
+            merged, err = self._merge_mcp_server(existing_list, item)
+        elif key == "skill_markets":
+            merged, err = self._merge_skill_market(existing_list, item)
+        elif key == "safety_approval":
+            merged, err = self._merge_safety_approval(existing_list, item)
+        elif key == "scheduler_cron":
+            merged, err = self._merge_scheduler_cron(existing_list, item)
+        else:
+            return {"ok": False, "error": f"key not allowed for settings_append: {key}"}
+
+        if err is not None:
+            return {"ok": False, "error": err}
+
+        try:
+            cleaned = validate_value(key, merged)
+        except SettingsValidationError as exc:
+            return {"ok": False, "error": str(exc)}
+
+        try:
+            await self._settings_store.set_setting(key, cleaned)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("settings_append set_setting failed: %s", exc)
+            return {"ok": False, "error": str(exc)}
+
+        return {"ok": True, "persisted": True, "refresh_view": "settings_view"}
+
+    # ------------------------------------------------------------------
+    # Per-key merge helpers (return (merged_candidate, error_str|None))
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _merge_mcp_server(
+        existing: list, item: Any
+    ) -> tuple[list | None, str | None]:
+        if not isinstance(item, dict):
+            return None, "values must be an object"
+        name = item.get("name")
+        if not isinstance(name, str) or not name:
+            return None, "mcp_servers item: name must be a non-empty string"
+        if any(s.get("name") == name for s in existing):
+            return None, f"mcp_servers: duplicate name {name!r}"
+        return existing + [item], None
+
+    @staticmethod
+    def _merge_skill_market(
+        existing: list, item: Any
+    ) -> tuple[list | None, str | None]:
+        if not isinstance(item, dict):
+            return None, "values must be an object"
+        name = item.get("name")
+        if not isinstance(name, str) or not name:
+            return None, "skill_markets item: name must be a non-empty string"
+        if any(s.get("name") == name for s in existing):
+            return None, f"skill_markets: duplicate name {name!r}"
+        return existing + [item], None
+
+    @staticmethod
+    def _merge_safety_approval(
+        existing: list, item: Any
+    ) -> tuple[list | None, str | None]:
+        if not isinstance(item, dict):
+            return None, "values must be an object with a 'tool' field"
+        tool = item.get("tool")
+        if not isinstance(tool, str) or not tool:
+            return None, "safety_approval item: tool must be a non-empty string"
+        if tool in existing:
+            return None, f"safety_approval: duplicate tool {tool!r}"
+        return existing + [tool], None
+
+    @staticmethod
+    def _merge_scheduler_cron(
+        existing: list, item: Any
+    ) -> tuple[list | None, str | None]:
+        if not isinstance(item, dict):
+            return None, "values must be an object"
+        name = item.get("name")
+        if not isinstance(name, str) or not name:
+            return None, "scheduler_cron item: name must be a non-empty string"
+        if any(s.get("name") == name for s in existing):
+            return None, f"scheduler_cron: duplicate name {name!r}"
+        return existing + [item], None
+
+    async def _append_blacklist_entry(
+        self,
+        item: Any,
+        validate_value: Any,
+        SettingsValidationError: type,
+    ) -> dict[str, Any]:
+        if not isinstance(item, dict):
+            return {"ok": False, "error": "safety_blacklist item: values must be an object"}
+        domain = item.get("domain")
+        tool = item.get("tool")
+        if not isinstance(domain, str) or not domain:
+            return {"ok": False, "error": "safety_blacklist item: domain must be a non-empty string"}
+        if not isinstance(tool, str) or not tool:
+            return {"ok": False, "error": "safety_blacklist item: tool must be a non-empty string"}
+
+        try:
+            existing = await self._settings_store.get_setting("safety_blacklist")
+        except Exception:
+            existing = None
+
+        existing_dict: dict = existing if isinstance(existing, dict) else {}
+        domain_list: list = list(existing_dict.get(domain, []))
+
+        if tool in domain_list:
+            return {"ok": False, "error": f"safety_blacklist[{domain!r}]: duplicate tool {tool!r}"}
+
+        domain_list.append(tool)
+        candidate = {**existing_dict, domain: domain_list}
+
+        try:
+            cleaned = validate_value("safety_blacklist", candidate)
+        except SettingsValidationError as exc:
+            return {"ok": False, "error": str(exc)}
+
+        try:
+            await self._settings_store.set_setting("safety_blacklist", cleaned)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("settings_append set_setting (safety_blacklist) failed: %s", exc)
+            return {"ok": False, "error": str(exc)}
+
+        return {"ok": True, "persisted": True, "refresh_view": "settings_view"}
+
+    async def _append_admin_user(self, item: Any) -> dict[str, Any]:
+        """Append a user to safety_permissions.admin_users, preserving other fields."""
+        from breadmind.sdui.settings_schema import (
+            SettingsValidationError,
+            validate_value,
+        )
+
+        if not isinstance(item, dict):
+            return {"ok": False, "error": "safety_permissions_admin_users: values must be an object"}
+        user = item.get("user")
+        if not isinstance(user, str) or not user:
+            return {"ok": False, "error": "safety_permissions_admin_users: user must be a non-empty string"}
+
+        try:
+            existing = await self._settings_store.get_setting("safety_permissions")
+        except Exception:
+            existing = None
+
+        existing_perms: dict = existing if isinstance(existing, dict) else {}
+        admin_users: list = list(existing_perms.get("admin_users", []))
+
+        if user in admin_users:
+            return {"ok": False, "error": f"safety_permissions.admin_users: duplicate user {user!r}"}
+
+        admin_users.append(user)
+        candidate = {**existing_perms, "admin_users": admin_users}
+
+        try:
+            cleaned = validate_value("safety_permissions", candidate)
+        except SettingsValidationError as exc:
+            return {"ok": False, "error": str(exc)}
+
+        try:
+            await self._settings_store.set_setting("safety_permissions", cleaned)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("settings_append set_setting (safety_permissions) failed: %s", exc)
+            return {"ok": False, "error": str(exc)}
+
+        return {"ok": True, "persisted": True, "refresh_view": "settings_view"}
