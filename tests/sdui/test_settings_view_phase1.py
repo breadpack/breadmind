@@ -20,7 +20,9 @@ class FakeStore:
 
 
 async def test_settings_view_seven_tabs(test_db):
-    spec = await settings_view.build(test_db, settings_store=FakeStore())
+    # Admin user sees all 7 tabs.
+    store = FakeStore({"safety_permissions": {"admin_users": ["admin"]}})
+    spec = await settings_view.build(test_db, settings_store=store, user_id="admin")
     tabs_components = _walk(spec.root, lambda c: c.type == "tabs")
     assert len(tabs_components) == 1
     tab_labels = [

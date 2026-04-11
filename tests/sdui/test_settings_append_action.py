@@ -206,7 +206,7 @@ async def test_settings_append_skill_markets_invalid_type_rejected(bus):
 # ---------------------------------------------------------------------------
 
 async def test_settings_append_safety_approval_first_item(bus):
-    store = FakeStore()
+    store = FakeStore({"safety_permissions": {"admin_users": ["alice"]}})
     handler = ActionHandler(bus=bus, settings_store=store)
     result = await handler.handle(
         {"kind": "settings_append", "key": "safety_approval", "values": {"tool": "k8s_delete"}},
@@ -218,7 +218,10 @@ async def test_settings_append_safety_approval_first_item(bus):
 
 
 async def test_settings_append_safety_approval_appends(bus):
-    store = FakeStore({"safety_approval": ["kubectl_exec"]})
+    store = FakeStore({
+        "safety_approval": ["kubectl_exec"],
+        "safety_permissions": {"admin_users": ["alice"]},
+    })
     handler = ActionHandler(bus=bus, settings_store=store)
     result = await handler.handle(
         {"kind": "settings_append", "key": "safety_approval", "values": {"tool": "rm_rf"}},
@@ -229,7 +232,10 @@ async def test_settings_append_safety_approval_appends(bus):
 
 
 async def test_settings_append_safety_approval_duplicate_rejected(bus):
-    store = FakeStore({"safety_approval": ["kubectl_exec"]})
+    store = FakeStore({
+        "safety_approval": ["kubectl_exec"],
+        "safety_permissions": {"admin_users": ["alice"]},
+    })
     handler = ActionHandler(bus=bus, settings_store=store)
     result = await handler.handle(
         {"kind": "settings_append", "key": "safety_approval", "values": {"tool": "kubectl_exec"}},
@@ -240,7 +246,7 @@ async def test_settings_append_safety_approval_duplicate_rejected(bus):
 
 
 async def test_settings_append_safety_approval_missing_tool_rejected(bus):
-    store = FakeStore()
+    store = FakeStore({"safety_permissions": {"admin_users": ["alice"]}})
     handler = ActionHandler(bus=bus, settings_store=store)
     result = await handler.handle(
         {"kind": "settings_append", "key": "safety_approval", "values": {"tool": ""}},
@@ -254,7 +260,7 @@ async def test_settings_append_safety_approval_missing_tool_rejected(bus):
 # ---------------------------------------------------------------------------
 
 async def test_settings_append_safety_blacklist_new_domain(bus):
-    store = FakeStore()
+    store = FakeStore({"safety_permissions": {"admin_users": ["alice"]}})
     handler = ActionHandler(bus=bus, settings_store=store)
     result = await handler.handle(
         {
@@ -270,7 +276,10 @@ async def test_settings_append_safety_blacklist_new_domain(bus):
 
 
 async def test_settings_append_safety_blacklist_existing_domain(bus):
-    store = FakeStore({"safety_blacklist": {"k8s": ["nodes_delete"]}})
+    store = FakeStore({
+        "safety_blacklist": {"k8s": ["nodes_delete"]},
+        "safety_permissions": {"admin_users": ["alice"]},
+    })
     handler = ActionHandler(bus=bus, settings_store=store)
     result = await handler.handle(
         {
@@ -285,7 +294,10 @@ async def test_settings_append_safety_blacklist_existing_domain(bus):
 
 
 async def test_settings_append_safety_blacklist_duplicate_tool_rejected(bus):
-    store = FakeStore({"safety_blacklist": {"k8s": ["pods_delete"]}})
+    store = FakeStore({
+        "safety_blacklist": {"k8s": ["pods_delete"]},
+        "safety_permissions": {"admin_users": ["alice"]},
+    })
     handler = ActionHandler(bus=bus, settings_store=store)
     result = await handler.handle(
         {

@@ -29,6 +29,16 @@ class FakeStore:
         return self.data.get(key)
 
 
+# Helper: merge admin_users so admin-gated tabs are visible.
+_ADMIN_DATA = {"safety_permissions": {"admin_users": ["admin"]}}
+
+
+def _admin_store(extra: dict | None = None) -> "FakeStore":
+    """Return a FakeStore with admin_users=["admin"] merged with optional extra data."""
+    data = {**_ADMIN_DATA, **(extra or {})}
+    return FakeStore(data)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -158,24 +168,24 @@ async def test_skill_markets_add_form_enabled_select(test_db):
 # ---------------------------------------------------------------------------
 
 async def test_blacklist_add_form_exists(test_db):
-    """_blacklist_card has an add form with key='safety_blacklist'."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore())
+    """_blacklist_card has an add form with key='safety_blacklist' (admin user)."""
+    spec = await settings_view.build(test_db, settings_store=_admin_store(), user_id="admin")
     form = _form_for_key(spec, "safety_blacklist")
     assert form is not None, "No settings_append form found for safety_blacklist"
     assert form.props.get("submit_label")
 
 
 async def test_blacklist_add_form_id(test_db):
-    """Blacklist add form has id 'safety-blacklist-add-form'."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore())
+    """Blacklist add form has id 'safety-blacklist-add-form' (admin user)."""
+    spec = await settings_view.build(test_db, settings_store=_admin_store(), user_id="admin")
     form = _form_for_key(spec, "safety_blacklist")
     assert form is not None
     assert form.id == "safety-blacklist-add-form"
 
 
 async def test_blacklist_add_form_fields(test_db):
-    """Blacklist add form has 'domain' and 'tool' fields."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore())
+    """Blacklist add form has 'domain' and 'tool' fields (admin user)."""
+    spec = await settings_view.build(test_db, settings_store=_admin_store(), user_id="admin")
     form = _form_for_key(spec, "safety_blacklist")
     assert form is not None
     names = _field_names(form)
@@ -184,9 +194,13 @@ async def test_blacklist_add_form_fields(test_db):
 
 
 async def test_blacklist_delete_buttons_still_present(test_db):
-    """Existing delete buttons for safety_blacklist are still rendered."""
+    """Existing delete buttons for safety_blacklist are still rendered (admin user)."""
     bl = {"shell": ["rm_rf", "dd"], "network": ["raw_socket"]}
-    spec = await settings_view.build(test_db, settings_store=FakeStore({"safety_blacklist": bl}))
+    spec = await settings_view.build(
+        test_db,
+        settings_store=_admin_store({"safety_blacklist": bl}),
+        user_id="admin",
+    )
     buttons = _walk(spec.root, lambda c: c.type == "button")
     delete_btns = [
         b for b in buttons
@@ -201,24 +215,24 @@ async def test_blacklist_delete_buttons_still_present(test_db):
 # ---------------------------------------------------------------------------
 
 async def test_approval_add_form_exists(test_db):
-    """_approval_card has an add form with key='safety_approval'."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore())
+    """_approval_card has an add form with key='safety_approval' (admin user)."""
+    spec = await settings_view.build(test_db, settings_store=_admin_store(), user_id="admin")
     form = _form_for_key(spec, "safety_approval")
     assert form is not None, "No settings_append form found for safety_approval"
     assert form.props.get("submit_label")
 
 
 async def test_approval_add_form_id(test_db):
-    """Approval add form has id 'safety-approval-add-form'."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore())
+    """Approval add form has id 'safety-approval-add-form' (admin user)."""
+    spec = await settings_view.build(test_db, settings_store=_admin_store(), user_id="admin")
     form = _form_for_key(spec, "safety_approval")
     assert form is not None
     assert form.id == "safety-approval-add-form"
 
 
 async def test_approval_add_form_fields(test_db):
-    """Approval add form has a 'tool' field."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore())
+    """Approval add form has a 'tool' field (admin user)."""
+    spec = await settings_view.build(test_db, settings_store=_admin_store(), user_id="admin")
     form = _form_for_key(spec, "safety_approval")
     assert form is not None
     names = _field_names(form)
@@ -226,9 +240,13 @@ async def test_approval_add_form_fields(test_db):
 
 
 async def test_approval_delete_buttons_still_present(test_db):
-    """Existing delete buttons for safety_approval are still rendered."""
+    """Existing delete buttons for safety_approval are still rendered (admin user)."""
     approval = ["deploy_production", "send_email"]
-    spec = await settings_view.build(test_db, settings_store=FakeStore({"safety_approval": approval}))
+    spec = await settings_view.build(
+        test_db,
+        settings_store=_admin_store({"safety_approval": approval}),
+        user_id="admin",
+    )
     buttons = _walk(spec.root, lambda c: c.type == "button")
     delete_btns = [
         b for b in buttons
@@ -242,24 +260,24 @@ async def test_approval_delete_buttons_still_present(test_db):
 # ---------------------------------------------------------------------------
 
 async def test_admin_users_add_form_exists(test_db):
-    """_permissions_card has an add form with key='safety_permissions_admin_users'."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore())
+    """_permissions_card has an add form with key='safety_permissions_admin_users' (admin)."""
+    spec = await settings_view.build(test_db, settings_store=_admin_store(), user_id="admin")
     form = _form_for_key(spec, "safety_permissions_admin_users")
     assert form is not None, "No settings_append form found for safety_permissions_admin_users"
     assert form.props.get("submit_label")
 
 
 async def test_admin_users_add_form_id(test_db):
-    """Admin users add form has id 'safety-admin-add-form'."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore())
+    """Admin users add form has id 'safety-admin-add-form' (admin user)."""
+    spec = await settings_view.build(test_db, settings_store=_admin_store(), user_id="admin")
     form = _form_for_key(spec, "safety_permissions_admin_users")
     assert form is not None
     assert form.id == "safety-admin-add-form"
 
 
 async def test_admin_users_add_form_fields(test_db):
-    """Admin users add form has a 'user' field."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore())
+    """Admin users add form has a 'user' field (admin user)."""
+    spec = await settings_view.build(test_db, settings_store=_admin_store(), user_id="admin")
     form = _form_for_key(spec, "safety_permissions_admin_users")
     assert form is not None
     names = _field_names(form)
@@ -267,9 +285,13 @@ async def test_admin_users_add_form_fields(test_db):
 
 
 async def test_admin_users_delete_buttons_still_present(test_db):
-    """Existing delete buttons for safety_permissions are still rendered."""
+    """Existing delete buttons for safety_permissions are still rendered (alice is admin)."""
     perms = {"admin_users": ["alice", "bob"], "user_permissions": {}}
-    spec = await settings_view.build(test_db, settings_store=FakeStore({"safety_permissions": perms}))
+    spec = await settings_view.build(
+        test_db,
+        settings_store=FakeStore({"safety_permissions": perms}),
+        user_id="alice",
+    )
     buttons = _walk(spec.root, lambda c: c.type == "button")
     delete_btns = [
         b for b in buttons
@@ -340,27 +362,29 @@ async def test_scheduler_cron_delete_buttons_still_present(test_db):
 # ---------------------------------------------------------------------------
 
 async def test_view_renders_with_no_store_phase4(test_db):
-    """View renders cleanly with no settings_store (Phase 4 forms still appear)."""
+    """View renders cleanly with no settings_store.
+
+    Non-admin tabs still show their append forms; admin-gated tabs are hidden.
+    """
     spec = await settings_view.build(test_db)
     assert spec.root.type == "page"
-    # All 6 append forms must exist even when store is empty
-    keys = [
-        "mcp_servers",
-        "skill_markets",
-        "safety_blacklist",
-        "safety_approval",
-        "safety_permissions_admin_users",
-        "scheduler_cron",
-    ]
-    for key in keys:
+    # Non-admin-gated append forms must always be present.
+    non_admin_keys = ["mcp_servers", "skill_markets", "scheduler_cron"]
+    for key in non_admin_keys:
         form = _form_for_key(spec, key)
         assert form is not None, f"Missing add form for key '{key}' when store is None"
+    # Admin-gated forms must NOT appear without admin credentials.
+    admin_keys = ["safety_blacklist", "safety_approval", "safety_permissions_admin_users"]
+    for key in admin_keys:
+        form = _form_for_key(spec, key)
+        assert form is None, f"Admin-gated form for key '{key}' should NOT appear for non-admin"
 
 
-async def test_all_six_add_forms_present(test_db):
-    """Exactly 6 settings_append forms are present in the full view."""
+async def test_all_six_add_forms_present_for_admin(test_db):
+    """Exactly 6 settings_append forms are present in the full view for an admin user."""
     from tests.sdui.test_settings_view_phase2 import _full_store_data
-    spec = await settings_view.build(test_db, settings_store=FakeStore(_full_store_data()))
+    # _full_store_data includes safety_permissions with admin_users=["alice", "bob"]
+    spec = await settings_view.build(test_db, settings_store=FakeStore(_full_store_data()), user_id="alice")
     forms = _append_forms(spec)
     keys = {(f.props.get("action") or {}).get("key") for f in forms}
     expected = {

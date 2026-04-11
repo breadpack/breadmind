@@ -161,6 +161,11 @@ class ActionHandler:
         if not isinstance(key, str) or not is_allowed_key(key):
             return {"ok": False, "error": f"key not allowed: {key}"}
 
+        # Admin-only key check.
+        if key in self._ADMIN_ONLY_KEYS:
+            if not await self._is_admin(user_id):
+                return {"ok": False, "error": "permission denied: admin only"}
+
         raw_value = action.get("values")
         try:
             cleaned = validate_value(key, raw_value)
@@ -200,6 +205,42 @@ class ActionHandler:
         }
 
     # ------------------------------------------------------------------
+    # Admin-only keys — writes/appends require the user to be in
+    # safety_permissions.admin_users.  If admin_users is empty/missing,
+    # NOBODY is admin and these writes are blocked, with one exception:
+    # when admin_users is empty and the key is safety_permissions_admin_users,
+    # the write is allowed so the first operator can bootstrap admin access.
+    # ------------------------------------------------------------------
+    _ADMIN_ONLY_KEYS: frozenset[str] = frozenset(
+        {
+            "safety_blacklist",
+            "safety_approval",
+            "safety_permissions",
+            "safety_permissions_admin_users",
+            "tool_security",
+            "system_timeouts",
+            "retry_config",
+            "limits_config",
+            "polling_config",
+            "agent_timeouts",
+            "logging_config",
+        }
+    )
+
+    async def _is_admin(self, user_id: str) -> bool:
+        """Return True iff user_id appears in safety_permissions.admin_users."""
+        if self._settings_store is None:
+            return False
+        try:
+            perms = await self._settings_store.get_setting("safety_permissions")
+        except Exception:  # noqa: BLE001
+            return False
+        if not isinstance(perms, dict):
+            return False
+        admin_users = perms.get("admin_users") or []
+        return bool(user_id and user_id in admin_users)
+
+    # ------------------------------------------------------------------
     # Allowed keys for settings_append (list/dict-shaped settings only)
     # ------------------------------------------------------------------
     _APPEND_ALLOWED_KEYS = frozenset(
@@ -234,6 +275,26 @@ class ActionHandler:
 
         if self._settings_store is None:
             return {"ok": False, "error": "settings_store not configured"}
+
+        # Admin-only key check.
+        # Bootstrap exception: when admin_users is empty/missing AND the key is
+        # safety_permissions_admin_users, allow the write so the first user can
+        # become admin without being locked out.
+        if key in self._ADMIN_ONLY_KEYS:
+            is_bootstrap = False
+            if key == "safety_permissions_admin_users":
+                try:
+                    perms = await self._settings_store.get_setting("safety_permissions")
+                except Exception:  # noqa: BLE001
+                    perms = None
+                existing_admin_users = (
+                    perms.get("admin_users") or []
+                    if isinstance(perms, dict)
+                    else []
+                )
+                is_bootstrap = len(existing_admin_users) == 0
+            if not is_bootstrap and not await self._is_admin(user_id):
+                return {"ok": False, "error": "permission denied: admin only"}
 
         item = action.get("values")
 

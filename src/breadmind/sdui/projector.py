@@ -77,6 +77,7 @@ class UISpecProjector:
             return await monitoring_view.build(self._db, **params)
         if view_key == "settings_view":
             params.setdefault("settings_store", self._settings_store)
+            # user_id is forwarded so the view can apply admin gating.
             return await settings_view.build(self._db, **params)
         if view_key == "plugins_view":
             params.setdefault("plugin_manager", self._plugin_manager)

@@ -23,13 +23,24 @@ class FakeStore:
         return self.data.get(key)
 
 
+# Helper: merge admin_users into store data so the admin-gated tabs are visible.
+_ADMIN_DATA = {"safety_permissions": {"admin_users": ["admin"]}}
+
+
+def _admin_store(extra: dict | None = None) -> "FakeStore":
+    """Return a FakeStore with admin_users=["admin"] merged with optional extra data."""
+    data = {**_ADMIN_DATA, **(extra or {})}
+    return FakeStore(data)
+
+
 # ---------------------------------------------------------------------------
 # Tab structure
 # ---------------------------------------------------------------------------
 
 async def test_seven_tabs_correct_order(test_db):
-    """All 7 tab labels are present and in the correct order."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore())
+    """All 7 tab labels are present and in the correct order (admin user)."""
+    store = FakeStore({"safety_permissions": {"admin_users": ["admin"]}})
+    spec = await settings_view.build(test_db, settings_store=store, user_id="admin")
     tabs_comps = _walk(spec.root, lambda c: c.type == "tabs")
     assert len(tabs_comps) == 1
     labels = [ch.props.get("label", "") for ch in tabs_comps[0].children]
@@ -130,8 +141,8 @@ async def test_memory_tab_partial_stored_values_use_defaults_for_missing(test_db
 # ---------------------------------------------------------------------------
 
 async def test_advanced_tab_has_system_timeouts_form(test_db):
-    """Advanced tab contains a form with key='system_timeouts'."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore())
+    """Advanced tab contains a form with key='system_timeouts' (admin user)."""
+    spec = await settings_view.build(test_db, settings_store=_admin_store(), user_id="admin")
     forms = _walk(spec.root, lambda c: c.type == "form")
     st_forms = [f for f in forms if (f.props.get("action") or {}).get("key") == "system_timeouts"]
     assert len(st_forms) == 1
@@ -139,8 +150,8 @@ async def test_advanced_tab_has_system_timeouts_form(test_db):
 
 
 async def test_advanced_tab_has_retry_config_form(test_db):
-    """Advanced tab contains a form with key='retry_config'."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore())
+    """Advanced tab contains a form with key='retry_config' (admin user)."""
+    spec = await settings_view.build(test_db, settings_store=_admin_store(), user_id="admin")
     forms = _walk(spec.root, lambda c: c.type == "form")
     rc_forms = [f for f in forms if (f.props.get("action") or {}).get("key") == "retry_config"]
     assert len(rc_forms) == 1
@@ -148,8 +159,8 @@ async def test_advanced_tab_has_retry_config_form(test_db):
 
 
 async def test_advanced_tab_has_limits_config_form(test_db):
-    """Advanced tab contains a form with key='limits_config'."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore())
+    """Advanced tab contains a form with key='limits_config' (admin user)."""
+    spec = await settings_view.build(test_db, settings_store=_admin_store(), user_id="admin")
     forms = _walk(spec.root, lambda c: c.type == "form")
     lc_forms = [f for f in forms if (f.props.get("action") or {}).get("key") == "limits_config"]
     assert len(lc_forms) == 1
@@ -157,8 +168,8 @@ async def test_advanced_tab_has_limits_config_form(test_db):
 
 
 async def test_advanced_tab_has_polling_config_form(test_db):
-    """Advanced tab contains a form with key='polling_config'."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore())
+    """Advanced tab contains a form with key='polling_config' (admin user)."""
+    spec = await settings_view.build(test_db, settings_store=_admin_store(), user_id="admin")
     forms = _walk(spec.root, lambda c: c.type == "form")
     pc_forms = [f for f in forms if (f.props.get("action") or {}).get("key") == "polling_config"]
     assert len(pc_forms) == 1
@@ -166,8 +177,8 @@ async def test_advanced_tab_has_polling_config_form(test_db):
 
 
 async def test_advanced_tab_has_agent_timeouts_form(test_db):
-    """Advanced tab contains a form with key='agent_timeouts'."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore())
+    """Advanced tab contains a form with key='agent_timeouts' (admin user)."""
+    spec = await settings_view.build(test_db, settings_store=_admin_store(), user_id="admin")
     forms = _walk(spec.root, lambda c: c.type == "form")
     at_forms = [f for f in forms if (f.props.get("action") or {}).get("key") == "agent_timeouts"]
     assert len(at_forms) == 1
@@ -175,8 +186,8 @@ async def test_advanced_tab_has_agent_timeouts_form(test_db):
 
 
 async def test_advanced_tab_has_logging_config_form(test_db):
-    """Advanced tab contains a form with key='logging_config'."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore())
+    """Advanced tab contains a form with key='logging_config' (admin user)."""
+    spec = await settings_view.build(test_db, settings_store=_admin_store(), user_id="admin")
     forms = _walk(spec.root, lambda c: c.type == "form")
     log_forms = [f for f in forms if (f.props.get("action") or {}).get("key") == "logging_config"]
     assert len(log_forms) == 1
@@ -188,8 +199,8 @@ async def test_advanced_tab_has_logging_config_form(test_db):
 # ---------------------------------------------------------------------------
 
 async def test_system_timeouts_form_has_seven_fields(test_db):
-    """system_timeouts form has all 7 required fields."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore())
+    """system_timeouts form has all 7 required fields (admin user)."""
+    spec = await settings_view.build(test_db, settings_store=_admin_store(), user_id="admin")
     forms = _walk(spec.root, lambda c: c.type == "form")
     form = next(f for f in forms if (f.props.get("action") or {}).get("key") == "system_timeouts")
     fields = _walk(form, lambda c: c.type in ("field", "select"))
@@ -200,8 +211,8 @@ async def test_system_timeouts_form_has_seven_fields(test_db):
 
 
 async def test_retry_config_form_has_six_fields(test_db):
-    """retry_config form has all 6 required fields."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore())
+    """retry_config form has all 6 required fields (admin user)."""
+    spec = await settings_view.build(test_db, settings_store=_admin_store(), user_id="admin")
     forms = _walk(spec.root, lambda c: c.type == "form")
     form = next(f for f in forms if (f.props.get("action") or {}).get("key") == "retry_config")
     fields = _walk(form, lambda c: c.type in ("field", "select"))
@@ -212,8 +223,8 @@ async def test_retry_config_form_has_six_fields(test_db):
 
 
 async def test_limits_config_form_has_nine_fields(test_db):
-    """limits_config form has all 9 required fields (8 int + 1 float)."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore())
+    """limits_config form has all 9 required fields (8 int + 1 float) (admin user)."""
+    spec = await settings_view.build(test_db, settings_store=_admin_store(), user_id="admin")
     forms = _walk(spec.root, lambda c: c.type == "form")
     form = next(f for f in forms if (f.props.get("action") or {}).get("key") == "limits_config")
     fields = _walk(form, lambda c: c.type in ("field", "select"))
@@ -228,8 +239,8 @@ async def test_limits_config_form_has_nine_fields(test_db):
 
 
 async def test_polling_config_form_has_five_fields(test_db):
-    """polling_config form has all 5 required fields."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore())
+    """polling_config form has all 5 required fields (admin user)."""
+    spec = await settings_view.build(test_db, settings_store=_admin_store(), user_id="admin")
     forms = _walk(spec.root, lambda c: c.type == "form")
     form = next(f for f in forms if (f.props.get("action") or {}).get("key") == "polling_config")
     fields = _walk(form, lambda c: c.type in ("field", "select"))
@@ -240,8 +251,8 @@ async def test_polling_config_form_has_five_fields(test_db):
 
 
 async def test_agent_timeouts_form_has_three_fields(test_db):
-    """agent_timeouts form has all 3 required fields."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore())
+    """agent_timeouts form has all 3 required fields (admin user)."""
+    spec = await settings_view.build(test_db, settings_store=_admin_store(), user_id="admin")
     forms = _walk(spec.root, lambda c: c.type == "form")
     form = next(f for f in forms if (f.props.get("action") or {}).get("key") == "agent_timeouts")
     fields = _walk(form, lambda c: c.type in ("field", "select"))
@@ -256,8 +267,8 @@ async def test_agent_timeouts_form_has_three_fields(test_db):
 # ---------------------------------------------------------------------------
 
 async def test_logging_form_level_select_has_five_options(test_db):
-    """logging_config form has a select with name='level' and 5 options."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore())
+    """logging_config form has a select with name='level' and 5 options (admin user)."""
+    spec = await settings_view.build(test_db, settings_store=_admin_store(), user_id="admin")
     forms = _walk(spec.root, lambda c: c.type == "form")
     log_form = next(f for f in forms if (f.props.get("action") or {}).get("key") == "logging_config")
     selects = _walk(log_form, lambda c: c.type == "select")
@@ -270,8 +281,8 @@ async def test_logging_form_level_select_has_five_options(test_db):
 
 
 async def test_logging_form_format_select_has_two_options(test_db):
-    """logging_config form has a select with name='format' and 2 options."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore())
+    """logging_config form has a select with name='format' and 2 options (admin user)."""
+    spec = await settings_view.build(test_db, settings_store=_admin_store(), user_id="admin")
     forms = _walk(spec.root, lambda c: c.type == "form")
     log_form = next(f for f in forms if (f.props.get("action") or {}).get("key") == "logging_config")
     selects = _walk(log_form, lambda c: c.type == "select")
@@ -284,9 +295,9 @@ async def test_logging_form_format_select_has_two_options(test_db):
 
 
 async def test_logging_form_uses_stored_values(test_db):
-    """logging_config form uses existing values from settings_store."""
-    store = FakeStore({"logging_config": {"level": "DEBUG", "format": "json"}})
-    spec = await settings_view.build(test_db, settings_store=store)
+    """logging_config form uses existing values from settings_store (admin user)."""
+    store = _admin_store({"logging_config": {"level": "DEBUG", "format": "json"}})
+    spec = await settings_view.build(test_db, settings_store=store, user_id="admin")
     forms = _walk(spec.root, lambda c: c.type == "form")
     log_form = next(f for f in forms if (f.props.get("action") or {}).get("key") == "logging_config")
     selects = _walk(log_form, lambda c: c.type == "select")
@@ -300,17 +311,17 @@ async def test_logging_form_uses_stored_values(test_db):
 # ---------------------------------------------------------------------------
 
 async def test_advanced_tab_has_vault_card_heading(test_db):
-    """Advanced tab contains a card with heading '자격증명 금고'."""
-    spec = await settings_view.build(test_db, settings_store=FakeStore())
+    """Advanced tab contains a card with heading '자격증명 금고' (admin user)."""
+    spec = await settings_view.build(test_db, settings_store=_admin_store(), user_id="admin")
     headings = _walk(spec.root, lambda c: c.type == "heading")
     vault_headings = [h for h in headings if h.props.get("value") == "자격증명 금고"]
     assert len(vault_headings) >= 1
 
 
 async def test_vault_card_renders_without_list_method(test_db):
-    """Vault card renders cleanly even when store has no list_settings_by_prefix."""
-    store = FakeStore()  # No list_settings_by_prefix method
-    spec = await settings_view.build(test_db, settings_store=store)
+    """Vault card renders cleanly even when store has no list_settings_by_prefix (admin user)."""
+    store = _admin_store()  # No list_settings_by_prefix method
+    spec = await settings_view.build(test_db, settings_store=store, user_id="admin")
     assert spec.root.type == "page"
     headings = _walk(spec.root, lambda c: c.type == "heading")
     vault_headings = [h for h in headings if h.props.get("value") == "자격증명 금고"]
@@ -318,11 +329,11 @@ async def test_vault_card_renders_without_list_method(test_db):
 
 
 async def test_vault_card_renders_with_db_having_list_method(test_db):
-    """Vault card renders when db has list_settings_by_prefix returning vault keys."""
+    """Vault card renders when db has list_settings_by_prefix returning vault keys (admin)."""
 
     class FakeStoreWithList:
-        def __init__(self):
-            self.data = {}
+        def __init__(self, extra=None):
+            self.data = {**(extra or {})}
 
         async def get_setting(self, key):
             return self.data.get(key)
@@ -330,7 +341,8 @@ async def test_vault_card_renders_with_db_having_list_method(test_db):
         async def list_settings_by_prefix(self, prefix):
             return ["vault:MY_API_KEY", "vault:OTHER_KEY"]
 
-    spec = await settings_view.build(FakeStoreWithList(), settings_store=FakeStoreWithList())
+    store = FakeStoreWithList({"safety_permissions": {"admin_users": ["admin"]}})
+    spec = await settings_view.build(store, settings_store=store, user_id="admin")
     assert spec.root.type == "page"
     headings = _walk(spec.root, lambda c: c.type == "heading")
     vault_headings = [h for h in headings if h.props.get("value") == "자격증명 금고"]
@@ -342,17 +354,18 @@ async def test_vault_card_renders_with_db_having_list_method(test_db):
 # ---------------------------------------------------------------------------
 
 async def test_view_renders_with_no_store_phase3(test_db):
-    """View renders cleanly when settings_store is None (Phase 3 tabs included)."""
+    """View renders cleanly when settings_store is None (non-admin: 5 tabs)."""
     spec = await settings_view.build(test_db)
     assert spec.root.type == "page"
     tabs_comps = _walk(spec.root, lambda c: c.type == "tabs")
     assert len(tabs_comps) == 1
-    assert len(tabs_comps[0].children) == 7
+    # No store → no admin_users → safety & advanced tabs hidden → 5 tabs.
+    assert len(tabs_comps[0].children) == 5
 
 
 async def test_view_renders_with_full_phase3_store(test_db):
-    """View renders cleanly with all Phase 3 store values populated."""
-    store = FakeStore({
+    """View renders cleanly with all Phase 3 store values populated (admin user)."""
+    store = _admin_store({
         "memory_gc_config": {
             "interval_seconds": 1800,
             "decay_threshold": 0.2,
@@ -381,14 +394,14 @@ async def test_view_renders_with_full_phase3_store(test_db):
         "agent_timeouts": {"tool_timeout": 60, "chat_timeout": 300, "max_turns": 20},
         "logging_config": {"level": "INFO", "format": "text"},
     })
-    spec = await settings_view.build(test_db, settings_store=store)
+    spec = await settings_view.build(test_db, settings_store=store, user_id="admin")
     assert spec.root.type == "page"
 
 
 async def test_advanced_tab_stored_values_reflected(test_db):
-    """Advanced tab reflects stored values for system_timeouts."""
-    store = FakeStore({"system_timeouts": {"tool_call": 99, "llm_api": 200}})
-    spec = await settings_view.build(test_db, settings_store=store)
+    """Advanced tab reflects stored values for system_timeouts (admin user)."""
+    store = _admin_store({"system_timeouts": {"tool_call": 99, "llm_api": 200}})
+    spec = await settings_view.build(test_db, settings_store=store, user_id="admin")
     forms = _walk(spec.root, lambda c: c.type == "form")
     form = next(f for f in forms if (f.props.get("action") or {}).get("key") == "system_timeouts")
     fields = _walk(form, lambda c: c.type in ("field", "select"))

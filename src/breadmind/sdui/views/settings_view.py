@@ -143,7 +143,13 @@ _LOG_FORMAT_OPTIONS = [
 ]
 
 
-async def build(db: Any, *, settings_store: Any = None, **_kwargs: Any) -> UISpec:
+async def build(
+    db: Any,
+    *,
+    settings_store: Any = None,
+    user_id: str | None = None,
+    **_kwargs: Any,
+) -> UISpec:
     # Phase 1 data
     llm = await _safe_get(settings_store, "llm", {}) or {}
     persona = await _safe_get(settings_store, "persona", {}) or {}
@@ -175,37 +181,62 @@ async def build(db: Any, *, settings_store: Any = None, **_kwargs: Any) -> UISpe
     logging_config = await _safe_get(settings_store, "logging_config", {}) or {}
     vault_keys = await _safe_list_prefix(db, "vault:")
 
+    # Phase 4: admin gating — 안전 & 권한 and 고급 tabs are admin-only.
+    # If admin_users is empty/missing, NOBODY is admin (closed by default).
+    admin_users: list = (
+        safety_permissions.get("admin_users") or []
+        if isinstance(safety_permissions, dict)
+        else []
+    )
+    is_admin: bool = bool(user_id and user_id in admin_users)
+
+    # Build tabs list, filtering out admin-only tabs for non-admins.
+    tabs: list[Component] = [
+        _quick_start_tab(llm, persona, apikey_status),
+        _agent_behavior_tab(prompts, instructions, embedding),
+        _integrations_tab(mcp_config, mcp_servers, skill_markets),
+    ]
+    if is_admin:
+        tabs.append(_safety_tab(safety_blacklist, safety_approval, safety_permissions, tool_security))
+    tabs.append(_monitoring_tab(monitoring_config, scheduler_cron))
+    tabs.append(_memory_tab(memory_gc_config))
+    if is_admin:
+        tabs.append(
+            _advanced_tab(
+                system_timeouts,
+                retry_config,
+                limits_config,
+                polling_config,
+                agent_timeouts,
+                logging_config,
+                vault_keys,
+            )
+        )
+
+    # Show a hint for non-admin users so the first operator knows to set admin_users.
+    page_children: list[Component] = [
+        Component(type="heading", id="settings-h", props={"value": "설정", "level": 2}),
+        Component(type="tabs", id="settings-tabs", props={}, children=tabs),
+    ]
+    if not is_admin:
+        page_children.append(
+            Component(
+                type="text",
+                id="settings-admin-hint",
+                props={
+                    "value": "안전 & 권한, 고급 탭은 관리자만 접근할 수 있습니다.",
+                    "variant": "muted",
+                },
+            )
+        )
+
     return UISpec(
         schema_version=1,
         root=Component(
             type="page",
             id="settings",
             props={"title": "설정"},
-            children=[
-                Component(type="heading", id="settings-h", props={"value": "설정", "level": 2}),
-                Component(
-                    type="tabs",
-                    id="settings-tabs",
-                    props={},
-                    children=[
-                        _quick_start_tab(llm, persona, apikey_status),
-                        _agent_behavior_tab(prompts, instructions, embedding),
-                        _integrations_tab(mcp_config, mcp_servers, skill_markets),
-                        _safety_tab(safety_blacklist, safety_approval, safety_permissions, tool_security),
-                        _monitoring_tab(monitoring_config, scheduler_cron),
-                        _memory_tab(memory_gc_config),
-                        _advanced_tab(
-                            system_timeouts,
-                            retry_config,
-                            limits_config,
-                            polling_config,
-                            agent_timeouts,
-                            logging_config,
-                            vault_keys,
-                        ),
-                    ],
-                ),
-            ],
+            children=page_children,
         ),
     )
 
