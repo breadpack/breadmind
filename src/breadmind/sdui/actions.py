@@ -36,10 +36,14 @@ class ActionHandler:
         *,
         message_handler: MessageHandler | None = None,
         working_memory: Any = None,
+        settings_store: Any = None,
+        credential_vault: Any = None,
     ) -> None:
         self._bus = bus
         self._message_handler = message_handler
         self._working_memory = working_memory
+        self._settings_store = settings_store
+        self._credential_vault = credential_vault
 
     async def handle(self, action: dict[str, Any], *, user_id: str) -> dict[str, Any]:
         kind = action.get("kind")
@@ -54,6 +58,8 @@ class ActionHandler:
             }
         if kind == "chat_input":
             return await self._chat_input(action, user_id)
+        if kind == "settings_write":
+            return await self._settings_write(action, user_id)
         if kind == "dev_inject_assistant":
             return await self._dev_inject_assistant(action, user_id)
         return {"ok": False, "error": f"unknown action kind: {kind}"}
@@ -133,3 +139,60 @@ class ActionHandler:
             )
         )
         return {"ok": True}
+
+    async def _settings_write(
+        self, action: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
+        """Persist a Phase 1 setting via settings_store or credential_vault.
+
+        Whitelisted keys only — see ``settings_schema.is_allowed_key``.
+        """
+        from breadmind.sdui.settings_schema import (
+            SettingsValidationError,
+            is_allowed_key,
+            is_credential_key,
+            requires_restart,
+            validate_value,
+        )
+
+        key = action.get("key")
+        if not isinstance(key, str) or not is_allowed_key(key):
+            return {"ok": False, "error": f"key not allowed: {key}"}
+
+        raw_value = action.get("values")
+        try:
+            cleaned = validate_value(key, raw_value)
+        except SettingsValidationError as exc:
+            return {"ok": False, "error": str(exc)}
+
+        if is_credential_key(key):
+            if self._credential_vault is None:
+                return {"ok": False, "error": "credential vault not configured"}
+            try:
+                await self._credential_vault.store(key, cleaned, None)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("settings_write vault.store failed: %s", exc)
+                return {"ok": False, "error": str(exc)}
+        else:
+            if self._settings_store is None:
+                return {"ok": False, "error": "settings_store not configured"}
+            try:
+                existing = await self._settings_store.get_setting(key)
+            except Exception:
+                existing = None
+            if isinstance(existing, dict) and isinstance(cleaned, dict):
+                merged = {**existing, **cleaned}
+            else:
+                merged = cleaned
+            try:
+                await self._settings_store.set_setting(key, merged)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("settings_write set_setting failed: %s", exc)
+                return {"ok": False, "error": str(exc)}
+
+        return {
+            "ok": True,
+            "persisted": True,
+            "restart_required": requires_restart(key),
+            "refresh_view": "settings_view",
+        }
