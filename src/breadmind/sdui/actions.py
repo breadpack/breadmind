@@ -520,13 +520,11 @@ class ActionHandler:
                 merged_dict,
                 actor=f"user:{user_id}",
                 audit_summary=audit_summary,
+                audit_key=key,
+                audit_kind="settings_append",
             )
             if not result.ok:
                 return {"ok": False, "error": result.error or "set failed"}
-            # Override the auto-recorded audit entry key so the UI sees the
-            # legacy ``safety_permissions_admin_users`` action key rather
-            # than the underlying ``safety_permissions`` storage key.
-            await self._rewrite_last_audit(action_key="settings_append", key=key)
             return {"ok": True, "persisted": True, "refresh_view": "settings_view"}
 
         if key == "safety_blacklist":
@@ -542,10 +540,11 @@ class ActionHandler:
                 merged_dict,
                 actor=f"user:{user_id}",
                 audit_summary=audit_summary,
+                audit_key=key,
+                audit_kind="settings_append",
             )
             if not result.ok:
                 return {"ok": False, "error": result.error or "set failed"}
-            await self._rewrite_last_audit(action_key="settings_append", key=key)
             return {"ok": True, "persisted": True, "refresh_view": "settings_view"}
 
         # ------------------------------------------------------------------
@@ -595,32 +594,6 @@ class ActionHandler:
         if not result.ok:
             return {"ok": False, "error": result.error or "append failed"}
         return {"ok": True, "persisted": True, "refresh_view": "settings_view"}
-
-    async def _rewrite_last_audit(self, *, action_key: str, key: str) -> None:
-        """Rewrite the most recent audit entry's action/key fields in place.
-
-        Used when a translator delegated a dict-shaped setting through
-        ``SettingsService.set`` but wants the audit log to show the original
-        SDUI action name (e.g. ``settings_append`` targeting
-        ``safety_permissions_admin_users``) rather than the storage key
-        (``safety_permissions``).
-        """
-        if self._settings_store is None:
-            return
-        try:
-            existing = await self._settings_store.get_setting(self._AUDIT_KEY)
-        except Exception:  # noqa: BLE001
-            return
-        if not isinstance(existing, list) or not existing:
-            return
-        last = dict(existing[-1])
-        last["action"] = action_key
-        last["key"] = key
-        new_log = existing[:-1] + [last]
-        try:
-            await self._settings_store.set_setting(self._AUDIT_KEY, new_log)
-        except Exception:  # noqa: BLE001
-            pass
 
     # ------------------------------------------------------------------
     # Vault credential actions (admin-only; no bootstrap exception)
