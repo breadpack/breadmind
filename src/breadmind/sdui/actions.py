@@ -43,12 +43,34 @@ class ActionHandler:
         working_memory: Any = None,
         settings_store: Any = None,
         credential_vault: Any = None,
+        event_bus: Any = None,
+        settings_service: Any = None,
     ) -> None:
         self._bus = bus
         self._message_handler = message_handler
         self._working_memory = working_memory
         self._settings_store = settings_store
         self._credential_vault = credential_vault
+        self._event_bus = event_bus
+
+        if settings_service is None and settings_store is not None:
+            try:
+                from breadmind.settings.reload_registry import SettingsReloadRegistry
+                from breadmind.settings.service import SettingsService
+
+                settings_service = SettingsService(
+                    store=settings_store,
+                    vault=credential_vault,
+                    audit_sink=self._record_audit,
+                    reload_registry=SettingsReloadRegistry(),
+                    event_bus=event_bus,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "ActionHandler: failed to construct SettingsService: %s", exc
+                )
+                settings_service = None
+        self._settings_service = settings_service
 
     async def handle(self, action: dict[str, Any], *, user_id: str) -> dict[str, Any]:
         kind = action.get("kind")
@@ -191,22 +213,54 @@ class ActionHandler:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("settings_write vault.store failed: %s", exc)
                 return {"ok": False, "error": str(exc)}
+            await self._record_audit(
+                "settings_write",
+                key,
+                user_id,
+                self._audit_summary_settings_write(key, cleaned),
+            )
+            return {
+                "ok": True,
+                "persisted": True,
+                "restart_required": requires_restart(key),
+                "refresh_view": "settings_view",
+            }
+
+        if self._settings_store is None:
+            return {"ok": False, "error": "settings_store not configured"}
+
+        # Dict-shape merge semantics: existing + new overrides.
+        try:
+            existing = await self._settings_store.get_setting(key)
+        except Exception:
+            existing = None
+        if isinstance(existing, dict) and isinstance(cleaned, dict):
+            merged = {**existing, **cleaned}
         else:
-            if self._settings_store is None:
-                return {"ok": False, "error": "settings_store not configured"}
-            try:
-                existing = await self._settings_store.get_setting(key)
-            except Exception:
-                existing = None
-            if isinstance(existing, dict) and isinstance(cleaned, dict):
-                merged = {**existing, **cleaned}
-            else:
-                merged = cleaned
-            try:
-                await self._settings_store.set_setting(key, merged)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("settings_write set_setting failed: %s", exc)
-                return {"ok": False, "error": str(exc)}
+            merged = cleaned
+
+        # Delegate the validated+merged value to SettingsService so the
+        # SETTINGS_CHANGED event, audit log, and reload registry fire
+        # through a single pipeline.
+        if self._settings_service is not None:
+            result = await self._settings_service.set(
+                key, merged, actor=f"user:{user_id}"
+            )
+            if not result.ok:
+                return {"ok": False, "error": result.error or "set failed"}
+            return {
+                "ok": True,
+                "persisted": result.persisted,
+                "restart_required": result.restart_required,
+                "refresh_view": "settings_view",
+            }
+
+        # Fallback: no SettingsService (e.g. construction failed).
+        try:
+            await self._settings_store.set_setting(key, merged)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("settings_write set_setting failed: %s", exc)
+            return {"ok": False, "error": str(exc)}
 
         await self._record_audit(
             "settings_write",
@@ -267,18 +321,54 @@ class ActionHandler:
 
     async def _record_audit(
         self,
-        action_kind: str,
-        key: str,
-        user_id: str,
-        summary: str,
-    ) -> None:
+        action_kind: str | None = None,
+        key: str | None = None,
+        user_id: str | None = None,
+        summary: str | None = None,
+        *,
+        kind: str | None = None,
+        actor: str | None = None,
+        old_preview: Any = None,
+        new_preview: Any = None,
+    ) -> int | None:
         """Append an entry to the sdui_audit_log capped list.
 
+        Accepts both the legacy positional shape
+        ``(action_kind, key, user_id, summary)`` used by existing UI paths
+        AND the keyword-only shape ``(kind=, key=, actor=, old_preview=,
+        new_preview=)`` used by :class:`SettingsService`.
+
         Never logs sensitive values. Failures are swallowed so audit errors
-        never propagate to the caller.
+        never propagate to the caller. Returns the new audit log length on
+        success or ``None`` when the store is unavailable / write failed.
         """
+        # Normalise compat args: SettingsService passes ``kind=`` and
+        # ``actor=``; legacy callers pass the first four as positionals.
+        if action_kind is None and kind is not None:
+            action_kind = kind
+        if actor is None and user_id is not None:
+            actor = f"user:{user_id}"
+        # Derive a summary for new-style callers if none was supplied. Use
+        # the legacy ``_audit_summary_*`` helpers so the audit log entries
+        # produced by the new delegation path are byte-compatible with the
+        # pre-refactor shape (the UI and existing tests assert on these
+        # exact substrings).
+        if summary is None:
+            if action_kind == "settings_write" and key is not None:
+                summary = self._audit_summary_settings_write(key, new_preview)
+            elif action_kind == "settings_append" and key is not None:
+                summary = self._audit_summary_settings_append(key, new_preview)
+            elif action_kind == "settings_update_item" and key is not None:
+                summary = self._audit_summary_settings_update_item(key, "")
+            elif action_kind == "credential_store":
+                summary = "stored"
+            elif action_kind == "credential_delete":
+                summary = "deleted"
+            else:
+                summary = action_kind or ""
+
         if self._settings_store is None:
-            return
+            return None
         try:
             existing = await self._settings_store.get_setting(self._AUDIT_KEY)
         except Exception:  # noqa: BLE001
@@ -286,12 +376,19 @@ class ActionHandler:
         if not isinstance(existing, list):
             existing = []
 
+        # Preserve legacy ``user`` field: for new-style callers the actor is
+        # already of the form ``user:<id>`` — strip the prefix so the UI
+        # column continues to show raw user ids.
+        user_display = user_id
+        if user_display is None and isinstance(actor, str):
+            user_display = actor.split(":", 1)[1] if actor.startswith("user:") else actor
+
         entry = {
             "ts": time.time(),
             "action": action_kind,
             "key": key,
-            "user": user_id,
-            "summary": summary[:200],
+            "user": user_display,
+            "summary": (summary or "")[:200],
         }
         capped = (existing + [entry])[-self._AUDIT_MAX:]
 
@@ -299,6 +396,8 @@ class ActionHandler:
             await self._settings_store.set_setting(self._AUDIT_KEY, capped)
         except Exception as exc:  # noqa: BLE001
             logger.warning("_record_audit: failed to persist audit log: %s", exc)
+            return None
+        return len(capped)
 
     # ------------------------------------------------------------------
     # Audit summary builders (no sensitive values may appear)
