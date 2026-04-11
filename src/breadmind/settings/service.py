@@ -377,6 +377,7 @@ class SettingsService:
         *,
         actor: str,
         description: str = "",
+        audit_summary: str | None = None,
     ) -> SetResult:
         if not settings_schema.is_credential_key(key):
             return SetResult(
@@ -397,6 +398,7 @@ class SettingsService:
                 actor=actor,
                 old_preview=None,
                 new_preview=None,
+                summary=audit_summary,
             )
             # Credentials never carry plaintext through events.
             dispatch = await self._registry.dispatch(

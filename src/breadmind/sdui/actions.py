@@ -208,6 +208,24 @@ class ActionHandler:
         if is_credential_key(key):
             if self._credential_vault is None:
                 return {"ok": False, "error": "credential vault not configured"}
+            # Route apikey:* writes through SettingsService.set_credential so
+            # SETTINGS_CHANGED + reload dispatch fire for API key rotations.
+            if self._settings_service is not None:
+                result = await self._settings_service.set_credential(
+                    key,
+                    cleaned,
+                    actor=f"user:{user_id}",
+                    audit_summary=self._audit_summary_settings_write(key, cleaned),
+                )
+                if not result.ok:
+                    return {"ok": False, "error": result.error or "set_credential failed"}
+                return {
+                    "ok": True,
+                    "persisted": result.persisted,
+                    "restart_required": result.restart_required,
+                    "refresh_view": "settings_view",
+                }
+            # Fallback: no SettingsService (e.g. construction failed).
             try:
                 await self._credential_vault.store(key, cleaned, None)
             except Exception as exc:  # noqa: BLE001
