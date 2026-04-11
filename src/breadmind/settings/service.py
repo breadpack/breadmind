@@ -61,11 +61,13 @@ class SettingsService:
         vault: Any,
         audit_sink: AuditSink,
         reload_registry: SettingsReloadRegistry,
+        event_bus: Any | None = None,
     ) -> None:
         self._store = store
         self._vault = vault
         self._audit_sink = audit_sink
         self._registry = reload_registry
+        self._bus = event_bus
         self._key_locks: dict[str, asyncio.Lock] = {}
 
     def _lock(self, key: str) -> asyncio.Lock:
@@ -74,6 +76,37 @@ class SettingsService:
         # lock instance even if a future edit sneaks an ``await`` into this
         # path.
         return self._key_locks.setdefault(key, asyncio.Lock())
+
+    async def _emit(
+        self,
+        *,
+        key: str,
+        operation: str,
+        old: Any,
+        new: Any,
+        actor: str,
+        audit_id: int | None,
+    ) -> None:
+        if self._bus is None:
+            return
+        from breadmind.core.events import EventType
+        if settings_schema.is_credential_key(key):
+            old_payload = None
+            new_payload = None
+        else:
+            old_payload = old
+            new_payload = new
+        await self._bus.async_emit(
+            EventType.SETTINGS_CHANGED.value,
+            {
+                "key": key,
+                "operation": operation,
+                "old": old_payload,
+                "new": new_payload,
+                "actor": actor,
+                "audit_id": audit_id,
+            },
+        )
 
     async def get(self, key: str) -> Any:
         if settings_schema.is_credential_key(key):
@@ -110,6 +143,10 @@ class SettingsService:
             )
             dispatch = await self._registry.dispatch(
                 key=key, operation="set", old=old, new=normalized
+            )
+            await self._emit(
+                key=key, operation="set", old=old, new=normalized,
+                actor=actor, audit_id=audit_id,
             )
 
         return SetResult(
@@ -152,6 +189,10 @@ class SettingsService:
             )
             dispatch = await self._registry.dispatch(
                 key=key, operation="append", old=old, new=normalized
+            )
+            await self._emit(
+                key=key, operation="append", old=old, new=normalized,
+                actor=actor, audit_id=audit_id,
             )
 
         return SetResult(
@@ -214,6 +255,10 @@ class SettingsService:
             dispatch = await self._registry.dispatch(
                 key=key, operation="update_item", old=old, new=normalized
             )
+            await self._emit(
+                key=key, operation="update_item", old=old, new=normalized,
+                actor=actor, audit_id=audit_id,
+            )
 
         return SetResult(
             ok=True,
@@ -271,6 +316,10 @@ class SettingsService:
             dispatch = await self._registry.dispatch(
                 key=key, operation="delete_item", old=old, new=normalized
             )
+            await self._emit(
+                key=key, operation="delete_item", old=old, new=normalized,
+                actor=actor, audit_id=audit_id,
+            )
 
         return SetResult(
             ok=True,
@@ -315,6 +364,10 @@ class SettingsService:
             dispatch = await self._registry.dispatch(
                 key=key, operation="credential_store", old=None, new=None
             )
+            await self._emit(
+                key=key, operation="credential_store", old=None, new=None,
+                actor=actor, audit_id=audit_id,
+            )
 
         return SetResult(
             ok=True,
@@ -346,6 +399,10 @@ class SettingsService:
             )
             dispatch = await self._registry.dispatch(
                 key=key, operation="credential_delete", old=None, new=None
+            )
+            await self._emit(
+                key=key, operation="credential_delete", old=None, new=None,
+                actor=actor, audit_id=audit_id,
             )
         return SetResult(
             ok=True,
