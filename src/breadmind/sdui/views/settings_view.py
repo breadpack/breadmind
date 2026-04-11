@@ -18,6 +18,7 @@ persists via the settings store or credential vault.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any
 
 from breadmind.sdui.settings_schema import mask_credential
@@ -179,7 +180,7 @@ async def build(
     polling_config = await _safe_get(settings_store, "polling_config", {}) or {}
     agent_timeouts = await _safe_get(settings_store, "agent_timeouts", {}) or {}
     logging_config = await _safe_get(settings_store, "logging_config", {}) or {}
-    vault_keys = await _safe_list_prefix(db, "vault:")
+    vault_entries = await _safe_list_vault_entries(db)
 
     # Phase 4: admin gating — 안전 & 권한 and 고급 tabs are admin-only.
     # If admin_users is empty/missing, NOBODY is admin (closed by default).
@@ -209,7 +210,7 @@ async def build(
                 polling_config,
                 agent_timeouts,
                 logging_config,
-                vault_keys,
+                vault_entries,
             )
         )
 
@@ -268,6 +269,56 @@ async def _safe_list_prefix(store: Any, prefix: str) -> list[str]:
     except Exception as exc:  # noqa: BLE001
         logger.debug("settings_view: list_settings_by_prefix(%s) failed: %s", prefix, exc)
         return []
+
+
+async def _safe_list_vault_entries(db: Any) -> list[dict] | None:
+    """Return a list of vault entry dicts (id, stored_at, has_metadata), or None.
+
+    Returns:
+      None   — db has no list_settings_by_prefix (vault unavailable)
+      []     — method exists but no vault keys found (vault empty)
+      [...]  — one dict per vault entry, up to 100
+
+    Each dict: {"id": str, "stored_at": float | None, "has_metadata": bool}
+    """
+    if db is None:
+        return None
+    try:
+        lister = getattr(db, "list_settings_by_prefix", None)
+        if lister is None:
+            return None
+        keys = await lister("vault:")
+        if not isinstance(keys, list):
+            return []
+        entries: list[dict] = []
+        for key in keys[:100]:
+            try:
+                data = await db.get_setting(key)
+                if not isinstance(data, dict):
+                    data = {}
+                entries.append(
+                    {
+                        "id": key.removeprefix("vault:"),
+                        "stored_at": data.get("stored_at"),
+                        "has_metadata": bool(data.get("metadata")),
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("settings_view: get_setting(%s) failed: %s", key, exc)
+        return entries
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("settings_view: _safe_list_vault_entries failed: %s", exc)
+        return None
+
+
+def _format_timestamp(ts: float | None) -> str:
+    """Convert a Unix timestamp to 'YYYY-MM-DD HH:MM' string, or '-' if None."""
+    if ts is None:
+        return "-"
+    try:
+        return datetime.fromtimestamp(float(ts)).strftime("%Y-%m-%d %H:%M")
+    except Exception:  # noqa: BLE001
+        return "-"
 
 
 # ── Tab: Quick Start ───────────────────────────────────────────────────────
@@ -1461,7 +1512,7 @@ def _advanced_tab(
     polling_config: dict,
     agent_timeouts: dict,
     logging_config: dict,
-    vault_keys: list[str],
+    vault_entries: list[dict] | None,
 ) -> Component:
     return Component(
         type="stack",
@@ -1475,7 +1526,7 @@ def _advanced_tab(
             _polling_card(polling_config),
             _agent_timeouts_card(agent_timeouts),
             _logging_card(logging_config),
-            _vault_card(vault_keys),
+            _vault_card(vault_entries),
         ],
     )
 
@@ -1736,24 +1787,128 @@ def _logging_card(logging_config: dict) -> Component:
     )
 
 
-def _vault_card(vault_keys: list[str]) -> Component:
+def _vault_entry_row(entry: dict, index: int) -> Component:
+    """Render a single vault entry: id label, masked indicator, stored_at, delete button."""
+    cred_id = entry.get("id", "")
+    stored_at = _format_timestamp(entry.get("stored_at"))
+    row_id = f"adv-vault-entry-{index}"
+    return Component(
+        type="stack",
+        id=row_id,
+        props={"gap": "xs"},
+        children=[
+            Component(
+                type="stack",
+                id=f"{row_id}-top",
+                props={"direction": "horizontal", "gap": "sm", "align": "center"},
+                children=[
+                    Component(
+                        type="text",
+                        id=f"{row_id}-id",
+                        props={"value": cred_id, "variant": "code"},
+                    ),
+                    Component(
+                        type="badge",
+                        id=f"{row_id}-masked",
+                        props={"value": "●●●● 저장됨"},
+                    ),
+                    Component(
+                        type="button",
+                        id=f"{row_id}-del",
+                        props={
+                            "label": "삭제",
+                            "variant": "danger-sm",
+                            "action": {
+                                "kind": "credential_delete",
+                                "credential_id": cred_id,
+                            },
+                        },
+                    ),
+                ],
+            ),
+            Component(
+                type="text",
+                id=f"{row_id}-ts",
+                props={"value": f"저장 시각: {stored_at}", "variant": "muted"},
+            ),
+        ],
+    )
+
+
+def _vault_card(vault_entries: list[dict] | None) -> Component:
+    """Render the credential vault management card.
+
+    vault_entries=None  → db lacked list_settings_by_prefix (unavailable)
+    vault_entries=[]    → db returned no entries (empty)
+    vault_entries=[...] → one row per entry + delete button each
+    """
     children: list[Component] = [
         Component(type="heading", id="adv-vault-h", props={"value": "자격증명 금고", "level": 4}),
-        Component(type="text", id="adv-vault-d", props={"value": "저장된 자격증명 목록입니다. (읽기 전용)"}),
+        Component(type="text", id="adv-vault-d", props={"value": "저장된 자격증명을 관리합니다."}),
     ]
-    if not vault_keys:
+
+    if vault_entries is None:
+        children.append(
+            Component(
+                type="text",
+                id="adv-vault-unavailable",
+                props={"value": "자격증명 금고를 불러올 수 없습니다."},
+            )
+        )
+    elif not vault_entries:
         children.append(
             Component(
                 type="text",
                 id="adv-vault-empty",
-                props={"value": "자격증명 금고 목록을 불러올 수 없습니다."},
+                props={"value": "저장된 자격증명이 없습니다."},
             )
         )
     else:
-        kv_items = [{"key": k, "value": "저장됨"} for k in vault_keys]
-        children.append(
-            Component(type="kv", id="adv-vault-kv", props={"items": kv_items})
+        for i, entry in enumerate(vault_entries):
+            children.append(_vault_entry_row(entry, i))
+
+    # Add / rotate form — always present so users can add new credentials.
+    children.append(
+        Component(
+            type="heading",
+            id="adv-vault-form-h",
+            props={"value": "자격증명 추가 / 교체", "level": 5},
         )
+    )
+    children.append(
+        Component(
+            type="form",
+            id="adv-vault-form",
+            props={
+                "action": {"kind": "credential_store"},
+                "submit_label": "저장",
+            },
+            children=[
+                Component(
+                    type="field",
+                    id="adv-vault-form-id",
+                    props={
+                        "name": "credential_id",
+                        "label": "자격증명 ID",
+                        "value": "",
+                        "type": "text",
+                        "placeholder": "예: ssh:host1, messenger:slack",
+                    },
+                ),
+                Component(
+                    type="field",
+                    id="adv-vault-form-value",
+                    props={
+                        "name": "value",
+                        "label": "값 (비밀번호 / 토큰)",
+                        "value": "",
+                        "type": "password",
+                    },
+                ),
+            ],
+        )
+    )
+
     return Component(
         type="list",
         id="adv-vault",
