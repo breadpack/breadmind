@@ -9,6 +9,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from breadmind.core.events import EventBus
 from breadmind.sdui.actions import ActionHandler
 from breadmind.settings.approval_queue import PendingApprovalQueue
 from breadmind.settings.rate_limiter import SlidingWindowRateLimiter
@@ -28,6 +29,7 @@ class SettingsPipeline:
     approval_queue: PendingApprovalQueue
     rate_limiter: SlidingWindowRateLimiter
     runtime_config_holder: RuntimeConfigHolder
+    settings_event_bus: EventBus
 
 
 _RUNTIME_CONFIG_KEYS = (
@@ -60,6 +62,13 @@ async def build_settings_pipeline(
     approval_queue = PendingApprovalQueue()
     rate_limiter = SlidingWindowRateLimiter(window_seconds=60, max_events=20)
 
+    # Settings changes use their own lightweight EventBus, NOT the
+    # FlowEventBus. The two buses have incompatible APIs — FlowEventBus
+    # publishes typed FlowEvent objects, while SettingsService.emit needs
+    # a (event_name, dict) publish channel. Wiring settings writes through
+    # flow_bus raised AttributeError: 'FlowEventBus' has no 'async_emit'.
+    settings_event_bus = EventBus()
+
     async def _placeholder_audit(**_kwargs):
         return None
 
@@ -68,7 +77,7 @@ async def build_settings_pipeline(
         vault=credential_vault,
         audit_sink=_placeholder_audit,
         reload_registry=reload_registry,
-        event_bus=flow_bus,
+        event_bus=settings_event_bus,
         approval_queue=approval_queue,
         rate_limiter=rate_limiter,
     )
@@ -79,7 +88,7 @@ async def build_settings_pipeline(
         working_memory=working_memory,
         settings_store=settings_store,
         credential_vault=credential_vault,
-        event_bus=flow_bus,
+        event_bus=settings_event_bus,
         settings_service=settings_service,
     )
     settings_service.set_audit_sink(action_handler._record_audit)
@@ -102,4 +111,5 @@ async def build_settings_pipeline(
         approval_queue=approval_queue,
         rate_limiter=rate_limiter,
         runtime_config_holder=runtime_config_holder,
+        settings_event_bus=settings_event_bus,
     )

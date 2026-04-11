@@ -47,12 +47,48 @@ async def test_build_settings_pipeline_assembles_full_stack():
     assert pipeline.approval_queue is not None
     assert pipeline.rate_limiter is not None
     assert pipeline.runtime_config_holder is not None
+    assert pipeline.settings_event_bus is not None
 
     # Audit sink back-fill happened: service routes through action_handler.
     assert (
         pipeline.settings_service._audit_sink
         == pipeline.action_handler._record_audit
     )
+
+    # SettingsService uses the dedicated settings_event_bus, NOT flow_bus.
+    # flow_bus is the FlowEventBus which has a different API shape and would
+    # blow up on SettingsService._emit_payload.
+    assert pipeline.settings_service._bus is pipeline.settings_event_bus
+    assert pipeline.settings_service._bus is not flow_bus
+
+
+async def test_settings_event_bus_emits_on_write():
+    """End-to-end: a SettingsService.set should fire on the dedicated bus."""
+    from breadmind.core.events import EventType
+
+    store = FakeStore({"persona": {"preset": "professional"}})
+    pipeline = await build_settings_pipeline(
+        flow_bus=EventBus(),
+        settings_store=store,
+        credential_vault=FakeVault(),
+        message_handler=None,
+        working_memory=None,
+    )
+
+    events: list[dict] = []
+
+    async def capture(data):
+        events.append(data)
+
+    pipeline.settings_event_bus.on(EventType.SETTINGS_CHANGED.value, capture)
+
+    result = await pipeline.settings_service.set(
+        "persona", {"preset": "friendly"}, actor="user:test",
+    )
+    assert result.ok is True
+    assert len(events) == 1
+    assert events[0]["key"] == "persona"
+    assert events[0]["new"] == {"preset": "friendly"}
 
 
 async def test_build_settings_pipeline_seeds_runtime_config_from_store():

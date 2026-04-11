@@ -145,6 +145,7 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
         app.state.settings_service = pipeline.settings_service
         app.state.settings_approval_queue = pipeline.approval_queue
         app.state.settings_rate_limiter = pipeline.rate_limiter
+        app.state.settings_event_bus = pipeline.settings_event_bus
         app.state.runtime_config_holder = pipeline.runtime_config_holder
         app.state.sdui_action_handler = pipeline.action_handler
 
