@@ -57,6 +57,18 @@ _EMBEDDING_PROVIDER_OPTIONS = [
     {"value": "off", "label": "비활성화"},
 ]
 
+_SKILL_MARKET_TYPE_OPTIONS = [
+    {"value": "skills_sh", "label": "skills.sh"},
+    {"value": "skillsmp", "label": "SkillsMCP"},
+    {"value": "clawhub", "label": "ClawHub"},
+    {"value": "mcp_registry", "label": "MCP Registry"},
+]
+
+_BOOL_OPTIONS = [
+    {"value": "true", "label": "활성화"},
+    {"value": "false", "label": "비활성화"},
+]
+
 # ── Phase 3 defaults ───────────────────────────────────────────────────────
 
 _MEMORY_GC_DEFAULTS: dict[str, Any] = {
@@ -684,9 +696,24 @@ def _mcp_servers_card(mcp_servers: list) -> Component:
             )
     server_children.append(
         Component(
-            type="text",
-            id="int-mcp-srv-phase3",
-            props={"value": "서버 추가/편집 기능은 Phase 3에서 제공됩니다."},
+            type="form",
+            id="int-mcp-add-form",
+            props={
+                "action": {"kind": "settings_append", "key": "mcp_servers"},
+                "submit_label": "+ 추가",
+            },
+            children=[
+                Component(
+                    type="field",
+                    id="int-mcp-add-name",
+                    props={"name": "name", "label": "이름", "value": "", "type": "text"},
+                ),
+                Component(
+                    type="field",
+                    id="int-mcp-add-command",
+                    props={"name": "command", "label": "명령어", "value": "", "type": "text"},
+                ),
+            ],
         )
     )
     return Component(
@@ -746,9 +773,44 @@ def _skill_markets_card(skill_markets: list) -> Component:
             )
     children.append(
         Component(
-            type="text",
-            id="int-skill-phase3",
-            props={"value": "마켓 추가/편집 기능은 Phase 3에서 제공됩니다."},
+            type="form",
+            id="int-market-add-form",
+            props={
+                "action": {"kind": "settings_append", "key": "skill_markets"},
+                "submit_label": "+ 추가",
+            },
+            children=[
+                Component(
+                    type="field",
+                    id="int-market-add-name",
+                    props={"name": "name", "label": "이름", "value": "", "type": "text"},
+                ),
+                Component(
+                    type="select",
+                    id="int-market-add-type",
+                    props={
+                        "name": "type",
+                        "label": "유형",
+                        "value": "skills_sh",
+                        "options": _SKILL_MARKET_TYPE_OPTIONS,
+                    },
+                ),
+                Component(
+                    type="field",
+                    id="int-market-add-url",
+                    props={"name": "url", "label": "URL (선택)", "value": "", "type": "text"},
+                ),
+                Component(
+                    type="select",
+                    id="int-market-add-enabled",
+                    props={
+                        "name": "enabled",
+                        "label": "활성화",
+                        "value": "true",
+                        "options": _BOOL_OPTIONS,
+                    },
+                ),
+            ],
         )
     )
     return Component(
@@ -822,7 +884,26 @@ def _blacklist_card(safety_blacklist: dict) -> Component:
                 )
             )
     children.append(
-        Component(type="text", id="safety-bl-phase3", props={"value": "도구 추가 기능은 Phase 3에서 제공됩니다."})
+        Component(
+            type="form",
+            id="safety-blacklist-add-form",
+            props={
+                "action": {"kind": "settings_append", "key": "safety_blacklist"},
+                "submit_label": "+ 추가",
+            },
+            children=[
+                Component(
+                    type="field",
+                    id="safety-bl-add-domain",
+                    props={"name": "domain", "label": "도메인", "value": "", "type": "text"},
+                ),
+                Component(
+                    type="field",
+                    id="safety-bl-add-tool",
+                    props={"name": "tool", "label": "도구 이름", "value": "", "type": "text"},
+                ),
+            ],
+        )
     )
     return Component(
         type="list",
@@ -856,7 +937,21 @@ def _approval_card(safety_approval: list) -> Component:
                 )
             )
     children.append(
-        Component(type="text", id="safety-ap-phase3", props={"value": "도구 추가 기능은 Phase 3에서 제공됩니다."})
+        Component(
+            type="form",
+            id="safety-approval-add-form",
+            props={
+                "action": {"kind": "settings_append", "key": "safety_approval"},
+                "submit_label": "+ 추가",
+            },
+            children=[
+                Component(
+                    type="field",
+                    id="safety-ap-add-tool",
+                    props={"name": "tool", "label": "도구 이름", "value": "", "type": "text"},
+                ),
+            ],
+        )
     )
     return Component(
         type="list",
@@ -905,6 +1000,24 @@ def _permissions_card(safety_permissions: dict) -> Component:
                 props={"value": "관리자 목록이 비어있으면 모든 사용자가 일반 권한 검사를 받습니다."},
             )
         )
+
+    children.append(
+        Component(
+            type="form",
+            id="safety-admin-add-form",
+            props={
+                "action": {"kind": "settings_append", "key": "safety_permissions_admin_users"},
+                "submit_label": "+ 추가",
+            },
+            children=[
+                Component(
+                    type="field",
+                    id="safety-admin-add-user",
+                    props={"name": "user", "label": "사용자 이름", "value": "", "type": "text"},
+                ),
+            ],
+        )
+    )
 
     children.append(
         Component(type="heading", id="safety-perm-up-h", props={"value": "사용자별 도구 화이트리스트", "level": 5})
@@ -1166,9 +1279,39 @@ def _scheduler_cron_card(scheduler_cron: list) -> Component:
             )
     children.append(
         Component(
-            type="text",
-            id="mon-cron-phase3",
-            props={"value": "크론 작업 추가/편집 기능은 Phase 3에서 제공됩니다."},
+            type="form",
+            id="mon-cron-add-form",
+            props={
+                "action": {"kind": "settings_append", "key": "scheduler_cron"},
+                "submit_label": "+ 추가",
+            },
+            children=[
+                Component(
+                    type="field",
+                    id="mon-cron-add-name",
+                    props={"name": "name", "label": "이름", "value": "", "type": "text"},
+                ),
+                Component(
+                    type="field",
+                    id="mon-cron-add-schedule",
+                    props={"name": "schedule", "label": "크론 표현식", "value": "", "type": "text", "placeholder": "0 9 * * 1"},
+                ),
+                Component(
+                    type="field",
+                    id="mon-cron-add-task",
+                    props={"name": "task", "label": "작업", "value": "", "type": "text"},
+                ),
+                Component(
+                    type="select",
+                    id="mon-cron-add-enabled",
+                    props={
+                        "name": "enabled",
+                        "label": "활성화",
+                        "value": "true",
+                        "options": _BOOL_OPTIONS,
+                    },
+                ),
+            ],
         )
     )
     return Component(
