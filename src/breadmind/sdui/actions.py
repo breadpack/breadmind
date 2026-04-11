@@ -362,7 +362,11 @@ class ActionHandler:
         if self._credential_vault is None:
             return {"ok": False, "error": "credential vault not configured"}
 
-        credential_id = action.get("credential_id")
+        # SDUI form widgets place all field values inside ``values``; programmatic
+        # callers may pass them at the top level. Accept both shapes so the same
+        # action handler works for both.
+        values = action.get("values") if isinstance(action.get("values"), dict) else {}
+        credential_id = action.get("credential_id") or values.get("credential_id")
         if not isinstance(credential_id, str) or not credential_id:
             return {"ok": False, "error": "credential_id must be a non-empty string"}
         if not _VAULT_ID_RE.match(credential_id):
@@ -374,13 +378,13 @@ class ActionHandler:
                 ),
             }
 
-        value = action.get("value")
+        value = action.get("value") if "value" in action else values.get("value")
         if not isinstance(value, str) or not value:
             return {"ok": False, "error": "value must be a non-empty string"}
         if len(value) > _MAX_VAULT_VALUE_LEN:
             return {"ok": False, "error": f"value exceeds maximum size of {_MAX_VAULT_VALUE_LEN} bytes"}
 
-        metadata = action.get("metadata")
+        metadata = action.get("metadata") if "metadata" in action else values.get("metadata")
         if metadata is not None and not isinstance(metadata, dict):
             return {"ok": False, "error": "metadata must be a dict if provided"}
 
@@ -408,7 +412,8 @@ class ActionHandler:
         if self._credential_vault is None:
             return {"ok": False, "error": "credential vault not configured"}
 
-        credential_id = action.get("credential_id")
+        values = action.get("values") if isinstance(action.get("values"), dict) else {}
+        credential_id = action.get("credential_id") or values.get("credential_id")
         if not isinstance(credential_id, str) or not credential_id:
             return {"ok": False, "error": "credential_id must be a non-empty string"}
         if not _VAULT_ID_RE.match(credential_id):
