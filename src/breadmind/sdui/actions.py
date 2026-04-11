@@ -8,6 +8,7 @@ Action message shape:
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Awaitable, Callable
 from uuid import UUID
 
@@ -16,6 +17,9 @@ from breadmind.flow.events import EventType, FlowActor, FlowEvent
 
 logger = logging.getLogger(__name__)
 
+# Vault credential ID: alphanumeric plus _:.@-/ up to 128 chars
+_VAULT_ID_RE = re.compile(r"^[A-Za-z0-9_:.@\-/]{1,128}$")
+_MAX_VAULT_VALUE_LEN = 64 * 1024
 
 MessageHandler = Callable[..., Awaitable[str]]
 
@@ -62,6 +66,10 @@ class ActionHandler:
             return await self._settings_write(action, user_id)
         if kind == "settings_append":
             return await self._settings_append(action, user_id)
+        if kind == "credential_store":
+            return await self._credential_store(action, user_id)
+        if kind == "credential_delete":
+            return await self._credential_delete(action, user_id)
         if kind == "dev_inject_assistant":
             return await self._dev_inject_assistant(action, user_id)
         return {"ok": False, "error": f"unknown action kind: {kind}"}
@@ -339,6 +347,96 @@ class ActionHandler:
             return {"ok": False, "error": str(exc)}
 
         return {"ok": True, "persisted": True, "refresh_view": "settings_view"}
+
+    # ------------------------------------------------------------------
+    # Vault credential actions (admin-only; no bootstrap exception)
+    # ------------------------------------------------------------------
+
+    async def _credential_store(
+        self, action: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
+        """Store or rotate a credential in the vault."""
+        if not await self._is_admin(user_id):
+            return {"ok": False, "error": "permission denied: admin only"}
+
+        if self._credential_vault is None:
+            return {"ok": False, "error": "credential vault not configured"}
+
+        credential_id = action.get("credential_id")
+        if not isinstance(credential_id, str) or not credential_id:
+            return {"ok": False, "error": "credential_id must be a non-empty string"}
+        if not _VAULT_ID_RE.match(credential_id):
+            return {
+                "ok": False,
+                "error": (
+                    "credential_id invalid: max 128 chars, "
+                    "allowed characters: [A-Za-z0-9_:.@\\-/]"
+                ),
+            }
+
+        value = action.get("value")
+        if not isinstance(value, str) or not value:
+            return {"ok": False, "error": "value must be a non-empty string"}
+        if len(value) > _MAX_VAULT_VALUE_LEN:
+            return {"ok": False, "error": f"value exceeds maximum size of {_MAX_VAULT_VALUE_LEN} bytes"}
+
+        metadata = action.get("metadata")
+        if metadata is not None and not isinstance(metadata, dict):
+            return {"ok": False, "error": "metadata must be a dict if provided"}
+
+        try:
+            await self._credential_vault.store(credential_id, value, metadata)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("credential_store vault.store failed for %s: %s", credential_id, exc)
+            return {"ok": False, "error": str(exc)}
+
+        logger.info("credential_store: stored credential %s", credential_id)
+        return {
+            "ok": True,
+            "persisted": True,
+            "credential_id": credential_id,
+            "refresh_view": "settings_view",
+        }
+
+    async def _credential_delete(
+        self, action: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
+        """Delete a credential from the vault."""
+        if not await self._is_admin(user_id):
+            return {"ok": False, "error": "permission denied: admin only"}
+
+        if self._credential_vault is None:
+            return {"ok": False, "error": "credential vault not configured"}
+
+        credential_id = action.get("credential_id")
+        if not isinstance(credential_id, str) or not credential_id:
+            return {"ok": False, "error": "credential_id must be a non-empty string"}
+        if not _VAULT_ID_RE.match(credential_id):
+            return {
+                "ok": False,
+                "error": (
+                    "credential_id invalid: max 128 chars, "
+                    "allowed characters: [A-Za-z0-9_:.@\\-/]"
+                ),
+            }
+
+        try:
+            deleted = await self._credential_vault.delete(credential_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("credential_delete vault.delete failed for %s: %s", credential_id, exc)
+            return {"ok": False, "error": str(exc)}
+
+        if not deleted:
+            logger.warning("credential_delete: credential not found: %s", credential_id)
+            return {"ok": False, "error": "credential not found"}
+
+        logger.info("credential_delete: deleted credential %s", credential_id)
+        return {
+            "ok": True,
+            "persisted": True,
+            "credential_id": credential_id,
+            "refresh_view": "settings_view",
+        }
 
     # ------------------------------------------------------------------
     # Per-key merge helpers (return (merged_candidate, error_str|None))
