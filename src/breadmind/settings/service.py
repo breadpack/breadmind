@@ -12,6 +12,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from breadmind.core.events import EventBus, EventType
 from breadmind.sdui import settings_schema
 from breadmind.settings.reload_registry import SettingsReloadRegistry
 
@@ -61,7 +62,7 @@ class SettingsService:
         vault: Any,
         audit_sink: AuditSink,
         reload_registry: SettingsReloadRegistry,
-        event_bus: Any | None = None,
+        event_bus: EventBus | None = None,
     ) -> None:
         self._store = store
         self._vault = vault
@@ -77,7 +78,7 @@ class SettingsService:
         # path.
         return self._key_locks.setdefault(key, asyncio.Lock())
 
-    async def _emit(
+    def _build_event_payload(
         self,
         *,
         key: str,
@@ -86,27 +87,42 @@ class SettingsService:
         new: Any,
         actor: str,
         audit_id: int | None,
-    ) -> None:
+    ) -> dict[str, Any] | None:
+        """Build the SETTINGS_CHANGED payload, masking credential plaintext.
+
+        Returns ``None`` when no event bus is configured — callers can then
+        skip the emit entirely. Credential keys always get ``old=new=None``
+        as defense in depth, even if a caller forgot to mask.
+        """
         if self._bus is None:
-            return
-        from breadmind.core.events import EventType
+            return None
         if settings_schema.is_credential_key(key):
             old_payload = None
             new_payload = None
         else:
             old_payload = old
             new_payload = new
-        await self._bus.async_emit(
-            EventType.SETTINGS_CHANGED.value,
-            {
-                "key": key,
-                "operation": operation,
-                "old": old_payload,
-                "new": new_payload,
-                "actor": actor,
-                "audit_id": audit_id,
-            },
-        )
+        return {
+            "key": key,
+            "operation": operation,
+            "old": old_payload,
+            "new": new_payload,
+            "actor": actor,
+            "audit_id": audit_id,
+        }
+
+    async def _emit_payload(self, payload: dict[str, Any] | None) -> None:
+        """Publish a prepared SETTINGS_CHANGED payload.
+
+        Kept separate from :meth:`_build_event_payload` so callers can build
+        the payload *inside* the per-key lock (snapshot of pre/post state)
+        but run the actual ``async_emit`` *outside* the lock, avoiding a
+        deadlock if a subscriber writes back into ``SettingsService`` for
+        the same key (``asyncio.Lock`` is non-reentrant).
+        """
+        if payload is None or self._bus is None:
+            return
+        await self._bus.async_emit(EventType.SETTINGS_CHANGED.value, payload)
 
     async def get(self, key: str) -> Any:
         if settings_schema.is_credential_key(key):
@@ -144,10 +160,11 @@ class SettingsService:
             dispatch = await self._registry.dispatch(
                 key=key, operation="set", old=old, new=normalized
             )
-            await self._emit(
+            event_payload = self._build_event_payload(
                 key=key, operation="set", old=old, new=normalized,
                 actor=actor, audit_id=audit_id,
             )
+        await self._emit_payload(event_payload)
 
         return SetResult(
             ok=True,
@@ -190,10 +207,11 @@ class SettingsService:
             dispatch = await self._registry.dispatch(
                 key=key, operation="append", old=old, new=normalized
             )
-            await self._emit(
+            event_payload = self._build_event_payload(
                 key=key, operation="append", old=old, new=normalized,
                 actor=actor, audit_id=audit_id,
             )
+        await self._emit_payload(event_payload)
 
         return SetResult(
             ok=True,
@@ -255,10 +273,11 @@ class SettingsService:
             dispatch = await self._registry.dispatch(
                 key=key, operation="update_item", old=old, new=normalized
             )
-            await self._emit(
+            event_payload = self._build_event_payload(
                 key=key, operation="update_item", old=old, new=normalized,
                 actor=actor, audit_id=audit_id,
             )
+        await self._emit_payload(event_payload)
 
         return SetResult(
             ok=True,
@@ -316,10 +335,11 @@ class SettingsService:
             dispatch = await self._registry.dispatch(
                 key=key, operation="delete_item", old=old, new=normalized
             )
-            await self._emit(
+            event_payload = self._build_event_payload(
                 key=key, operation="delete_item", old=old, new=normalized,
                 actor=actor, audit_id=audit_id,
             )
+        await self._emit_payload(event_payload)
 
         return SetResult(
             ok=True,
@@ -364,10 +384,11 @@ class SettingsService:
             dispatch = await self._registry.dispatch(
                 key=key, operation="credential_store", old=None, new=None
             )
-            await self._emit(
+            event_payload = self._build_event_payload(
                 key=key, operation="credential_store", old=None, new=None,
                 actor=actor, audit_id=audit_id,
             )
+        await self._emit_payload(event_payload)
 
         return SetResult(
             ok=True,
@@ -400,10 +421,11 @@ class SettingsService:
             dispatch = await self._registry.dispatch(
                 key=key, operation="credential_delete", old=None, new=None
             )
-            await self._emit(
+            event_payload = self._build_event_payload(
                 key=key, operation="credential_delete", old=None, new=None,
                 actor=actor, audit_id=audit_id,
             )
+        await self._emit_payload(event_payload)
         return SetResult(
             ok=True,
             operation="credential_delete",
