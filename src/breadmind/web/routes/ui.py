@@ -307,6 +307,48 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
         except Exception as exc:  # noqa: BLE001
             logger.warning("persona hot-reload wiring skipped: %s", exc)
 
+        # Task 11: hot-reload SafetyGuard rules.
+        try:
+            safety_guard = getattr(app_state, "_safety_guard", None)
+            if safety_guard is not None and hasattr(safety_guard, "reload"):
+                async def _reload_blacklist(ctx):
+                    try:
+                        safety_guard.reload(blacklist=ctx["new"])
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("safety_blacklist reload failed: %s", exc)
+
+                async def _reload_approval(ctx):
+                    try:
+                        safety_guard.reload(approval=ctx["new"])
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("safety_approval reload failed: %s", exc)
+
+                async def _reload_permissions(ctx):
+                    try:
+                        safety_guard.reload(permissions=ctx["new"])
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("safety_permissions reload failed: %s", exc)
+
+                async def _reload_tool_security(ctx):
+                    try:
+                        safety_guard.reload(tool_security=ctx["new"])
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("tool_security reload failed: %s", exc)
+
+                reload_registry.register("safety_blacklist", _reload_blacklist)
+                reload_registry.register("safety_approval", _reload_approval)
+                reload_registry.register("safety_permissions", _reload_permissions)
+                reload_registry.register(
+                    "safety_permissions_admin_users", _reload_permissions,
+                )
+                reload_registry.register("tool_security", _reload_tool_security)
+            else:
+                logger.warning(
+                    "SafetyGuard hot-reload wiring skipped: guard missing or lacks reload",
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("SafetyGuard hot-reload wiring skipped: %s", exc)
+
         # Register the eight agent settings tools onto the CoreAgent's tool
         # registry so LLM-driven write paths also hit the shared service.
         # Guarded because some deployments (tests, minimal runtimes) may not
