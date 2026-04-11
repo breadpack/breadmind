@@ -122,3 +122,163 @@ class SettingsService:
             reload_errors=dict(dispatch.errors),
             audit_id=audit_id,
         )
+
+    async def append(self, key: str, item: Any, *, actor: str) -> SetResult:
+        if not settings_schema.is_allowed_key(key):
+            return SetResult(ok=False, operation="append", key=key, error=f"key '{key}' is not allowed")
+
+        async with self._lock(key):
+            old = await self._store.get_setting(key) or []
+            if not isinstance(old, list):
+                return SetResult(
+                    ok=False, operation="append", key=key,
+                    error=f"key '{key}' is not a list",
+                )
+            merged = [*old, item]
+            try:
+                normalized = settings_schema.validate_value(key, merged)
+            except settings_schema.SettingsValidationError as exc:
+                return SetResult(
+                    ok=False, operation="append", key=key,
+                    error=f"validation failed — {exc}",
+                )
+            await self._store.set_setting(key, normalized)
+            audit_id = await self._audit_sink(
+                kind="settings_append",
+                key=key,
+                actor=actor,
+                old_preview=old,
+                new_preview=normalized,
+            )
+            dispatch = await self._registry.dispatch(
+                key=key, operation="append", old=old, new=normalized
+            )
+
+        return SetResult(
+            ok=True,
+            operation="append",
+            key=key,
+            persisted=True,
+            hot_reloaded=dispatch.all_ok,
+            restart_required=settings_schema.requires_restart(key),
+            reload_errors=dict(dispatch.errors),
+            audit_id=audit_id,
+        )
+
+    async def update_item(
+        self,
+        key: str,
+        *,
+        match_field: str,
+        match_value: Any,
+        patch: dict[str, Any],
+        actor: str,
+    ) -> SetResult:
+        if not settings_schema.is_allowed_key(key):
+            return SetResult(ok=False, operation="update_item", key=key, error=f"key '{key}' is not allowed")
+
+        async with self._lock(key):
+            old = await self._store.get_setting(key) or []
+            if not isinstance(old, list):
+                return SetResult(
+                    ok=False, operation="update_item", key=key,
+                    error=f"key '{key}' is not a list",
+                )
+            idx = next(
+                (i for i, it in enumerate(old)
+                 if isinstance(it, dict) and it.get(match_field) == match_value),
+                None,
+            )
+            if idx is None:
+                return SetResult(
+                    ok=False, operation="update_item", key=key,
+                    error=f"no matching item for {match_field}={match_value}",
+                )
+            new_list = [dict(it) for it in old]
+            new_list[idx] = {**new_list[idx], **patch}
+            try:
+                normalized = settings_schema.validate_value(key, new_list)
+            except settings_schema.SettingsValidationError as exc:
+                return SetResult(
+                    ok=False, operation="update_item", key=key,
+                    error=f"validation failed — {exc}",
+                )
+            await self._store.set_setting(key, normalized)
+            audit_id = await self._audit_sink(
+                kind="settings_update_item",
+                key=key,
+                actor=actor,
+                old_preview=old,
+                new_preview=normalized,
+            )
+            dispatch = await self._registry.dispatch(
+                key=key, operation="update_item", old=old, new=normalized
+            )
+
+        return SetResult(
+            ok=True,
+            operation="update_item",
+            key=key,
+            persisted=True,
+            hot_reloaded=dispatch.all_ok,
+            restart_required=settings_schema.requires_restart(key),
+            reload_errors=dict(dispatch.errors),
+            audit_id=audit_id,
+        )
+
+    async def delete_item(
+        self,
+        key: str,
+        *,
+        match_field: str,
+        match_value: Any,
+        actor: str,
+    ) -> SetResult:
+        if not settings_schema.is_allowed_key(key):
+            return SetResult(ok=False, operation="delete_item", key=key, error=f"key '{key}' is not allowed")
+
+        async with self._lock(key):
+            old = await self._store.get_setting(key) or []
+            if not isinstance(old, list):
+                return SetResult(
+                    ok=False, operation="delete_item", key=key,
+                    error=f"key '{key}' is not a list",
+                )
+            new_list = [
+                it for it in old
+                if not (isinstance(it, dict) and it.get(match_field) == match_value)
+            ]
+            if len(new_list) == len(old):
+                return SetResult(
+                    ok=False, operation="delete_item", key=key,
+                    error=f"no matching item for {match_field}={match_value}",
+                )
+            try:
+                normalized = settings_schema.validate_value(key, new_list)
+            except settings_schema.SettingsValidationError as exc:
+                return SetResult(
+                    ok=False, operation="delete_item", key=key,
+                    error=f"validation failed — {exc}",
+                )
+            await self._store.set_setting(key, normalized)
+            audit_id = await self._audit_sink(
+                kind="settings_write",
+                key=key,
+                actor=actor,
+                old_preview=old,
+                new_preview=normalized,
+            )
+            dispatch = await self._registry.dispatch(
+                key=key, operation="delete_item", old=old, new=normalized
+            )
+
+        return SetResult(
+            ok=True,
+            operation="delete_item",
+            key=key,
+            persisted=True,
+            hot_reloaded=dispatch.all_ok,
+            restart_required=settings_schema.requires_restart(key),
+            reload_errors=dict(dispatch.errors),
+            audit_id=audit_id,
+        )

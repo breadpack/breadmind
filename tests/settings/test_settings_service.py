@@ -125,3 +125,88 @@ async def test_set_embedding_config_flags_restart_required(deps):
     )
     assert result.ok is True
     assert result.restart_required is True
+
+
+_SERVER_A = {
+    "name": "github",
+    "command": "npx",
+    "args": ["-y", "github-mcp"],
+    "env": {},
+    "enabled": True,
+}
+_SERVER_B = {
+    "name": "local",
+    "command": "python",
+    "args": ["-m", "local"],
+    "env": {},
+    "enabled": False,
+}
+
+
+async def test_append_adds_item_to_list(deps):
+    deps["store"].data["mcp_servers"] = [_SERVER_A]
+    svc = build(deps)
+    result = await svc.append("mcp_servers", _SERVER_B, actor="agent:core")
+    assert result.ok is True
+    assert result.operation == "append"
+    assert len(deps["store"].data["mcp_servers"]) == 2
+    assert deps["store"].data["mcp_servers"][1]["name"] == "local"
+
+
+async def test_append_validates_merged_list(deps):
+    deps["store"].data["mcp_servers"] = []
+    svc = build(deps)
+    # Missing "command" — schema should reject.
+    result = await svc.append(
+        "mcp_servers", {"name": "bad"}, actor="agent:core"
+    )
+    assert result.ok is False
+    assert "validation failed" in (result.error or "")
+    assert deps["store"].data["mcp_servers"] == []
+
+
+async def test_update_item_patches_matching_entry(deps):
+    deps["store"].data["mcp_servers"] = [_SERVER_A, _SERVER_B]
+    svc = build(deps)
+    result = await svc.update_item(
+        "mcp_servers",
+        match_field="name",
+        match_value="github",
+        patch={"enabled": False},
+        actor="agent:core",
+    )
+    assert result.ok is True
+    assert result.operation == "update_item"
+    updated = deps["store"].data["mcp_servers"][0]
+    assert updated["enabled"] is False
+    assert updated["name"] == "github"  # unchanged
+
+
+async def test_update_item_unknown_match_returns_error(deps):
+    deps["store"].data["mcp_servers"] = [_SERVER_A]
+    svc = build(deps)
+    result = await svc.update_item(
+        "mcp_servers",
+        match_field="name",
+        match_value="nope",
+        patch={"enabled": False},
+        actor="agent:core",
+    )
+    assert result.ok is False
+    assert "no matching item" in (result.error or "").lower()
+
+
+async def test_delete_item_removes_matching_entry(deps):
+    deps["store"].data["mcp_servers"] = [_SERVER_A, _SERVER_B]
+    svc = build(deps)
+    result = await svc.delete_item(
+        "mcp_servers",
+        match_field="name",
+        match_value="github",
+        actor="agent:core",
+    )
+    assert result.ok is True
+    assert result.operation == "delete_item"
+    remaining = deps["store"].data["mcp_servers"]
+    assert len(remaining) == 1
+    assert remaining[0]["name"] == "local"
