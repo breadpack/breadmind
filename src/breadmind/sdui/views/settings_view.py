@@ -21,8 +21,23 @@ import logging
 from datetime import datetime
 from typing import Any
 
+from breadmind.sdui.settings_index import search_settings
 from breadmind.sdui.settings_schema import mask_credential
 from breadmind.sdui.spec import Component, UISpec
+
+# Maps stable tab internal IDs to their position in the tabs child list.
+# Safety and Advanced tabs are admin-only and only injected for admins, so
+# the indices below reflect the full admin view.  For non-admins the caller
+# must re-derive the index from the actual tab list.
+_TAB_INDEX: dict[str, int] = {
+    "quick_start": 0,
+    "agent_behavior": 1,
+    "integrations": 2,
+    "safety": 3,
+    "monitoring": 4,
+    "memory": 5,
+    "advanced": 6,
+}
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +164,8 @@ async def build(
     *,
     settings_store: Any = None,
     user_id: str | None = None,
+    q: str | None = None,
+    active_tab: str | None = None,
     **_kwargs: Any,
 ) -> UISpec:
     # Phase 1 data
@@ -199,16 +216,21 @@ async def build(
     is_admin: bool = bool(user_id and user_id in admin_users)
 
     # Build tabs list, filtering out admin-only tabs for non-admins.
+    tab_id_list: list[str] = ["quick_start", "agent_behavior", "integrations"]
     tabs: list[Component] = [
         _quick_start_tab(llm, persona, apikey_status),
         _agent_behavior_tab(prompts, instructions, embedding),
         _integrations_tab(mcp_config, mcp_servers, skill_markets),
     ]
     if is_admin:
+        tab_id_list.append("safety")
         tabs.append(_safety_tab(safety_blacklist, safety_approval, safety_permissions, tool_security))
+    tab_id_list.append("monitoring")
     tabs.append(_monitoring_tab(monitoring_config, scheduler_cron))
+    tab_id_list.append("memory")
     tabs.append(_memory_tab(memory_gc_config))
     if is_admin:
+        tab_id_list.append("advanced")
         tabs.append(
             _advanced_tab(
                 system_timeouts,
@@ -222,11 +244,27 @@ async def build(
             )
         )
 
+    # Resolve default_active index for tab deep-linking.
+    tabs_props: dict = {}
+    if active_tab and active_tab in tab_id_list:
+        tabs_props["default_active"] = tab_id_list.index(active_tab)
+
+    # Build search card (always present at the top).
+    search_card = _search_card(q)
+
+    # Build results card (only when query is non-empty).
+    results_card: Component | None = None
+    if q:
+        results_card = _search_results_card(q, search_settings(q))
+
     # Show a hint for non-admin users so the first operator knows to set admin_users.
     page_children: list[Component] = [
         Component(type="heading", id="settings-h", props={"value": "설정", "level": 2}),
-        Component(type="tabs", id="settings-tabs", props={}, children=tabs),
+        search_card,
     ]
+    if results_card is not None:
+        page_children.append(results_card)
+    page_children.append(Component(type="tabs", id="settings-tabs", props=tabs_props, children=tabs))
     if not is_admin:
         page_children.append(
             Component(
@@ -247,6 +285,114 @@ async def build(
             props={"title": "설정"},
             children=page_children,
         ),
+    )
+
+
+# ── Search helpers ──────────────────────────────────────────────────────────
+
+def _search_card(q: str | None) -> Component:
+    """Render the persistent search form card at the top of the settings page."""
+    return Component(
+        type="list",
+        id="settings-search",
+        props={"variant": "settings-card"},
+        children=[
+            Component(type="heading", id="settings-search-h", props={"value": "설정 검색", "level": 4}),
+            Component(
+                type="form",
+                id="settings-search-form",
+                props={
+                    "action": {
+                        "kind": "view_request",
+                        "view_key": "settings_view",
+                        "params": {"q": "__FORM_VALUE_q__"},
+                    },
+                    "submit_label": "검색",
+                },
+                children=[
+                    Component(
+                        type="field",
+                        id="settings-search-q",
+                        props={
+                            "name": "q",
+                            "label": "검색어",
+                            "value": str(q) if q else "",
+                            "type": "text",
+                            "placeholder": "필드명 또는 키 검색",
+                        },
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
+def _search_results_card(q: str, results: list[dict]) -> Component:
+    """Render the search results card below the search form."""
+    children: list[Component] = [
+        Component(type="heading", id="settings-results-h", props={"value": "검색 결과", "level": 4}),
+        Component(
+            type="text",
+            id="settings-results-query",
+            props={"value": f"검색어: {q}", "variant": "muted"},
+        ),
+    ]
+
+    if not results:
+        children.append(
+            Component(
+                type="text",
+                id="settings-results-empty",
+                props={"value": "일치하는 설정이 없습니다."},
+            )
+        )
+    else:
+        for idx, entry in enumerate(results):
+            children.append(
+                Component(
+                    type="stack",
+                    id=f"settings-result-{idx}",
+                    props={"direction": "horizontal", "gap": "sm", "align": "center"},
+                    children=[
+                        Component(
+                            type="stack",
+                            id=f"settings-result-{idx}-labels",
+                            props={"gap": "xs"},
+                            children=[
+                                Component(
+                                    type="text",
+                                    id=f"settings-result-{idx}-label",
+                                    props={"value": entry["label"]},
+                                ),
+                                Component(
+                                    type="text",
+                                    id=f"settings-result-{idx}-key",
+                                    props={"value": entry["key"], "variant": "muted"},
+                                ),
+                            ],
+                        ),
+                        Component(
+                            type="button",
+                            id=f"settings-result-{idx}-goto",
+                            props={
+                                "label": "이동",
+                                "variant": "ghost",
+                                "action": {
+                                    "kind": "view_request",
+                                    "view_key": "settings_view",
+                                    "params": {"active_tab": entry["tab"]},
+                                },
+                            },
+                        ),
+                    ],
+                )
+            )
+
+    return Component(
+        type="list",
+        id="settings-results",
+        props={"variant": "settings-card"},
+        children=children,
     )
 
 

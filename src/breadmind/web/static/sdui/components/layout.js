@@ -46,7 +46,8 @@ function tabs(c, render, ctx) {
 
   // Active tab index is stored on the DOM element via data attribute and
   // mutated by hand (no Preact state to keep this stateless renderer simple).
-  // Initial state: index 0 active.
+  // Initial state: default_active prop (default 0).
+  const initialActive = (c.props && c.props.default_active != null) ? c.props.default_active : 0;
   const tabsId = c.id;
   const onTabClick = (i) => (ev) => {
     ev.preventDefault();
@@ -64,13 +65,13 @@ function tabs(c, render, ctx) {
     <div class="sdui-tabs__bar">
       ${panels.map(({ idx, label }) => html`
         <button type="button"
-                class=${`sdui-tab-pill ${idx === 0 ? 'sdui-tab-pill--active' : ''}`}
+                class=${`sdui-tab-pill ${idx === initialActive ? 'sdui-tab-pill--active' : ''}`}
                 onClick=${onTabClick(idx)}>${label}</button>
       `)}
     </div>
     <div class="sdui-tabs__panels">
       ${panels.map(({ idx, child }) => html`
-        <div class="sdui-tab-panel" style=${idx === 0 ? '' : 'display:none'}>
+        <div class="sdui-tab-panel" style=${idx === initialActive ? '' : 'display:none'}>
           ${render(child, ctx)}
         </div>
       `)}
