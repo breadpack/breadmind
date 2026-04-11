@@ -349,6 +349,24 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
         except Exception as exc:  # noqa: BLE001
             logger.warning("SafetyGuard hot-reload wiring skipped: %s", exc)
 
+        # Task 12: runtime config holder for timeouts/retry/limits/etc.
+        try:
+            from breadmind.settings.runtime_config import RuntimeConfigHolder
+            initial_runtime: dict = {}
+            for _rc_key in (
+                "retry_config", "limits_config", "polling_config",
+                "agent_timeouts", "system_timeouts", "logging_config",
+                "memory_gc_config",
+            ):
+                val = await settings_store.get_setting(_rc_key)
+                if val is not None:
+                    initial_runtime[_rc_key] = val
+            runtime_holder = RuntimeConfigHolder(initial=initial_runtime)
+            runtime_holder.register(reload_registry)
+            app.state.runtime_config_holder = runtime_holder
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("runtime config hot-reload wiring skipped: %s", exc)
+
         # Register the eight agent settings tools onto the CoreAgent's tool
         # registry so LLM-driven write paths also hit the shared service.
         # Guarded because some deployments (tests, minimal runtimes) may not
