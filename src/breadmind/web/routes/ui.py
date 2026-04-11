@@ -200,15 +200,70 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
 
                     async def _reload_llm(ctx):
                         try:
+                            key = ctx.get("key") or ""
+                            new_value = ctx.get("new")
+
+                            # `create_provider` reads from `config.llm.*` and
+                            # `os.environ`, so push the fresh values into those
+                            # sources first — otherwise the rebuild returns an
+                            # identical provider and the "reload" is a no-op.
+                            if key == "llm" and isinstance(new_value, dict):
+                                llm_cfg = getattr(config, "llm", None)
+                                if llm_cfg is not None:
+                                    provider_name = new_value.get("default_provider")
+                                    if provider_name:
+                                        llm_cfg.default_provider = provider_name
+                                    model = new_value.get("default_model")
+                                    if model:
+                                        llm_cfg.default_model = model
+                            elif key.startswith("apikey:"):
+                                # Fetch the fresh secret from the vault and push
+                                # it into os.environ under the matching env var
+                                # so create_provider's env lookup sees it.
+                                import os
+                                from breadmind.llm.factory import (
+                                    _PROVIDER_REGISTRY,
+                                )
+                                slug = key.split(":", 1)[1]
+                                vault = getattr(app_state, "_credential_vault", None)
+                                if vault is not None:
+                                    try:
+                                        secret = await vault.retrieve(key)
+                                    except Exception:
+                                        secret = None
+                                    if secret:
+                                        info = _PROVIDER_REGISTRY.get(slug)
+                                        if info is not None and info.env_key:
+                                            os.environ[info.env_key] = secret
+
                             from breadmind.llm.factory import create_provider
+                            old_inner = llm_holder.current
                             new_provider = create_provider(config)
                             llm_holder.swap(new_provider)
+
+                            # Release resources on the old inner provider.
+                            if old_inner is not new_provider:
+                                close = getattr(old_inner, "close", None)
+                                if close is not None:
+                                    try:
+                                        import inspect
+                                        if inspect.iscoroutinefunction(close):
+                                            await close()
+                                        else:
+                                            close()
+                                    except Exception as exc:  # noqa: BLE001
+                                        logger.debug(
+                                            "old LLM provider close failed: %s",
+                                            exc,
+                                        )
+
                             logger.info(
-                                "LLM provider hot-reloaded (trigger=%s)",
-                                ctx.get("key"),
+                                "LLM provider hot-reloaded (trigger=%s)", key,
                             )
                         except Exception as exc:  # noqa: BLE001
-                            logger.warning("LLM hot-reload failed: %s", exc)
+                            logger.warning(
+                                "LLM hot-reload failed: %s", exc, exc_info=True,
+                            )
 
                     reload_registry.register("llm", _reload_llm)
                     reload_registry.register("apikey:*", _reload_llm)

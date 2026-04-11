@@ -44,3 +44,34 @@ async def test_apikey_change_also_reloads_provider():
     )
     assert calls == ["apikey:anthropic"]
     assert holder.name == "claude-new"
+
+
+async def test_reloader_closes_old_inner_on_swap():
+    """When a reloader swaps the inner provider, it should release the old one."""
+    closed = []
+
+    class ClosableProvider:
+        def __init__(self, name):
+            self.name = name
+
+        async def close(self):
+            closed.append(self.name)
+
+    holder = LLMProviderHolder(ClosableProvider("old"))
+    registry = SettingsReloadRegistry()
+
+    async def reload_llm(ctx):
+        old = holder.current
+        holder.swap(ClosableProvider("new"))
+        if old is not holder.current:
+            await old.close()
+
+    registry.register("llm", reload_llm)
+    await registry.dispatch(
+        key="llm",
+        operation="set",
+        old={"default_provider": "claude"},
+        new={"default_provider": "gemini"},
+    )
+    assert closed == ["old"]
+    assert holder.name == "new"
