@@ -207,6 +207,12 @@ async def test_delete_item_removes_matching_entry(deps):
     )
     assert result.ok is True
     assert result.operation == "delete_item"
+    assert result.persisted is True
     remaining = deps["store"].data["mcp_servers"]
     assert len(remaining) == 1
     assert remaining[0]["name"] == "local"
+    # Audit content: dedicated kind, and old_preview captures the pre-mutation list.
+    entry = deps["audit"].entries[-1]
+    assert entry["kind"] == "settings_delete_item"
+    assert len(entry["old_preview"]) == 2
+    assert len(entry["new_preview"]) == 1

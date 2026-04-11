@@ -262,7 +262,7 @@ class SettingsService:
                 )
             await self._store.set_setting(key, normalized)
             audit_id = await self._audit_sink(
-                kind="settings_write",
+                kind="settings_delete_item",
                 key=key,
                 actor=actor,
                 old_preview=old,
