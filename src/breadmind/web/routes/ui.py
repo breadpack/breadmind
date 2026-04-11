@@ -21,7 +21,6 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from breadmind.sdui.actions import ActionHandler
 from breadmind.sdui.patches import diff_specs
 from breadmind.sdui.projector import UISpecProjector
 from breadmind.sdui.spec import UISpec
@@ -134,47 +133,27 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
 
         # Shared SettingsService so SDUI (ActionHandler) and agent-tool
         # (ToolRegistry) write paths route through the same reload registry.
-        from breadmind.settings.approval_queue import PendingApprovalQueue
-        from breadmind.settings.rate_limiter import SlidingWindowRateLimiter
-        from breadmind.settings.reload_registry import SettingsReloadRegistry
-        from breadmind.settings.service import SettingsService
-
-        reload_registry = SettingsReloadRegistry()
-        approval_queue = PendingApprovalQueue()
-        rate_limiter = SlidingWindowRateLimiter(window_seconds=60, max_events=20)
-
-        # Build the service with a placeholder audit sink, then back-fill the
-        # real one from ActionHandler below. Only after back-fill do we
-        # publish the service to ``app.state`` — otherwise another coroutine
-        # could observe the placeholder and record audit_id=None on a write.
-        async def _placeholder_audit(**kwargs):
-            return None
-
-        settings_service = SettingsService(
-            store=settings_store,
-            vault=credential_vault,
-            audit_sink=_placeholder_audit,
-            reload_registry=reload_registry,
-            event_bus=flow_bus,
-            approval_queue=approval_queue,
-            rate_limiter=rate_limiter,
-        )
-        app.state.settings_rate_limiter = rate_limiter
-
-        action_handler = ActionHandler(
-            bus=flow_bus,
-            message_handler=message_handler,
-            working_memory=working_memory,
+        from breadmind.web.settings_wiring import build_settings_pipeline
+        pipeline = await build_settings_pipeline(
+            flow_bus=flow_bus,
             settings_store=settings_store,
             credential_vault=credential_vault,
-            event_bus=flow_bus,
-            settings_service=settings_service,
+            message_handler=message_handler,
+            working_memory=working_memory,
         )
-        settings_service.set_audit_sink(action_handler._record_audit)
-        app.state.settings_reload_registry = reload_registry
-        app.state.settings_service = settings_service
-        app.state.settings_approval_queue = approval_queue
-        app.state.sdui_action_handler = action_handler
+        app.state.settings_reload_registry = pipeline.reload_registry
+        app.state.settings_service = pipeline.settings_service
+        app.state.settings_approval_queue = pipeline.approval_queue
+        app.state.settings_rate_limiter = pipeline.rate_limiter
+        app.state.runtime_config_holder = pipeline.runtime_config_holder
+        app.state.sdui_action_handler = pipeline.action_handler
+
+        # Locals below reference these so the existing component-reloader
+        # blocks (LLM, persona, safety, MCP, plugin, monitoring) can stay in
+        # place without changes in this task.
+        reload_registry = pipeline.reload_registry
+        settings_service = pipeline.settings_service
+        action_handler = pipeline.action_handler  # noqa: F841
 
         # Task 9: hot-reload LLM provider on `llm` / `apikey:*` changes.
         # The CoreAgent auto-wraps its provider in an ``LLMProviderHolder`` at
@@ -357,51 +336,19 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
         except Exception as exc:  # noqa: BLE001
             logger.warning("SafetyGuard hot-reload wiring skipped: %s", exc)
 
-        # Task 12: runtime config holder for timeouts/retry/limits/etc.
-        try:
-            from breadmind.settings.runtime_config import RuntimeConfigHolder
-            initial_runtime: dict = {}
-            for _rc_key in (
-                "retry_config", "limits_config", "polling_config",
-                "agent_timeouts", "system_timeouts", "logging_config",
-                "memory_gc_config",
-            ):
-                val = await settings_store.get_setting(_rc_key)
-                if val is not None:
-                    initial_runtime[_rc_key] = val
-            runtime_holder = RuntimeConfigHolder(initial=initial_runtime)
-            runtime_holder.register(reload_registry)
-            app.state.runtime_config_holder = runtime_holder
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("runtime config hot-reload wiring skipped: %s", exc)
-
         # Task 13: MCP / plugin / monitoring hot-reload.
         try:
             mcp_manager_obj = getattr(app_state, "_mcp_manager", None)
             if mcp_manager_obj is not None:
                 async def _reload_mcp_global(ctx):
                     try:
-                        apply = getattr(mcp_manager_obj, "apply_config", None)
-                        if apply is not None:
-                            await apply(mcp_cfg=ctx["new"])
-                        else:
-                            # Fallback: emit a legacy event so the existing
-                            # MCP server manager can restart via its own path.
-                            await flow_bus.async_emit(
-                                "mcp_server_reload", {"config": ctx["new"]},
-                            )
+                        await mcp_manager_obj.apply_config(mcp_cfg=ctx["new"])
                     except Exception as exc:
                         logger.warning("mcp hot-reload failed: %s", exc)
 
                 async def _reload_mcp_servers(ctx):
                     try:
-                        apply = getattr(mcp_manager_obj, "apply_config", None)
-                        if apply is not None:
-                            await apply(servers=ctx["new"])
-                        else:
-                            await flow_bus.async_emit(
-                                "mcp_server_reload", {"servers": ctx["new"]},
-                            )
+                        await mcp_manager_obj.apply_config(servers=ctx["new"])
                     except Exception as exc:
                         logger.warning("mcp_servers hot-reload failed: %s", exc)
 
@@ -415,13 +362,7 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
             if plugin_manager_obj is not None:
                 async def _reload_skill_markets(ctx):
                     try:
-                        apply = getattr(plugin_manager_obj, "apply_markets", None)
-                        if apply is not None:
-                            await apply(ctx["new"])
-                        else:
-                            logger.debug(
-                                "skill_markets reload: plugin manager has no apply_markets",
-                            )
+                        await plugin_manager_obj.apply_markets(ctx["new"])
                     except Exception as exc:
                         logger.warning("skill_markets hot-reload failed: %s", exc)
 
@@ -435,13 +376,7 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
                 def _monitoring_setter(kw: str):
                     async def _fn(ctx):
                         try:
-                            apply = getattr(monitoring_obj, "apply", None)
-                            if apply is not None:
-                                await apply(**{kw: ctx["new"]})
-                            else:
-                                logger.debug(
-                                    "monitoring reload %s: no apply method", kw,
-                                )
+                            await monitoring_obj.apply(**{kw: ctx["new"]})
                         except Exception as exc:
                             logger.warning(
                                 "monitoring reload %s failed: %s", kw, exc,

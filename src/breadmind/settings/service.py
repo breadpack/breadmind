@@ -188,6 +188,8 @@ class SettingsService:
         *,
         actor: str,
         audit_summary: str | None = None,
+        audit_key: str | None = None,
+        audit_kind: str | None = None,
     ) -> SetResult:
         if not settings_schema.is_allowed_key(key):
             return SetResult(
@@ -202,7 +204,12 @@ class SettingsService:
         if self._requires_approval(key, actor):
             async def _run() -> SetResult:
                 return await self._set_internal(
-                    key, value, actor=actor, audit_summary=audit_summary
+                    key,
+                    value,
+                    actor=actor,
+                    audit_summary=audit_summary,
+                    audit_key=audit_key,
+                    audit_kind=audit_kind,
                 )
             approval_id = self._approvals.submit(
                 purpose="settings_set", key=key, actor=actor, run=_run,
@@ -212,7 +219,12 @@ class SettingsService:
                 pending_approval_id=approval_id,
             )
         return await self._set_internal(
-            key, value, actor=actor, audit_summary=audit_summary,
+            key,
+            value,
+            actor=actor,
+            audit_summary=audit_summary,
+            audit_key=audit_key,
+            audit_kind=audit_kind,
         )
 
     async def _set_internal(
@@ -222,6 +234,8 @@ class SettingsService:
         *,
         actor: str,
         audit_summary: str | None = None,
+        audit_key: str | None = None,
+        audit_kind: str | None = None,
     ) -> SetResult:
         try:
             normalized = settings_schema.validate_value(key, value)
@@ -237,8 +251,8 @@ class SettingsService:
             old = await self._store.get_setting(key)
             await self._store.set_setting(key, normalized)
             audit_id = await self._audit_sink(
-                kind="settings_write",
-                key=key,
+                kind=audit_kind or "settings_write",
+                key=audit_key or key,
                 actor=actor,
                 old_preview=old,
                 new_preview=normalized,

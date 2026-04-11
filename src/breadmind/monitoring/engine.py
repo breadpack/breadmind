@@ -243,6 +243,60 @@ class MonitoringEngine:
             if max_auto_actions is not None:
                 self._loop_protector._max_auto_actions = max_auto_actions
 
+    async def apply(
+        self,
+        *,
+        monitoring_config: dict | None = None,
+        loop_protector: dict | None = None,
+        scheduler_cron: dict | None = None,
+        webhook_endpoints: list | None = None,
+    ) -> None:
+        """Apply hot-reload updates from the settings pipeline.
+
+        Each kwarg corresponds to a runtime settings key. ``None`` means
+        "no change on this axis." Fields without a real runtime path
+        (``scheduler_cron``, ``webhook_endpoints``) are accepted and
+        debug-logged so the reloader chain has a single target; full
+        scheduler/webhook runtime integration is out of scope here.
+        """
+        if loop_protector is not None:
+            try:
+                self.update_loop_protector_config(
+                    cooldown_minutes=loop_protector.get("cooldown_minutes"),
+                    max_auto_actions=loop_protector.get("max_auto_actions"),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("loop_protector apply failed: %s", exc)
+
+        if monitoring_config is not None:
+            rules_cfg = monitoring_config.get("rules") or []
+            cfg_by_name = {
+                r.get("name"): r for r in rules_cfg if isinstance(r, dict)
+            }
+            for rule in self._rules:
+                cfg = cfg_by_name.get(rule.name)
+                if cfg is None:
+                    continue
+                if cfg.get("enabled", True):
+                    if not rule.enabled:
+                        self.enable_rule(rule.name)
+                    interval = cfg.get("interval_seconds")
+                    if interval is not None:
+                        self.update_rule_interval(rule.name, interval)
+                else:
+                    self.disable_rule(rule.name)
+
+        if scheduler_cron is not None:
+            logger.debug(
+                "monitoring.apply: scheduler_cron updated but no runtime "
+                "scheduler is wired yet",
+            )
+        if webhook_endpoints is not None:
+            logger.debug(
+                "monitoring.apply: webhook_endpoints updated but no runtime "
+                "dispatcher is wired yet",
+            )
+
     def get_loop_protector_config(self) -> dict:
         if self._loop_protector:
             return {

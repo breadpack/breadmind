@@ -4,13 +4,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import shlex
 from dataclasses import dataclass, field
 from typing import Any
 
 from breadmind.core.events import EventBus, EventType
 from breadmind.tools.mcp_protocol import (
-    MCPError,
     create_initialize_request,
     create_initialized_notification,
     create_tools_call_request,
@@ -48,6 +46,7 @@ class MCPServerManager:
 
     def __init__(self, event_bus: EventBus) -> None:
         self._servers: dict[str, MCPServerState] = {}
+        self._global_config: dict = {}
         self._event_bus = event_bus
         self._event_bus.on("mcp_server_add", self._on_server_add)
         self._event_bus.on("mcp_server_remove", self._on_server_remove)
@@ -139,6 +138,70 @@ class MCPServerManager:
             state = self._servers.pop(name, None)
             if state:
                 await self._stop_server(state)
+
+    async def apply_config(
+        self,
+        *,
+        mcp_cfg: dict | None = None,
+        servers: list[dict] | None = None,
+    ) -> None:
+        """Reconcile running MCP servers against new settings.
+
+        ``servers`` is the new ``mcp_servers`` list. Each entry is a dict
+        with ``name``, ``command``, ``args``, ``env``, ``enabled``. This
+        method:
+          * removes servers that disappeared or are now disabled,
+          * adds servers that appear for the first time (and are enabled),
+          * restarts servers whose command/args/env changed.
+
+        ``mcp_cfg`` is the global ``mcp`` setting dict (e.g. ``auto_discover``).
+        Stored on ``self._global_config`` for later consultation; this method
+        does not otherwise act on it.
+        """
+        if mcp_cfg is not None:
+            self._global_config = dict(mcp_cfg)
+
+        if servers is None:
+            return
+
+        new_by_name = {
+            s["name"]: s
+            for s in servers
+            if isinstance(s, dict) and s.get("name")
+        }
+
+        # Remove servers that disappeared or are now disabled.
+        for existing_name in list(self._servers.keys()):
+            new_entry = new_by_name.get(existing_name)
+            if new_entry is None or not new_entry.get("enabled", True):
+                await self.remove_server(existing_name)
+
+        # Add new enabled servers and restart changed ones.
+        for name, entry in new_by_name.items():
+            if not entry.get("enabled", True):
+                continue
+            new_config = MCPServerConfig(
+                name=entry["name"],
+                command=entry["command"],
+                args=list(entry.get("args", [])),
+                env=dict(entry.get("env", {})),
+                enabled=True,
+            )
+            existing = self._servers.get(name)
+            if existing is None:
+                await self.add_server(new_config)
+                continue
+            current_config = getattr(existing, "config", None)
+            if current_config is None:
+                await self.add_server(new_config)
+                continue
+            if (
+                current_config.command != new_config.command
+                or list(current_config.args) != new_config.args
+                or dict(current_config.env) != new_config.env
+            ):
+                existing.config = new_config
+                await self.restart_server(name)
 
     # ── Internal: start / stop ────────────────────────────────────────
 
