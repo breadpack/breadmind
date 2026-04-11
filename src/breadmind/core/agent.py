@@ -198,15 +198,11 @@ class CoreAgent:
             # PromptBuilder when available and falls back otherwise.
             self.set_custom_instructions(custom_instructions)
         if custom_prompts is not None:
-            # NOTE: PromptContext does not currently carry a custom_prompts
-            # field, so there is no prompt rebuild path for it. We stash the
-            # value on the agent for future wiring and log at debug level.
+            # Stash on the agent and rebuild the system prompt so the new
+            # values are surfaced as ``custom_prompt_<name>`` render variables
+            # via PromptBuilder.build(custom_prompts=...).
             self._custom_prompts = custom_prompts
-            logger.debug(
-                "reload_prompt_components: custom_prompts stored (%d entries) "
-                "but no rebuild path yet",
-                len(custom_prompts) if hasattr(custom_prompts, "__len__") else 0,
-            )
+            self._rebuild_system_prompt()
 
     def _rebuild_system_prompt(self):
         """Rebuild system prompt from PromptBuilder."""
@@ -216,6 +212,7 @@ class CoreAgent:
                 persona=self._persona,
                 role=self._role,
                 context=self._prompt_context,
+                custom_prompts=getattr(self, "_custom_prompts", None),
             )
 
     def add_notification(self, message: str):

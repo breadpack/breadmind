@@ -29,6 +29,7 @@ class PromptContext:
     available_tools: list[str] = field(default_factory=list)
     provider_model: str = ""
     custom_instructions: str | None = None
+    custom_prompts: dict[str, str] | None = None
 
 
 class PromptBuilder:
@@ -56,6 +57,7 @@ class PromptBuilder:
         context: PromptContext | None = None,
         token_budget: int | None = None,
         db_overrides: dict | None = None,
+        custom_prompts: dict[str, str] | None = None,
     ) -> str:
         # 1. Validate provider
         if provider not in VALID_PROVIDERS:
@@ -84,6 +86,19 @@ class PromptBuilder:
         variables.update(role_vars)
         if token_budget is not None:
             variables["token_budget"] = token_budget
+
+        # If the caller didn't pass custom_prompts explicitly, fall back to
+        # the context field (same pattern as custom_instructions).
+        if custom_prompts is None:
+            custom_prompts = getattr(ctx, "custom_prompts", None)
+
+        # Merge custom prompts into the render variables under a predictable
+        # prefix so any template that wants them can use
+        # ``{{ custom_prompt_<name> }}``.
+        if custom_prompts:
+            for name, body in custom_prompts.items():
+                if isinstance(name, str) and isinstance(body, str):
+                    variables[f"custom_prompt_{name}"] = body
 
         # 6. Render template
         try:
