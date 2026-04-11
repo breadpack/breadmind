@@ -509,3 +509,473 @@ def test_validate_webhook_endpoints_missing_event_type_raises():
 def test_validate_webhook_endpoints_not_list_raises():
     with pytest.raises(SettingsValidationError):
         validate_value("webhook_endpoints", {"url": "https://x.com"})
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 keys: is_allowed_key
+# ---------------------------------------------------------------------------
+
+def test_is_allowed_key_phase3_keys():
+    phase3_keys = [
+        "memory_gc_config",
+        "system_timeouts",
+        "retry_config",
+        "limits_config",
+        "polling_config",
+        "agent_timeouts",
+        "logging_config",
+    ]
+    for key in phase3_keys:
+        assert is_allowed_key(key), f"expected {key!r} to be allowed"
+
+
+def test_phase3_keys_no_restart():
+    phase3_keys = [
+        "memory_gc_config",
+        "system_timeouts",
+        "retry_config",
+        "limits_config",
+        "polling_config",
+        "agent_timeouts",
+        "logging_config",
+    ]
+    for key in phase3_keys:
+        assert not requires_restart(key), f"{key!r} should not require restart"
+
+
+def test_phase3_keys_not_credential():
+    phase3_keys = [
+        "memory_gc_config",
+        "system_timeouts",
+        "retry_config",
+        "limits_config",
+        "polling_config",
+        "agent_timeouts",
+        "logging_config",
+    ]
+    for key in phase3_keys:
+        assert not is_credential_key(key)
+
+
+# ---------------------------------------------------------------------------
+# memory_gc_config
+# ---------------------------------------------------------------------------
+
+def test_validate_memory_gc_config_valid_partial():
+    out = validate_value("memory_gc_config", {"interval_seconds": 3600})
+    assert out == {"interval_seconds": 3600}
+
+
+def test_validate_memory_gc_config_all_fields():
+    out = validate_value("memory_gc_config", {
+        "interval_seconds": 600,
+        "decay_threshold": 0.5,
+        "max_cached_notes": 200,
+        "kg_max_age_days": 30,
+        "env_refresh_interval": 10,
+    })
+    assert out["interval_seconds"] == 600
+    assert out["decay_threshold"] == 0.5
+    assert out["max_cached_notes"] == 200
+    assert out["kg_max_age_days"] == 30
+    assert out["env_refresh_interval"] == 10
+
+
+def test_validate_memory_gc_config_string_coercion():
+    out = validate_value("memory_gc_config", {"interval_seconds": "1800"})
+    assert out["interval_seconds"] == 1800
+
+
+def test_validate_memory_gc_config_interval_below_min_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("memory_gc_config", {"interval_seconds": 59})
+
+
+def test_validate_memory_gc_config_interval_above_max_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("memory_gc_config", {"interval_seconds": 86401})
+
+
+def test_validate_memory_gc_config_interval_bad_type_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("memory_gc_config", {"interval_seconds": "not-a-number"})
+
+
+def test_validate_memory_gc_config_decay_threshold_float():
+    out = validate_value("memory_gc_config", {"decay_threshold": 0.01})
+    assert out["decay_threshold"] == 0.01
+
+
+def test_validate_memory_gc_config_decay_threshold_below_min_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("memory_gc_config", {"decay_threshold": 0.0})
+
+
+def test_validate_memory_gc_config_decay_threshold_above_max_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("memory_gc_config", {"decay_threshold": 1.01})
+
+
+def test_validate_memory_gc_config_decay_threshold_bad_type_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("memory_gc_config", {"decay_threshold": "bad"})
+
+
+def test_validate_memory_gc_config_empty_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("memory_gc_config", {})
+
+
+def test_validate_memory_gc_config_not_dict_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("memory_gc_config", [1, 2, 3])
+
+
+# ---------------------------------------------------------------------------
+# system_timeouts
+# ---------------------------------------------------------------------------
+
+def test_validate_system_timeouts_valid_partial():
+    out = validate_value("system_timeouts", {"tool_call": 30})
+    assert out == {"tool_call": 30}
+
+
+def test_validate_system_timeouts_multiple_fields():
+    out = validate_value("system_timeouts", {"llm_api": 60, "ssh_command": 120})
+    assert out["llm_api"] == 60
+    assert out["ssh_command"] == 120
+
+
+def test_validate_system_timeouts_all_fields():
+    payload = {
+        "tool_call": 30,
+        "llm_api": 60,
+        "ssh_command": 90,
+        "health_check": 10,
+        "pypi_check": 15,
+        "http_default": 30,
+        "skill_discovery": 45,
+    }
+    out = validate_value("system_timeouts", payload)
+    assert len(out) == 7
+
+
+def test_validate_system_timeouts_string_coercion():
+    out = validate_value("system_timeouts", {"tool_call": "45"})
+    assert out["tool_call"] == 45
+
+
+def test_validate_system_timeouts_below_min_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("system_timeouts", {"tool_call": 0})
+
+
+def test_validate_system_timeouts_above_max_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("system_timeouts", {"llm_api": 3601})
+
+
+def test_validate_system_timeouts_bad_type_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("system_timeouts", {"ssh_command": "oops"})
+
+
+def test_validate_system_timeouts_empty_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("system_timeouts", {})
+
+
+def test_validate_system_timeouts_not_dict_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("system_timeouts", 42)
+
+
+# ---------------------------------------------------------------------------
+# retry_config
+# ---------------------------------------------------------------------------
+
+def test_validate_retry_config_valid_partial():
+    out = validate_value("retry_config", {"max_retries": 3})
+    assert out == {"max_retries": 3}
+
+
+def test_validate_retry_config_all_fields():
+    out = validate_value("retry_config", {
+        "max_retries": 3,
+        "llm_max_retries": 5,
+        "gateway_max_retries": 2,
+        "base_backoff": 10,
+        "max_backoff": 120,
+        "health_check_interval": 60,
+    })
+    assert out["max_retries"] == 3
+    assert out["max_backoff"] == 120
+
+
+def test_validate_retry_config_string_coercion():
+    out = validate_value("retry_config", {"max_retries": "5"})
+    assert out["max_retries"] == 5
+
+
+def test_validate_retry_config_max_retries_below_min_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("retry_config", {"max_retries": 0})
+
+
+def test_validate_retry_config_max_retries_above_max_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("retry_config", {"max_retries": 51})
+
+
+def test_validate_retry_config_base_backoff_bad_type_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("retry_config", {"base_backoff": "not-int"})
+
+
+def test_validate_retry_config_health_check_interval_below_min_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("retry_config", {"health_check_interval": 4})
+
+
+def test_validate_retry_config_empty_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("retry_config", {})
+
+
+def test_validate_retry_config_not_dict_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("retry_config", "bad")
+
+
+# ---------------------------------------------------------------------------
+# limits_config
+# ---------------------------------------------------------------------------
+
+def test_validate_limits_config_valid_partial():
+    out = validate_value("limits_config", {"max_tools": 50})
+    assert out == {"max_tools": 50}
+
+
+def test_validate_limits_config_all_int_fields():
+    out = validate_value("limits_config", {
+        "max_tools": 100,
+        "max_context_tokens": 50000,
+        "max_per_domain_skills": 10,
+        "audit_log_recent": 500,
+        "embedding_cache_size": 1000,
+        "top_roles_limit": 20,
+        "smart_retriever_token_budget": 10000,
+        "smart_retriever_limit": 50,
+    })
+    assert out["max_tools"] == 100
+    assert out["smart_retriever_limit"] == 50
+
+
+def test_validate_limits_config_low_performance_threshold_float():
+    out = validate_value("limits_config", {"low_performance_threshold": 0.75})
+    assert out["low_performance_threshold"] == 0.75
+
+
+def test_validate_limits_config_string_coercion():
+    out = validate_value("limits_config", {"max_tools": "20"})
+    assert out["max_tools"] == 20
+
+
+def test_validate_limits_config_max_tools_below_min_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("limits_config", {"max_tools": 0})
+
+
+def test_validate_limits_config_max_tools_above_max_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("limits_config", {"max_tools": 201})
+
+
+def test_validate_limits_config_low_performance_below_min_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("limits_config", {"low_performance_threshold": -0.1})
+
+
+def test_validate_limits_config_low_performance_above_max_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("limits_config", {"low_performance_threshold": 1.1})
+
+
+def test_validate_limits_config_bad_type_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("limits_config", {"max_context_tokens": "bad"})
+
+
+def test_validate_limits_config_empty_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("limits_config", {})
+
+
+def test_validate_limits_config_not_dict_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("limits_config", [])
+
+
+# ---------------------------------------------------------------------------
+# polling_config
+# ---------------------------------------------------------------------------
+
+def test_validate_polling_config_valid_partial():
+    out = validate_value("polling_config", {"signal_interval": 60})
+    assert out == {"signal_interval": 60}
+
+
+def test_validate_polling_config_all_fields():
+    out = validate_value("polling_config", {
+        "signal_interval": 60,
+        "gmail_interval": 300,
+        "update_check_interval": 3600,
+        "data_flush_interval": 120,
+        "auto_cleanup_interval": 86400,
+    })
+    assert len(out) == 5
+
+
+def test_validate_polling_config_string_coercion():
+    out = validate_value("polling_config", {"gmail_interval": "120"})
+    assert out["gmail_interval"] == 120
+
+
+def test_validate_polling_config_below_min_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("polling_config", {"signal_interval": 0})
+
+
+def test_validate_polling_config_above_max_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("polling_config", {"auto_cleanup_interval": 86401})
+
+
+def test_validate_polling_config_bad_type_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("polling_config", {"gmail_interval": "bad"})
+
+
+def test_validate_polling_config_empty_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("polling_config", {})
+
+
+def test_validate_polling_config_not_dict_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("polling_config", "bad")
+
+
+# ---------------------------------------------------------------------------
+# agent_timeouts
+# ---------------------------------------------------------------------------
+
+def test_validate_agent_timeouts_valid_partial():
+    out = validate_value("agent_timeouts", {"tool_timeout": 30})
+    assert out == {"tool_timeout": 30}
+
+
+def test_validate_agent_timeouts_all_fields():
+    out = validate_value("agent_timeouts", {
+        "tool_timeout": 30,
+        "chat_timeout": 120,
+        "max_turns": 10,
+    })
+    assert out["tool_timeout"] == 30
+    assert out["chat_timeout"] == 120
+    assert out["max_turns"] == 10
+
+
+def test_validate_agent_timeouts_string_coercion():
+    out = validate_value("agent_timeouts", {"chat_timeout": "60"})
+    assert out["chat_timeout"] == 60
+
+
+def test_validate_agent_timeouts_tool_timeout_below_min_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("agent_timeouts", {"tool_timeout": 0})
+
+
+def test_validate_agent_timeouts_tool_timeout_above_max_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("agent_timeouts", {"tool_timeout": 3601})
+
+
+def test_validate_agent_timeouts_max_turns_below_min_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("agent_timeouts", {"max_turns": 0})
+
+
+def test_validate_agent_timeouts_max_turns_above_max_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("agent_timeouts", {"max_turns": 101})
+
+
+def test_validate_agent_timeouts_bad_type_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("agent_timeouts", {"tool_timeout": "bad"})
+
+
+def test_validate_agent_timeouts_empty_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("agent_timeouts", {})
+
+
+def test_validate_agent_timeouts_not_dict_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("agent_timeouts", 99)
+
+
+# ---------------------------------------------------------------------------
+# logging_config
+# ---------------------------------------------------------------------------
+
+def test_validate_logging_config_valid_level():
+    out = validate_value("logging_config", {"level": "INFO"})
+    assert out == {"level": "INFO"}
+
+
+def test_validate_logging_config_valid_format():
+    out = validate_value("logging_config", {"format": "json"})
+    assert out == {"format": "json"}
+
+
+def test_validate_logging_config_both_fields():
+    out = validate_value("logging_config", {"level": "DEBUG", "format": "text"})
+    assert out["level"] == "DEBUG"
+    assert out["format"] == "text"
+
+
+def test_validate_logging_config_level_lowercase_normalized():
+    out = validate_value("logging_config", {"level": "debug"})
+    assert out["level"] == "DEBUG"
+
+
+def test_validate_logging_config_level_mixed_case_normalized():
+    out = validate_value("logging_config", {"level": "Warning"})
+    assert out["level"] == "WARNING"
+
+
+def test_validate_logging_config_level_invalid_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("logging_config", {"level": "VERBOSE"})
+
+
+def test_validate_logging_config_format_invalid_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("logging_config", {"format": "xml"})
+
+
+def test_validate_logging_config_level_not_string_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("logging_config", {"level": 42})
+
+
+def test_validate_logging_config_empty_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("logging_config", {})
+
+
+def test_validate_logging_config_not_dict_raises():
+    with pytest.raises(SettingsValidationError):
+        validate_value("logging_config", "INFO")

@@ -65,11 +65,26 @@ _PHASE2_KEYS = {
     "webhook_endpoints",
 }
 
+_PHASE3_KEYS = {
+    "memory_gc_config",
+    "system_timeouts",
+    "retry_config",
+    "limits_config",
+    "polling_config",
+    "agent_timeouts",
+    "logging_config",
+}
+
+_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+_LOG_FORMATS = {"json", "text"}
+
 
 def is_allowed_key(key: str) -> bool:
     if key in {"llm", "persona", "custom_prompts", "custom_instructions", "embedding_config"}:
         return True
     if key in _PHASE2_KEYS:
+        return True
+    if key in _PHASE3_KEYS:
         return True
     if key.startswith("apikey:"):
         return key.split(":", 1)[1] in _API_KEY_NAMES
@@ -118,6 +133,21 @@ def validate_value(key: str, value: Any) -> Any:
         return _validate_scheduler_cron(value)
     if key == "webhook_endpoints":
         return _validate_webhook_endpoints(value)
+    # Phase 3
+    if key == "memory_gc_config":
+        return _validate_memory_gc_config(value)
+    if key == "system_timeouts":
+        return _validate_system_timeouts(value)
+    if key == "retry_config":
+        return _validate_retry_config(value)
+    if key == "limits_config":
+        return _validate_limits_config(value)
+    if key == "polling_config":
+        return _validate_polling_config(value)
+    if key == "agent_timeouts":
+        return _validate_agent_timeouts(value)
+    if key == "logging_config":
+        return _validate_logging_config(value)
     raise SettingsValidationError(f"unknown key: {key}")
 
 
@@ -560,4 +590,188 @@ def _validate_webhook_endpoints(value: Any) -> list:
         if not isinstance(active, bool):
             raise SettingsValidationError(f"webhook_endpoints[{i}].active must be bool")
         out.append({"url": url, "event_type": event_type, "active": active})
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 helpers
+# ---------------------------------------------------------------------------
+
+def _int_in_range(value: Any, field: str, lo: int, hi: int) -> int:
+    """Coerce value to int and validate it falls within [lo, hi]."""
+    try:
+        iv = int(value)
+    except (TypeError, ValueError) as exc:
+        raise SettingsValidationError(f"{field} must be int") from exc
+    if not (lo <= iv <= hi):
+        raise SettingsValidationError(f"{field} must be between {lo} and {hi}")
+    return iv
+
+
+def _float_in_range(value: Any, field: str, lo: float, hi: float) -> float:
+    """Coerce value to float and validate it falls within [lo, hi]."""
+    try:
+        fv = float(value)
+    except (TypeError, ValueError) as exc:
+        raise SettingsValidationError(f"{field} must be a number") from exc
+    if not (lo <= fv <= hi):
+        raise SettingsValidationError(f"{field} must be between {lo} and {hi}")
+    return fv
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 validators
+# ---------------------------------------------------------------------------
+
+def _validate_memory_gc_config(value: Any) -> dict:
+    data = _require_dict("memory_gc_config", value)
+    out: dict[str, Any] = {}
+    if "interval_seconds" in data:
+        out["interval_seconds"] = _int_in_range(
+            data["interval_seconds"], "memory_gc_config.interval_seconds", 60, 86400
+        )
+    if "decay_threshold" in data:
+        out["decay_threshold"] = _float_in_range(
+            data["decay_threshold"], "memory_gc_config.decay_threshold", 0.01, 1.0
+        )
+    if "max_cached_notes" in data:
+        out["max_cached_notes"] = _int_in_range(
+            data["max_cached_notes"], "memory_gc_config.max_cached_notes", 10, 10000
+        )
+    if "kg_max_age_days" in data:
+        out["kg_max_age_days"] = _int_in_range(
+            data["kg_max_age_days"], "memory_gc_config.kg_max_age_days", 1, 365
+        )
+    if "env_refresh_interval" in data:
+        out["env_refresh_interval"] = _int_in_range(
+            data["env_refresh_interval"], "memory_gc_config.env_refresh_interval", 1, 3600
+        )
+    if not out:
+        raise SettingsValidationError("memory_gc_config payload empty")
+    return out
+
+
+def _validate_system_timeouts(value: Any) -> dict:
+    data = _require_dict("system_timeouts", value)
+    out: dict[str, Any] = {}
+    _fields = (
+        "tool_call", "llm_api", "ssh_command", "health_check",
+        "pypi_check", "http_default", "skill_discovery",
+    )
+    for field in _fields:
+        if field in data:
+            out[field] = _int_in_range(
+                data[field], f"system_timeouts.{field}", 1, 3600
+            )
+    if not out:
+        raise SettingsValidationError("system_timeouts payload empty")
+    return out
+
+
+def _validate_retry_config(value: Any) -> dict:
+    data = _require_dict("retry_config", value)
+    out: dict[str, Any] = {}
+    _retries_fields = ("max_retries", "llm_max_retries", "gateway_max_retries")
+    for field in _retries_fields:
+        if field in data:
+            out[field] = _int_in_range(data[field], f"retry_config.{field}", 1, 50)
+    _backoff_fields = ("base_backoff", "max_backoff")
+    for field in _backoff_fields:
+        if field in data:
+            out[field] = _int_in_range(data[field], f"retry_config.{field}", 1, 600)
+    if "health_check_interval" in data:
+        out["health_check_interval"] = _int_in_range(
+            data["health_check_interval"], "retry_config.health_check_interval", 5, 3600
+        )
+    if not out:
+        raise SettingsValidationError("retry_config payload empty")
+    return out
+
+
+def _validate_limits_config(value: Any) -> dict:
+    data = _require_dict("limits_config", value)
+    out: dict[str, Any] = {}
+    _int_fields: list[tuple[str, int, int]] = [
+        ("max_tools", 1, 200),
+        ("max_context_tokens", 100, 1_000_000),
+        ("max_per_domain_skills", 1, 50),
+        ("audit_log_recent", 1, 10000),
+        ("embedding_cache_size", 10, 100_000),
+        ("top_roles_limit", 1, 100),
+        ("smart_retriever_token_budget", 100, 1_000_000),
+        ("smart_retriever_limit", 1, 100),
+    ]
+    for field, lo, hi in _int_fields:
+        if field in data:
+            out[field] = _int_in_range(data[field], f"limits_config.{field}", lo, hi)
+    if "low_performance_threshold" in data:
+        out["low_performance_threshold"] = _float_in_range(
+            data["low_performance_threshold"],
+            "limits_config.low_performance_threshold",
+            0.0, 1.0,
+        )
+    if not out:
+        raise SettingsValidationError("limits_config payload empty")
+    return out
+
+
+def _validate_polling_config(value: Any) -> dict:
+    data = _require_dict("polling_config", value)
+    out: dict[str, Any] = {}
+    _fields = (
+        "signal_interval", "gmail_interval", "update_check_interval",
+        "data_flush_interval", "auto_cleanup_interval",
+    )
+    for field in _fields:
+        if field in data:
+            out[field] = _int_in_range(
+                data[field], f"polling_config.{field}", 1, 86400
+            )
+    if not out:
+        raise SettingsValidationError("polling_config payload empty")
+    return out
+
+
+def _validate_agent_timeouts(value: Any) -> dict:
+    data = _require_dict("agent_timeouts", value)
+    out: dict[str, Any] = {}
+    if "tool_timeout" in data:
+        out["tool_timeout"] = _int_in_range(
+            data["tool_timeout"], "agent_timeouts.tool_timeout", 1, 3600
+        )
+    if "chat_timeout" in data:
+        out["chat_timeout"] = _int_in_range(
+            data["chat_timeout"], "agent_timeouts.chat_timeout", 1, 3600
+        )
+    if "max_turns" in data:
+        out["max_turns"] = _int_in_range(
+            data["max_turns"], "agent_timeouts.max_turns", 1, 100
+        )
+    if not out:
+        raise SettingsValidationError("agent_timeouts payload empty")
+    return out
+
+
+def _validate_logging_config(value: Any) -> dict:
+    data = _require_dict("logging_config", value)
+    out: dict[str, Any] = {}
+    if "level" in data:
+        v = data["level"]
+        if not isinstance(v, str):
+            raise SettingsValidationError("logging_config.level must be a string")
+        normalized = v.strip().upper()
+        if normalized not in _LOG_LEVELS:
+            raise SettingsValidationError(
+                f"logging_config.level must be one of {sorted(_LOG_LEVELS)}"
+            )
+        out["level"] = normalized
+    if "format" in data:
+        v = data["format"]
+        if v not in _LOG_FORMATS:
+            raise SettingsValidationError(
+                f"logging_config.format must be one of {sorted(_LOG_FORMATS)}"
+            )
+        out["format"] = v
+    if not out:
+        raise SettingsValidationError("logging_config payload empty")
     return out
