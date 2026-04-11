@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["ui"])
 
 
-_USER_SCOPED_VIEWS = {"chat_view", "flow_list_view"}
+_USER_SCOPED_VIEWS = {"chat_view", "flow_list_view", "settings_view"}
 _FLOW_SCOPED_VIEWS = {"flow_list_view", "flow_detail_view"}
 
 
