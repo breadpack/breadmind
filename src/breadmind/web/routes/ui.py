@@ -367,6 +367,86 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
         except Exception as exc:  # noqa: BLE001
             logger.warning("runtime config hot-reload wiring skipped: %s", exc)
 
+        # Task 13: MCP / plugin / monitoring hot-reload.
+        try:
+            mcp_manager_obj = getattr(app_state, "_mcp_manager", None)
+            if mcp_manager_obj is not None:
+                async def _reload_mcp_global(ctx):
+                    try:
+                        apply = getattr(mcp_manager_obj, "apply_config", None)
+                        if apply is not None:
+                            await apply(mcp_cfg=ctx["new"])
+                        else:
+                            # Fallback: emit a legacy event so the existing
+                            # MCP server manager can restart via its own path.
+                            await flow_bus.async_emit(
+                                "mcp_server_reload", {"config": ctx["new"]},
+                            )
+                    except Exception as exc:
+                        logger.warning("mcp hot-reload failed: %s", exc)
+
+                async def _reload_mcp_servers(ctx):
+                    try:
+                        apply = getattr(mcp_manager_obj, "apply_config", None)
+                        if apply is not None:
+                            await apply(servers=ctx["new"])
+                        else:
+                            await flow_bus.async_emit(
+                                "mcp_server_reload", {"servers": ctx["new"]},
+                            )
+                    except Exception as exc:
+                        logger.warning("mcp_servers hot-reload failed: %s", exc)
+
+                reload_registry.register("mcp", _reload_mcp_global)
+                reload_registry.register("mcp_servers", _reload_mcp_servers)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("mcp hot-reload wiring skipped: %s", exc)
+
+        try:
+            plugin_manager_obj = getattr(app_state, "_plugin_mgr", None)
+            if plugin_manager_obj is not None:
+                async def _reload_skill_markets(ctx):
+                    try:
+                        apply = getattr(plugin_manager_obj, "apply_markets", None)
+                        if apply is not None:
+                            await apply(ctx["new"])
+                        else:
+                            logger.debug(
+                                "skill_markets reload: plugin manager has no apply_markets",
+                            )
+                    except Exception as exc:
+                        logger.warning("skill_markets hot-reload failed: %s", exc)
+
+                reload_registry.register("skill_markets", _reload_skill_markets)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("plugin manager hot-reload wiring skipped: %s", exc)
+
+        try:
+            monitoring_obj = getattr(app_state, "_monitoring_engine", None)
+            if monitoring_obj is not None:
+                def _monitoring_setter(kw: str):
+                    async def _fn(ctx):
+                        try:
+                            apply = getattr(monitoring_obj, "apply", None)
+                            if apply is not None:
+                                await apply(**{kw: ctx["new"]})
+                            else:
+                                logger.debug(
+                                    "monitoring reload %s: no apply method", kw,
+                                )
+                        except Exception as exc:
+                            logger.warning(
+                                "monitoring reload %s failed: %s", kw, exc,
+                            )
+                    return _fn
+
+                reload_registry.register("monitoring_config", _monitoring_setter("monitoring_config"))
+                reload_registry.register("loop_protector", _monitoring_setter("loop_protector"))
+                reload_registry.register("scheduler_cron", _monitoring_setter("scheduler_cron"))
+                reload_registry.register("webhook_endpoints", _monitoring_setter("webhook_endpoints"))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("monitoring hot-reload wiring skipped: %s", exc)
+
         # Register the eight agent settings tools onto the CoreAgent's tool
         # registry so LLM-driven write paths also hit the shared service.
         # Guarded because some deployments (tests, minimal runtimes) may not
