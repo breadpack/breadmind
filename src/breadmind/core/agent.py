@@ -41,6 +41,9 @@ class CoreAgent:
         prompt_builder: object | None = None,
         cost_router: CostRouter | None = None,
     ):
+        from breadmind.settings.llm_holder import LLMProviderHolder
+        if not isinstance(provider, LLMProviderHolder):
+            provider = LLMProviderHolder(provider)
         self._provider = provider
         self._cost_router = cost_router
         self._tools = tool_registry
@@ -81,11 +84,17 @@ class CoreAgent:
 
     async def update_provider(self, provider: LLMProvider):
         """Replace the LLM provider at runtime, closing the old one."""
-        old = self._provider
-        self._provider = provider
-        if old is not None:
+        from breadmind.settings.llm_holder import LLMProviderHolder
+        old_inner = self._provider.current if isinstance(self._provider, LLMProviderHolder) else self._provider
+        if isinstance(provider, LLMProviderHolder):
+            provider = provider.current
+        if isinstance(self._provider, LLMProviderHolder):
+            self._provider.swap(provider)
+        else:
+            self._provider = LLMProviderHolder(provider)
+        if old_inner is not None and old_inner is not provider:
             try:
-                await old.close()
+                await old_inner.close()
             except Exception:
                 pass
 

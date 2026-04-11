@@ -168,6 +168,53 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
         app.state.settings_service = settings_service
         app.state.sdui_action_handler = action_handler
 
+        # Task 9: hot-reload LLM provider on `llm` / `apikey:*` changes.
+        # The CoreAgent auto-wraps its provider in an ``LLMProviderHolder`` at
+        # construction time; here we just locate it and register a reloader
+        # that rebuilds the provider via ``create_provider`` and swaps the
+        # inner reference. If we cannot find an agent or config, we skip with
+        # a warning so the web app still boots in minimal/test deployments.
+        try:
+            from breadmind.settings.llm_holder import LLMProviderHolder
+
+            agent = getattr(app_state, "_agent", None)
+            config = getattr(app_state, "_config", None)
+            if agent is None or config is None:
+                logger.warning(
+                    "LLM hot-reload wiring skipped: agent=%s config=%s",
+                    agent is not None,
+                    config is not None,
+                )
+            else:
+                existing_provider = getattr(agent, "_provider", None)
+                if existing_provider is None:
+                    logger.warning(
+                        "LLM hot-reload wiring skipped: agent has no _provider",
+                    )
+                else:
+                    if isinstance(existing_provider, LLMProviderHolder):
+                        llm_holder = existing_provider
+                    else:
+                        llm_holder = LLMProviderHolder(existing_provider)
+                        agent._provider = llm_holder
+
+                    async def _reload_llm(ctx):
+                        try:
+                            from breadmind.llm.factory import create_provider
+                            new_provider = create_provider(config)
+                            llm_holder.swap(new_provider)
+                            logger.info(
+                                "LLM provider hot-reloaded (trigger=%s)",
+                                ctx.get("key"),
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning("LLM hot-reload failed: %s", exc)
+
+                    reload_registry.register("llm", _reload_llm)
+                    reload_registry.register("apikey:*", _reload_llm)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("LLM hot-reload wiring skipped: %s", exc)
+
         # Register the eight agent settings tools onto the CoreAgent's tool
         # registry so LLM-driven write paths also hit the shared service.
         # Guarded because some deployments (tests, minimal runtimes) may not
