@@ -69,11 +69,11 @@ class SettingsService:
         self._key_locks: dict[str, asyncio.Lock] = {}
 
     def _lock(self, key: str) -> asyncio.Lock:
-        lock = self._key_locks.get(key)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._key_locks[key] = lock
-        return lock
+        # ``setdefault`` is atomic for dict operations in CPython, so two
+        # coroutines racing for a first-time key always end up with the same
+        # lock instance even if a future edit sneaks an ``await`` into this
+        # path.
+        return self._key_locks.setdefault(key, asyncio.Lock())
 
     async def get(self, key: str) -> Any:
         if settings_schema.is_credential_key(key):
