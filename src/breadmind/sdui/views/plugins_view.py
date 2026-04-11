@@ -81,7 +81,7 @@ def _plugin_card(p: dict) -> Component:
             Component(
                 type="stack",
                 id=f"actions-{name}",
-                props={"gap": "sm"},
+                props={"gap": "sm", "variant": "row"},
                 children=[
                     Component(
                         type="button",

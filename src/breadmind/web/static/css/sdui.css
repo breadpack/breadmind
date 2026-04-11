@@ -71,13 +71,14 @@ body {
   font-size: 13px;
 }
 
-/* Content region for the inner view body */
+/* Content region for the inner view body. Fills the column next to the
+   sidebar — no max-width or auto-centering, so each view can use the
+   full available width. */
 .sdui-stack--content {
   padding: var(--gap-lg);
-  max-width: 1200px;
   width: 100%;
-  margin: 0 auto;
   flex: 1 1 auto;
+  min-width: 0;
 }
 
 /* Desktop: sidebar layout (>= 900px) */
@@ -115,8 +116,8 @@ body {
   }
   .sdui-stack--content {
     padding: var(--gap-lg) 36px;
-    max-width: 1100px;
-    width: auto;
+    /* Fill all the space the grid column gives us. No max-width so wide
+       monitors actually use the room they have. */
   }
 }
 
@@ -134,6 +135,14 @@ body {
   flex-wrap: nowrap;
   overflow-x: auto;
 }
+/* Inline row stack: useful for action button groups inside cards. */
+.sdui-stack.sdui-stack--row {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: var(--gap-sm);
+  align-items: center;
+}
+.sdui-stack--row .sdui-button { flex: 0 0 auto; }
 @media (min-width: 900px) {
   .sdui-stack.sdui-stack--nav {
     flex-direction: column;
@@ -252,6 +261,17 @@ h4.sdui-heading { font-size: 15px; }
   border-radius: var(--radius-md);
   padding: 14px;
   background: var(--bg-2);
+}
+/* Direct child badges inside list cards stay inline-sized so they don't
+   stretch to fill the card width. */
+.sdui-list > .sdui-badge,
+.sdui-stack > .sdui-badge {
+  align-self: flex-start;
+}
+/* Buttons sitting directly inside a list card (not inside a form or row
+   stack) shouldn't stretch to fill the card's width either. */
+.sdui-list > .sdui-button {
+  align-self: flex-start;
 }
 
 /* ========== KV ========== */

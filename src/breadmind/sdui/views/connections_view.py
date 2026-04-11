@@ -130,7 +130,7 @@ def _platform_card(key: str, info: dict) -> Component:
             Component(
                 type="stack",
                 id=f"actions-{key}",
-                props={"gap": "sm"},
+                props={"gap": "sm", "variant": "row"},
                 children=[toggle_button, second_action],
             ),
         ],
