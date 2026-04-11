@@ -1,11 +1,16 @@
-"""Settings view: Phase 1 editable settings + Phase 2+ placeholder tabs.
+"""Settings view: Phase 1 + Phase 2 editable settings, Phase 3 placeholder tabs.
 
 Phase 1 (editable):
   - Quick Start: LLM provider, API keys, persona
   - Agent Behavior: prompts, instructions, embedding backend
 
-Phase 2+ (placeholder):
-  - Integrations, Safety & Permissions, Monitoring, Memory, Advanced
+Phase 2 (editable):
+  - Integrations: MCP global config, MCP server list, skill markets
+  - Safety & Permissions: blacklist, approval list, user permissions, tool security
+  - Monitoring: monitoring rules, loop protector, scheduler cron
+
+Phase 3 (placeholder):
+  - Memory, Advanced
 
 All forms emit ``settings_write`` actions; the action handler validates and
 persists via the settings store or credential vault.
@@ -54,6 +59,7 @@ _EMBEDDING_PROVIDER_OPTIONS = [
 
 
 async def build(db: Any, *, settings_store: Any = None, **_kwargs: Any) -> UISpec:
+    # Phase 1 data
     llm = await _safe_get(settings_store, "llm", {}) or {}
     persona = await _safe_get(settings_store, "persona", {}) or {}
     prompts = await _safe_get(settings_store, "custom_prompts", {}) or {}
@@ -62,6 +68,17 @@ async def build(db: Any, *, settings_store: Any = None, **_kwargs: Any) -> UISpe
     apikey_status = {}
     for name, _ in _API_KEYS:
         apikey_status[name] = await _safe_get(settings_store, f"apikey:{name}", None)
+
+    # Phase 2 data
+    mcp_config = await _safe_get(settings_store, "mcp", {}) or {}
+    mcp_servers = await _safe_get(settings_store, "mcp_servers", []) or []
+    skill_markets = await _safe_get(settings_store, "skill_markets", []) or []
+    safety_blacklist = await _safe_get(settings_store, "safety_blacklist", {}) or {}
+    safety_approval = await _safe_get(settings_store, "safety_approval", []) or []
+    safety_permissions = await _safe_get(settings_store, "safety_permissions", {}) or {}
+    tool_security = await _safe_get(settings_store, "tool_security", {}) or {}
+    monitoring_config = await _safe_get(settings_store, "monitoring_config", {}) or {}
+    scheduler_cron = await _safe_get(settings_store, "scheduler_cron", []) or []
 
     return UISpec(
         schema_version=1,
@@ -78,9 +95,9 @@ async def build(db: Any, *, settings_store: Any = None, **_kwargs: Any) -> UISpe
                     children=[
                         _quick_start_tab(llm, persona, apikey_status),
                         _agent_behavior_tab(prompts, instructions, embedding),
-                        _placeholder_tab("tab-integrations", "통합", "MCP 서버, 스킬 마켓, 메신저는 Phase 2에서 편집 가능합니다."),
-                        _placeholder_tab("tab-safety", "안전 & 권한", "Phase 2에서 사용 가능."),
-                        _placeholder_tab("tab-monitoring", "모니터링", "Phase 2에서 사용 가능."),
+                        _integrations_tab(mcp_config, mcp_servers, skill_markets),
+                        _safety_tab(safety_blacklist, safety_approval, safety_permissions, tool_security),
+                        _monitoring_tab(monitoring_config, scheduler_cron),
                         _placeholder_tab("tab-memory", "메모리", "Phase 3에서 사용 가능."),
                         _placeholder_tab("tab-advanced", "고급", "Phase 3에서 사용 가능."),
                     ],
@@ -417,6 +434,642 @@ def _embedding_card(embedding: dict) -> Component:
                 ],
             ),
         ],
+    )
+
+
+# ── Helper: chip-style item with delete button ────────────────────────────
+
+def _chip_with_delete(chip_id: str, label: str, delete_action: dict) -> Component:
+    """A small inline stack: label text + delete button, used for chip lists."""
+    return Component(
+        type="stack",
+        id=chip_id,
+        props={"direction": "horizontal", "gap": "xs", "align": "center"},
+        children=[
+            Component(
+                type="badge",
+                id=f"{chip_id}-label",
+                props={"value": label},
+            ),
+            Component(
+                type="button",
+                id=f"{chip_id}-del",
+                props={"label": "삭제", "variant": "danger-sm", "action": delete_action},
+            ),
+        ],
+    )
+
+
+# ── Tab: Integrations ─────────────────────────────────────────────────────
+
+def _integrations_tab(
+    mcp_config: dict,
+    mcp_servers: list,
+    skill_markets: list,
+) -> Component:
+    return Component(
+        type="stack",
+        id="tab-integrations",
+        props={"label": "통합", "gap": "md"},
+        children=[
+            Component(type="heading", id="int-h", props={"value": "통합", "level": 3}),
+            _mcp_global_card(mcp_config),
+            _mcp_servers_card(mcp_servers),
+            _skill_markets_card(skill_markets),
+        ],
+    )
+
+
+def _mcp_global_card(mcp_config: dict) -> Component:
+    auto_discover = mcp_config.get("auto_discover", True) if isinstance(mcp_config, dict) else True
+    max_restart = mcp_config.get("max_restart_attempts", 3) if isinstance(mcp_config, dict) else 3
+    return Component(
+        type="list",
+        id="int-mcp-global",
+        props={"variant": "settings-card"},
+        children=[
+            Component(type="heading", id="int-mcp-global-h", props={"value": "MCP 글로벌 설정", "level": 4}),
+            Component(type="text", id="int-mcp-global-d", props={"value": "MCP 서버 자동 검색 및 재시작 정책을 설정합니다."}),
+            Component(
+                type="form",
+                id="int-mcp-global-form",
+                props={
+                    "action": {"kind": "settings_write", "key": "mcp"},
+                    "submit_label": "저장",
+                },
+                children=[
+                    Component(
+                        type="select",
+                        id="int-mcp-auto-discover",
+                        props={
+                            "name": "auto_discover",
+                            "label": "자동 검색",
+                            "value": str(auto_discover).lower(),
+                            "options": [
+                                {"value": "true", "label": "활성화"},
+                                {"value": "false", "label": "비활성화"},
+                            ],
+                        },
+                    ),
+                    Component(
+                        type="field",
+                        id="int-mcp-max-restart",
+                        props={
+                            "name": "max_restart_attempts",
+                            "label": "최대 재시작 횟수",
+                            "value": str(max_restart),
+                            "type": "number",
+                        },
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
+def _mcp_servers_card(mcp_servers: list) -> Component:
+    server_children: list[Component] = [
+        Component(type="heading", id="int-mcp-srv-h", props={"value": "MCP 서버 목록", "level": 4}),
+        Component(type="text", id="int-mcp-srv-d", props={"value": "등록된 MCP 서버 목록입니다."}),
+    ]
+    if not mcp_servers:
+        server_children.append(
+            Component(type="text", id="int-mcp-srv-empty", props={"value": "등록된 MCP 서버가 없습니다."})
+        )
+    else:
+        for idx, srv in enumerate(mcp_servers):
+            name = srv.get("name", f"server-{idx}")
+            remaining = [s for s in mcp_servers if s.get("name") != name]
+            args_str = ", ".join(srv.get("args", []))
+            enabled_str = "활성" if srv.get("enabled", True) else "비활성"
+            server_children.append(
+                Component(
+                    type="list",
+                    id=f"int-mcp-srv-{idx}",
+                    props={"variant": "sub-card"},
+                    children=[
+                        Component(type="heading", id=f"int-mcp-srv-{idx}-h", props={"value": name, "level": 5}),
+                        Component(
+                            type="kv",
+                            id=f"int-mcp-srv-{idx}-kv",
+                            props={
+                                "items": [
+                                    {"key": "command", "value": srv.get("command", "")},
+                                    {"key": "args", "value": args_str},
+                                    {"key": "enabled", "value": enabled_str},
+                                ]
+                            },
+                        ),
+                        Component(
+                            type="button",
+                            id=f"int-mcp-srv-{idx}-del",
+                            props={
+                                "label": "삭제",
+                                "variant": "danger-sm",
+                                "action": {
+                                    "kind": "settings_write",
+                                    "key": "mcp_servers",
+                                    "values": remaining,
+                                },
+                            },
+                        ),
+                    ],
+                )
+            )
+    server_children.append(
+        Component(
+            type="text",
+            id="int-mcp-srv-phase3",
+            props={"value": "서버 추가/편집 기능은 Phase 3에서 제공됩니다."},
+        )
+    )
+    return Component(
+        type="list",
+        id="int-mcp-servers",
+        props={"variant": "settings-card"},
+        children=server_children,
+    )
+
+
+def _skill_markets_card(skill_markets: list) -> Component:
+    children: list[Component] = [
+        Component(type="heading", id="int-skill-h", props={"value": "스킬 마켓", "level": 4}),
+        Component(type="text", id="int-skill-d", props={"value": "연결된 스킬 마켓 목록입니다."}),
+    ]
+    if not skill_markets:
+        children.append(
+            Component(type="text", id="int-skill-empty", props={"value": "등록된 스킬 마켓이 없습니다."})
+        )
+    else:
+        for idx, market in enumerate(skill_markets):
+            name = market.get("name", f"market-{idx}")
+            remaining = [m for m in skill_markets if m.get("name") != name]
+            enabled_str = "활성" if market.get("enabled", True) else "비활성"
+            children.append(
+                Component(
+                    type="list",
+                    id=f"int-skill-{idx}",
+                    props={"variant": "sub-card"},
+                    children=[
+                        Component(type="heading", id=f"int-skill-{idx}-h", props={"value": name, "level": 5}),
+                        Component(
+                            type="kv",
+                            id=f"int-skill-{idx}-kv",
+                            props={
+                                "items": [
+                                    {"key": "type", "value": market.get("type", "")},
+                                    {"key": "enabled", "value": enabled_str},
+                                ]
+                            },
+                        ),
+                        Component(
+                            type="button",
+                            id=f"int-skill-{idx}-del",
+                            props={
+                                "label": "삭제",
+                                "variant": "danger-sm",
+                                "action": {
+                                    "kind": "settings_write",
+                                    "key": "skill_markets",
+                                    "values": remaining,
+                                },
+                            },
+                        ),
+                    ],
+                )
+            )
+    children.append(
+        Component(
+            type="text",
+            id="int-skill-phase3",
+            props={"value": "마켓 추가/편집 기능은 Phase 3에서 제공됩니다."},
+        )
+    )
+    return Component(
+        type="list",
+        id="int-skill-markets",
+        props={"variant": "settings-card"},
+        children=children,
+    )
+
+
+# ── Tab: Safety & Permissions ─────────────────────────────────────────────
+
+def _safety_tab(
+    safety_blacklist: dict,
+    safety_approval: list,
+    safety_permissions: dict,
+    tool_security: dict,
+) -> Component:
+    return Component(
+        type="stack",
+        id="tab-safety",
+        props={"label": "안전 & 권한", "gap": "md"},
+        children=[
+            Component(type="heading", id="safety-h", props={"value": "안전 & 권한", "level": 3}),
+            _blacklist_card(safety_blacklist),
+            _approval_card(safety_approval),
+            _permissions_card(safety_permissions),
+            _tool_security_card(tool_security),
+        ],
+    )
+
+
+def _blacklist_card(safety_blacklist: dict) -> Component:
+    children: list[Component] = [
+        Component(type="heading", id="safety-bl-h", props={"value": "차단 도구", "level": 4}),
+        Component(type="text", id="safety-bl-d", props={"value": "도메인별로 차단할 도구 목록을 관리합니다."}),
+    ]
+    if not safety_blacklist:
+        children.append(
+            Component(type="text", id="safety-bl-empty", props={"value": "차단된 도구가 없습니다."})
+        )
+    else:
+        for domain, tools in safety_blacklist.items():
+            domain_children: list[Component] = [
+                Component(type="heading", id=f"safety-bl-{domain}-h", props={"value": f"[{domain}]", "level": 5}),
+            ]
+            for tool in tools:
+                # Build a new dict without this specific tool
+                new_bl: dict = {}
+                for d2, tlist in safety_blacklist.items():
+                    remaining_tools = [t for t in tlist if t != tool] if d2 == domain else list(tlist)
+                    if remaining_tools:
+                        new_bl[d2] = remaining_tools
+                domain_children.append(
+                    _chip_with_delete(
+                        chip_id=f"safety-bl-{domain}-{tool}",
+                        label=tool,
+                        delete_action={
+                            "kind": "settings_write",
+                            "key": "safety_blacklist",
+                            "values": new_bl,
+                        },
+                    )
+                )
+            children.append(
+                Component(
+                    type="list",
+                    id=f"safety-bl-domain-{domain}",
+                    props={"variant": "sub-card"},
+                    children=domain_children,
+                )
+            )
+    children.append(
+        Component(type="text", id="safety-bl-phase3", props={"value": "도구 추가 기능은 Phase 3에서 제공됩니다."})
+    )
+    return Component(
+        type="list",
+        id="safety-blacklist",
+        props={"variant": "settings-card"},
+        children=children,
+    )
+
+
+def _approval_card(safety_approval: list) -> Component:
+    children: list[Component] = [
+        Component(type="heading", id="safety-ap-h", props={"value": "승인 필요 도구", "level": 4}),
+        Component(type="text", id="safety-ap-d", props={"value": "실행 전 사용자 승인이 필요한 도구 목록입니다."}),
+    ]
+    if not safety_approval:
+        children.append(
+            Component(type="text", id="safety-ap-empty", props={"value": "승인 필요 도구가 없습니다."})
+        )
+    else:
+        for tool in safety_approval:
+            remaining = [t for t in safety_approval if t != tool]
+            children.append(
+                _chip_with_delete(
+                    chip_id=f"safety-ap-{tool}",
+                    label=tool,
+                    delete_action={
+                        "kind": "settings_write",
+                        "key": "safety_approval",
+                        "values": remaining,
+                    },
+                )
+            )
+    children.append(
+        Component(type="text", id="safety-ap-phase3", props={"value": "도구 추가 기능은 Phase 3에서 제공됩니다."})
+    )
+    return Component(
+        type="list",
+        id="safety-approval",
+        props={"variant": "settings-card"},
+        children=children,
+    )
+
+
+def _permissions_card(safety_permissions: dict) -> Component:
+    admin_users = safety_permissions.get("admin_users", []) if isinstance(safety_permissions, dict) else []
+    user_permissions = safety_permissions.get("user_permissions", {}) if isinstance(safety_permissions, dict) else {}
+
+    children: list[Component] = [
+        Component(type="heading", id="safety-perm-h", props={"value": "사용자 권한", "level": 4}),
+        Component(type="heading", id="safety-perm-admin-h", props={"value": "관리자 사용자", "level": 5}),
+    ]
+
+    if not admin_users:
+        children.append(
+            Component(
+                type="text",
+                id="safety-perm-admin-empty",
+                props={"value": "관리자 목록이 비어있으면 모든 사용자가 일반 권한 검사를 받습니다."},
+            )
+        )
+    else:
+        for user in admin_users:
+            remaining = [u for u in admin_users if u != user]
+            new_perms = {**safety_permissions, "admin_users": remaining}
+            children.append(
+                _chip_with_delete(
+                    chip_id=f"safety-perm-admin-{user}",
+                    label=user,
+                    delete_action={
+                        "kind": "settings_write",
+                        "key": "safety_permissions",
+                        "values": new_perms,
+                    },
+                )
+            )
+        children.append(
+            Component(
+                type="text",
+                id="safety-perm-admin-note",
+                props={"value": "관리자 목록이 비어있으면 모든 사용자가 일반 권한 검사를 받습니다."},
+            )
+        )
+
+    children.append(
+        Component(type="heading", id="safety-perm-up-h", props={"value": "사용자별 도구 화이트리스트", "level": 5})
+    )
+    if not user_permissions:
+        children.append(
+            Component(type="text", id="safety-perm-up-empty", props={"value": "사용자별 권한이 없습니다."})
+        )
+    else:
+        kv_items = [
+            {"key": user, "value": ", ".join(tools)}
+            for user, tools in user_permissions.items()
+        ]
+        children.append(
+            Component(type="kv", id="safety-perm-up-kv", props={"items": kv_items})
+        )
+
+    return Component(
+        type="list",
+        id="safety-permissions",
+        props={"variant": "settings-card"},
+        children=children,
+    )
+
+
+def _tool_security_card(tool_security: dict) -> Component:
+    base_dir = tool_security.get("base_directory", "") if isinstance(tool_security, dict) else ""
+    whitelist_enabled = tool_security.get("command_whitelist_enabled", False) if isinstance(tool_security, dict) else False
+    # Read-only list fields
+    list_fields = ("dangerous_patterns", "sensitive_file_patterns", "allowed_ssh_hosts", "command_whitelist")
+    kv_items = []
+    for field_name in list_fields:
+        val = tool_security.get(field_name, []) if isinstance(tool_security, dict) else []
+        kv_items.append({"key": field_name, "value": ", ".join(val) if val else "(없음)"})
+
+    return Component(
+        type="list",
+        id="safety-tool-sec",
+        props={"variant": "settings-card"},
+        children=[
+            Component(type="heading", id="safety-tool-sec-h", props={"value": "도구 보안 정책", "level": 4}),
+            Component(type="text", id="safety-tool-sec-d", props={"value": "도구 실행에 적용되는 보안 정책입니다."}),
+            Component(type="kv", id="safety-tool-sec-ro-kv", props={"items": kv_items}),
+            Component(
+                type="form",
+                id="safety-tool-sec-form",
+                props={
+                    "action": {"kind": "settings_write", "key": "tool_security"},
+                    "submit_label": "저장",
+                },
+                children=[
+                    Component(
+                        type="field",
+                        id="safety-tool-sec-basedir",
+                        props={
+                            "name": "base_directory",
+                            "label": "기본 디렉토리",
+                            "value": str(base_dir) if base_dir else "",
+                            "type": "text",
+                        },
+                    ),
+                    Component(
+                        type="select",
+                        id="safety-tool-sec-whitelist-enabled",
+                        props={
+                            "name": "command_whitelist_enabled",
+                            "label": "커맨드 화이트리스트 활성화",
+                            "value": str(whitelist_enabled).lower(),
+                            "options": [
+                                {"value": "true", "label": "활성화"},
+                                {"value": "false", "label": "비활성화"},
+                            ],
+                        },
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
+# ── Tab: Monitoring ───────────────────────────────────────────────────────
+
+def _monitoring_tab(monitoring_config: dict, scheduler_cron: list) -> Component:
+    return Component(
+        type="stack",
+        id="tab-monitoring",
+        props={"label": "모니터링", "gap": "md"},
+        children=[
+            Component(type="heading", id="mon-h", props={"value": "모니터링", "level": 3}),
+            _monitoring_rules_card(monitoring_config),
+            _loop_protector_card(monitoring_config),
+            _scheduler_cron_card(scheduler_cron),
+        ],
+    )
+
+
+def _monitoring_rules_card(monitoring_config: dict) -> Component:
+    rules = monitoring_config.get("rules", []) if isinstance(monitoring_config, dict) else []
+    children: list[Component] = [
+        Component(type="heading", id="mon-rules-h", props={"value": "모니터링 규칙", "level": 4}),
+        Component(type="text", id="mon-rules-d", props={"value": "모니터링 규칙의 활성 상태를 관리합니다."}),
+    ]
+    if not rules:
+        children.append(
+            Component(type="text", id="mon-rules-empty", props={"value": "등록된 모니터링 규칙이 없습니다."})
+        )
+    else:
+        for idx, rule in enumerate(rules):
+            name = rule.get("name", f"rule-{idx}")
+            enabled = rule.get("enabled", True)
+            # Build full config with this rule's enabled flipped
+            flipped_rules = []
+            for r in rules:
+                if r.get("name") == name:
+                    flipped = dict(r)
+                    flipped["enabled"] = not enabled
+                    flipped_rules.append(flipped)
+                else:
+                    flipped_rules.append(dict(r))
+            toggle_config = {**monitoring_config, "rules": flipped_rules}
+            toggle_label = "비활성화" if enabled else "활성화"
+            status_str = "활성" if enabled else "비활성"
+            kv_items = [
+                {"key": "severity", "value": str(rule.get("severity", ""))},
+                {"key": "source", "value": str(rule.get("source", ""))},
+                {"key": "interval_seconds", "value": str(rule.get("interval_seconds", ""))},
+                {"key": "enabled", "value": status_str},
+            ]
+            if rule.get("description"):
+                kv_items.insert(0, {"key": "description", "value": str(rule["description"])})
+            children.append(
+                Component(
+                    type="list",
+                    id=f"mon-rule-{idx}",
+                    props={"variant": "sub-card"},
+                    children=[
+                        Component(type="heading", id=f"mon-rule-{idx}-h", props={"value": name, "level": 5}),
+                        Component(type="kv", id=f"mon-rule-{idx}-kv", props={"items": kv_items}),
+                        Component(
+                            type="button",
+                            id=f"mon-rule-{idx}-toggle",
+                            props={
+                                "label": toggle_label,
+                                "variant": "secondary",
+                                "action": {
+                                    "kind": "settings_write",
+                                    "key": "monitoring_config",
+                                    "values": toggle_config,
+                                },
+                            },
+                        ),
+                    ],
+                )
+            )
+    return Component(
+        type="list",
+        id="mon-rules",
+        props={"variant": "settings-card"},
+        children=children,
+    )
+
+
+def _loop_protector_card(monitoring_config: dict) -> Component:
+    lp = monitoring_config.get("loop_protector", {}) if isinstance(monitoring_config, dict) else {}
+    cooldown = lp.get("cooldown_minutes", 5) if isinstance(lp, dict) else 5
+    max_actions = lp.get("max_auto_actions", 10) if isinstance(lp, dict) else 10
+    return Component(
+        type="list",
+        id="mon-loop",
+        props={"variant": "settings-card"},
+        children=[
+            Component(type="heading", id="mon-loop-h", props={"value": "루프 보호기", "level": 4}),
+            Component(type="text", id="mon-loop-d", props={"value": "무한 루프 방지 정책을 설정합니다."}),
+            Component(
+                type="form",
+                id="mon-loop-form",
+                props={
+                    "action": {
+                        "kind": "settings_write",
+                        "key": "monitoring_config",
+                    },
+                    "submit_label": "저장",
+                },
+                children=[
+                    Component(
+                        type="field",
+                        id="mon-loop-cooldown",
+                        props={
+                            "name": "cooldown_minutes",
+                            "label": "쿨다운 (분)",
+                            "value": str(cooldown),
+                            "type": "number",
+                        },
+                    ),
+                    Component(
+                        type="field",
+                        id="mon-loop-max-actions",
+                        props={
+                            "name": "max_auto_actions",
+                            "label": "최대 자동 작업 수",
+                            "value": str(max_actions),
+                            "type": "number",
+                        },
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
+def _scheduler_cron_card(scheduler_cron: list) -> Component:
+    children: list[Component] = [
+        Component(type="heading", id="mon-cron-h", props={"value": "스케줄러 크론", "level": 4}),
+        Component(type="text", id="mon-cron-d", props={"value": "예약된 크론 작업 목록입니다."}),
+    ]
+    if not scheduler_cron:
+        children.append(
+            Component(type="text", id="mon-cron-empty", props={"value": "등록된 크론 작업이 없습니다."})
+        )
+    else:
+        for idx, entry in enumerate(scheduler_cron):
+            name = entry.get("name", f"cron-{idx}")
+            job_id = entry.get("id", name)
+            remaining = [e for e in scheduler_cron if e.get("id", e.get("name")) != job_id]
+            enabled_str = "활성" if entry.get("enabled", True) else "비활성"
+            children.append(
+                Component(
+                    type="list",
+                    id=f"mon-cron-{idx}",
+                    props={"variant": "sub-card"},
+                    children=[
+                        Component(type="heading", id=f"mon-cron-{idx}-h", props={"value": name, "level": 5}),
+                        Component(
+                            type="kv",
+                            id=f"mon-cron-{idx}-kv",
+                            props={
+                                "items": [
+                                    {"key": "schedule", "value": entry.get("schedule", "")},
+                                    {"key": "task", "value": entry.get("task", "")},
+                                    {"key": "enabled", "value": enabled_str},
+                                ]
+                            },
+                        ),
+                        Component(
+                            type="button",
+                            id=f"mon-cron-{idx}-del",
+                            props={
+                                "label": "삭제",
+                                "variant": "danger-sm",
+                                "action": {
+                                    "kind": "settings_write",
+                                    "key": "scheduler_cron",
+                                    "values": remaining,
+                                },
+                            },
+                        ),
+                    ],
+                )
+            )
+    children.append(
+        Component(
+            type="text",
+            id="mon-cron-phase3",
+            props={"value": "크론 작업 추가/편집 기능은 Phase 3에서 제공됩니다."},
+        )
+    )
+    return Component(
+        type="list",
+        id="mon-scheduler-cron",
+        props={"variant": "settings-card"},
+        children=children,
     )
 
 
