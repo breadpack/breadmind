@@ -45,6 +45,7 @@ class UISpecProjector:
         *,
         working_memory: Any = None,
         settings_store: Any = None,
+        credential_vault: Any = None,
         plugin_manager: Any = None,
         browser_engine: Any = None,
         messenger_router: Any = None,
@@ -54,6 +55,7 @@ class UISpecProjector:
         self._bus = bus
         self._working_memory = working_memory
         self._settings_store = settings_store
+        self._credential_vault = credential_vault
         self._plugin_manager = plugin_manager
         self._browser_engine = browser_engine
         self._messenger_router = messenger_router

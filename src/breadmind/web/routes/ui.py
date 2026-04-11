@@ -112,11 +112,18 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
         except Exception:
             job_tracker = None
 
+        try:
+            from breadmind.storage.credential_vault import CredentialVault
+            credential_vault = CredentialVault(database)
+        except Exception:
+            credential_vault = None
+
         projector = UISpecProjector(
             db=database,
             bus=flow_bus,
             working_memory=working_memory,
             settings_store=settings_store,
+            credential_vault=credential_vault,
             plugin_manager=plugin_manager,
             browser_engine=browser_engine,
             messenger_router=messenger_router,
@@ -128,6 +135,8 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
             bus=flow_bus,
             message_handler=message_handler,
             working_memory=working_memory,
+            settings_store=settings_store,
+            credential_vault=credential_vault,
         )
         return projector, flow_bus
 
