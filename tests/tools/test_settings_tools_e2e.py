@@ -61,7 +61,7 @@ async def test_register_settings_tools_adds_eight_entries():
     )
     register_settings_tools(registry, service=service, actor="agent:core")
 
-    names = set(registry._tools.keys())
+    names = set(registry.list_tools())
     assert EXPECTED_TOOL_NAMES.issubset(names)
 
 

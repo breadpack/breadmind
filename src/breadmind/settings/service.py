@@ -78,6 +78,16 @@ class SettingsService:
         # path.
         return self._key_locks.setdefault(key, asyncio.Lock())
 
+    def set_audit_sink(self, sink: AuditSink) -> None:
+        """Replace the audit sink after construction.
+
+        Used during web app startup when the service needs to exist before
+        :class:`ActionHandler` (which owns the audit log), then has its sink
+        swapped for ``action_handler._record_audit`` once the handler is
+        built. Prefer constructing with the real sink when possible.
+        """
+        self._audit_sink = sink
+
     def _build_event_payload(
         self,
         *,

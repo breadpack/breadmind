@@ -230,6 +230,10 @@ class ToolRegistry:
     def get_all_definitions(self) -> list[ToolDefinition]:
         return list(self._definitions.values())
 
+    def list_tools(self) -> list[str]:
+        """Return the names of every registered tool (builtin + MCP)."""
+        return list(self._definitions.keys())
+
     def has_tool(self, name: str) -> bool:
         return name in self._tools or name in self._mcp_tools
 

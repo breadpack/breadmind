@@ -139,8 +139,10 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
 
         reload_registry = SettingsReloadRegistry()
 
-        # Placeholder audit sink; back-filled with ActionHandler._record_audit
-        # immediately after the handler is constructed below.
+        # Build the service with a placeholder audit sink, then back-fill the
+        # real one from ActionHandler below. Only after back-fill do we
+        # publish the service to ``app.state`` — otherwise another coroutine
+        # could observe the placeholder and record audit_id=None on a write.
         async def _placeholder_audit(**kwargs):
             return None
 
@@ -151,8 +153,6 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
             reload_registry=reload_registry,
             event_bus=flow_bus,
         )
-        app.state.settings_reload_registry = reload_registry
-        app.state.settings_service = settings_service
 
         action_handler = ActionHandler(
             bus=flow_bus,
@@ -163,8 +163,9 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
             event_bus=flow_bus,
             settings_service=settings_service,
         )
-        # Back-fill the real audit sink now that ActionHandler exists.
-        settings_service._audit_sink = action_handler._record_audit
+        settings_service.set_audit_sink(action_handler._record_audit)
+        app.state.settings_reload_registry = reload_registry
+        app.state.settings_service = settings_service
         app.state.sdui_action_handler = action_handler
 
         # Register the eight agent settings tools onto the CoreAgent's tool
