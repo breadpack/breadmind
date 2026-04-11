@@ -262,6 +262,24 @@ def test_validate_skill_markets_not_list_raises():
         validate_value("skill_markets", "not-a-list")
 
 
+def test_validate_skill_markets_enabled_string_true():
+    """skill_markets enabled='true' string is coerced to True."""
+    out = validate_value("skill_markets", [{"name": "m", "type": "skills_sh", "enabled": "true"}])
+    assert out[0]["enabled"] is True
+
+
+def test_validate_skill_markets_enabled_string_false():
+    """skill_markets enabled='false' string is coerced to False."""
+    out = validate_value("skill_markets", [{"name": "m", "type": "skills_sh", "enabled": "false"}])
+    assert out[0]["enabled"] is False
+
+
+def test_validate_skill_markets_enabled_invalid_string_raises():
+    """skill_markets enabled='maybe' is rejected (unknown string)."""
+    with pytest.raises(SettingsValidationError):
+        validate_value("skill_markets", [{"name": "m", "type": "skills_sh", "enabled": "maybe"}])
+
+
 # ---------------------------------------------------------------------------
 # safety_blacklist
 # ---------------------------------------------------------------------------
@@ -470,6 +488,30 @@ def test_validate_scheduler_cron_empty_schedule_raises():
 def test_validate_scheduler_cron_not_list_raises():
     with pytest.raises(SettingsValidationError):
         validate_value("scheduler_cron", {"name": "t"})
+
+
+def test_validate_scheduler_cron_enabled_string_true():
+    """scheduler_cron enabled='true' string is coerced to True."""
+    out = validate_value("scheduler_cron", [
+        {"name": "job", "schedule": "* * * * *", "task": "do thing", "enabled": "true"}
+    ])
+    assert out[0]["enabled"] is True
+
+
+def test_validate_scheduler_cron_enabled_string_false():
+    """scheduler_cron enabled='false' string is coerced to False."""
+    out = validate_value("scheduler_cron", [
+        {"name": "job", "schedule": "* * * * *", "task": "do thing", "enabled": "false"}
+    ])
+    assert out[0]["enabled"] is False
+
+
+def test_validate_scheduler_cron_enabled_invalid_string_raises():
+    """scheduler_cron enabled='maybe' is rejected (unknown string)."""
+    with pytest.raises(SettingsValidationError):
+        validate_value("scheduler_cron", [
+            {"name": "job", "schedule": "* * * * *", "task": "do thing", "enabled": "maybe"}
+        ])
 
 
 # ---------------------------------------------------------------------------

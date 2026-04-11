@@ -355,9 +355,7 @@ def _validate_skill_markets(value: Any) -> list:
             raise SettingsValidationError(
                 f"skill_markets[{i}].type must be one of {sorted(_SKILL_MARKET_TYPES)}"
             )
-        enabled = item.get("enabled", True)
-        if not isinstance(enabled, bool):
-            raise SettingsValidationError(f"skill_markets[{i}].enabled must be bool")
+        enabled = _coerce_bool(item.get("enabled", True), f"skill_markets[{i}].enabled")
         entry: dict[str, Any] = {"name": name, "type": mtype, "enabled": enabled}
         if "url" in item:
             url = item["url"]
@@ -548,9 +546,7 @@ def _validate_scheduler_cron(value: Any) -> list:
             raise SettingsValidationError(
                 f"scheduler_cron[{i}].task must be a non-empty string"
             )
-        enabled = item.get("enabled", True)
-        if not isinstance(enabled, bool):
-            raise SettingsValidationError(f"scheduler_cron[{i}].enabled must be bool")
+        enabled = _coerce_bool(item.get("enabled", True), f"scheduler_cron[{i}].enabled")
         job_id = item.get("id") or str(uuid.uuid4())
         entry: dict[str, Any] = {
             "id": job_id,

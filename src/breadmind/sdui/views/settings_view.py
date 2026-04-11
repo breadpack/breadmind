@@ -918,23 +918,68 @@ def _skill_markets_card(skill_markets: list) -> Component:
         for idx, market in enumerate(skill_markets):
             name = market.get("name", f"market-{idx}")
             remaining = [m for m in skill_markets if m.get("name") != name]
-            enabled_str = "활성" if market.get("enabled", True) else "비활성"
+            enabled_value = "true" if market.get("enabled", True) else "false"
             children.append(
                 Component(
                     type="list",
                     id=f"int-skill-{idx}",
                     props={"variant": "sub-card"},
                     children=[
-                        Component(type="heading", id=f"int-skill-{idx}-h", props={"value": name, "level": 5}),
                         Component(
-                            type="kv",
-                            id=f"int-skill-{idx}-kv",
+                            type="form",
+                            id=f"market-edit-{name}-form",
                             props={
-                                "items": [
-                                    {"key": "type", "value": market.get("type", "")},
-                                    {"key": "enabled", "value": enabled_str},
-                                ]
+                                "action": {
+                                    "kind": "settings_update_item",
+                                    "key": "skill_markets",
+                                    "match_field": "name",
+                                    "match_value": name,
+                                },
+                                "submit_label": "저장",
                             },
+                            children=[
+                                Component(
+                                    type="field",
+                                    id=f"int-skill-{idx}-name",
+                                    props={
+                                        "name": "name",
+                                        "label": "이름",
+                                        "value": name,
+                                        "type": "text",
+                                        "read_only": True,
+                                    },
+                                ),
+                                Component(
+                                    type="select",
+                                    id=f"int-skill-{idx}-type",
+                                    props={
+                                        "name": "type",
+                                        "label": "유형",
+                                        "value": market.get("type", "skills_sh"),
+                                        "options": _SKILL_MARKET_TYPE_OPTIONS,
+                                    },
+                                ),
+                                Component(
+                                    type="field",
+                                    id=f"int-skill-{idx}-url",
+                                    props={
+                                        "name": "url",
+                                        "label": "URL (선택)",
+                                        "value": market.get("url", ""),
+                                        "type": "text",
+                                    },
+                                ),
+                                Component(
+                                    type="select",
+                                    id=f"int-skill-{idx}-enabled",
+                                    props={
+                                        "name": "enabled",
+                                        "label": "활성화",
+                                        "value": enabled_value,
+                                        "options": _BOOL_OPTIONS,
+                                    },
+                                ),
+                            ],
                         ),
                         Component(
                             type="button",
@@ -1423,24 +1468,70 @@ def _scheduler_cron_card(scheduler_cron: list) -> Component:
             name = entry.get("name", f"cron-{idx}")
             job_id = entry.get("id", name)
             remaining = [e for e in scheduler_cron if e.get("id", e.get("name")) != job_id]
-            enabled_str = "활성" if entry.get("enabled", True) else "비활성"
+            enabled_value = "true" if entry.get("enabled", True) else "false"
             children.append(
                 Component(
                     type="list",
                     id=f"mon-cron-{idx}",
                     props={"variant": "sub-card"},
                     children=[
-                        Component(type="heading", id=f"mon-cron-{idx}-h", props={"value": name, "level": 5}),
                         Component(
-                            type="kv",
-                            id=f"mon-cron-{idx}-kv",
+                            type="form",
+                            id=f"cron-edit-{name}-form",
                             props={
-                                "items": [
-                                    {"key": "schedule", "value": entry.get("schedule", "")},
-                                    {"key": "task", "value": entry.get("task", "")},
-                                    {"key": "enabled", "value": enabled_str},
-                                ]
+                                "action": {
+                                    "kind": "settings_update_item",
+                                    "key": "scheduler_cron",
+                                    "match_field": "name",
+                                    "match_value": name,
+                                },
+                                "submit_label": "저장",
                             },
+                            children=[
+                                Component(
+                                    type="field",
+                                    id=f"mon-cron-{idx}-name",
+                                    props={
+                                        "name": "name",
+                                        "label": "이름",
+                                        "value": name,
+                                        "type": "text",
+                                        "read_only": True,
+                                    },
+                                ),
+                                Component(
+                                    type="field",
+                                    id=f"mon-cron-{idx}-schedule",
+                                    props={
+                                        "name": "schedule",
+                                        "label": "크론 표현식",
+                                        "value": entry.get("schedule", ""),
+                                        "type": "text",
+                                        "placeholder": "0 9 * * 1",
+                                    },
+                                ),
+                                Component(
+                                    type="field",
+                                    id=f"mon-cron-{idx}-task",
+                                    props={
+                                        "name": "task",
+                                        "label": "작업",
+                                        "value": entry.get("task", ""),
+                                        "type": "text",
+                                        "multiline": True,
+                                    },
+                                ),
+                                Component(
+                                    type="select",
+                                    id=f"mon-cron-{idx}-enabled",
+                                    props={
+                                        "name": "enabled",
+                                        "label": "활성화",
+                                        "value": enabled_value,
+                                        "options": _BOOL_OPTIONS,
+                                    },
+                                ),
+                            ],
                         ),
                         Component(
                             type="button",
