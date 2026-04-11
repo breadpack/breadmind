@@ -1,40 +1,67 @@
-"""Settings view: configuration display in tabbed layout.
+"""Settings view: Phase 1 editable settings + Phase 2+ placeholder tabs.
 
-Renders BreadMind settings across four tabs: System, Safety, Timeouts & Retry,
-and About. Settings are read from the injected ``settings_store`` when present;
-all store access is wrapped in try/except so the view always renders structure,
-even when the store is missing, broken, or the keys are absent.
+Phase 1 (editable):
+  - Quick Start: LLM provider, API keys, persona
+  - Agent Behavior: prompts, instructions, embedding backend
 
-The Phase 2 view is read-only — the Timeouts tab includes a placeholder form
-for future write wiring, but no mutations are performed here.
+Phase 2+ (placeholder):
+  - Integrations, Safety & Permissions, Monitoring, Memory, Advanced
+
+All forms emit ``settings_write`` actions; the action handler validates and
+persists via the settings store or credential vault.
 """
 from __future__ import annotations
 
 import logging
 from typing import Any
 
+from breadmind.sdui.settings_schema import mask_credential
 from breadmind.sdui.spec import Component, UISpec
 
 logger = logging.getLogger(__name__)
 
-_PLACEHOLDER = "N/A"
+_API_KEYS = [
+    ("ANTHROPIC_API_KEY", "Anthropic (Claude)"),
+    ("GEMINI_API_KEY", "Google (Gemini)"),
+    ("OPENAI_API_KEY", "OpenAI"),
+    ("XAI_API_KEY", "xAI (Grok)"),
+]
+
+_PERSONA_PRESET_OPTIONS = [
+    {"value": "professional", "label": "전문적"},
+    {"value": "friendly", "label": "친근함"},
+    {"value": "concise", "label": "간결함"},
+    {"value": "humorous", "label": "유머러스"},
+]
+
+_PROVIDER_OPTIONS = [
+    {"value": "gemini", "label": "Gemini"},
+    {"value": "claude", "label": "Claude"},
+    {"value": "openai", "label": "OpenAI"},
+    {"value": "grok", "label": "Grok"},
+    {"value": "ollama", "label": "Ollama (local)"},
+]
+
+_EMBEDDING_PROVIDER_OPTIONS = [
+    {"value": "auto", "label": "자동"},
+    {"value": "fastembed", "label": "FastEmbed"},
+    {"value": "ollama", "label": "Ollama"},
+    {"value": "local", "label": "Local"},
+    {"value": "gemini", "label": "Gemini"},
+    {"value": "openai", "label": "OpenAI"},
+    {"value": "off", "label": "비활성화"},
+]
 
 
 async def build(db: Any, *, settings_store: Any = None, **_kwargs: Any) -> UISpec:
-    """Build the settings UISpec.
-
-    Parameters
-    ----------
-    db:
-        Database handle (unused today — kept for signature parity with other
-        views and possible future usage like audit logs).
-    settings_store:
-        Optional store providing ``get_setting(key)``. When ``None`` or when a
-        call raises, the view falls back to placeholder values.
-    """
-    system_data = await _safe_load_system(settings_store)
-    safety_data = await _safe_load_safety(settings_store)
-    timeouts_data = await _safe_load_timeouts(settings_store)
+    llm = await _safe_get(settings_store, "llm", {}) or {}
+    persona = await _safe_get(settings_store, "persona", {}) or {}
+    prompts = await _safe_get(settings_store, "custom_prompts", {}) or {}
+    instructions = await _safe_get(settings_store, "custom_instructions", "") or ""
+    embedding = await _safe_get(settings_store, "embedding_config", {}) or {}
+    apikey_status = {}
+    for name, _ in _API_KEYS:
+        apikey_status[name] = await _safe_get(settings_store, f"apikey:{name}", None)
 
     return UISpec(
         schema_version=1,
@@ -43,20 +70,19 @@ async def build(db: Any, *, settings_store: Any = None, **_kwargs: Any) -> UISpe
             id="settings",
             props={"title": "설정"},
             children=[
-                Component(
-                    type="heading",
-                    id="settings-heading",
-                    props={"value": "설정", "level": 2},
-                ),
+                Component(type="heading", id="settings-h", props={"value": "설정", "level": 2}),
                 Component(
                     type="tabs",
                     id="settings-tabs",
                     props={},
                     children=[
-                        _system_tab(system_data),
-                        _safety_tab(safety_data),
-                        _timeouts_tab(timeouts_data),
-                        _about_tab(),
+                        _quick_start_tab(llm, persona, apikey_status),
+                        _agent_behavior_tab(prompts, instructions, embedding),
+                        _placeholder_tab("tab-integrations", "통합", "MCP 서버, 스킬 마켓, 메신저는 Phase 2에서 편집 가능합니다."),
+                        _placeholder_tab("tab-safety", "안전 & 권한", "Phase 2에서 사용 가능."),
+                        _placeholder_tab("tab-monitoring", "모니터링", "Phase 2에서 사용 가능."),
+                        _placeholder_tab("tab-memory", "메모리", "Phase 3에서 사용 가능."),
+                        _placeholder_tab("tab-advanced", "고급", "Phase 3에서 사용 가능."),
                     ],
                 ),
             ],
@@ -64,16 +90,7 @@ async def build(db: Any, *, settings_store: Any = None, **_kwargs: Any) -> UISpe
     )
 
 
-# ---------------------------------------------------------------------------
-# Safe loaders
-# ---------------------------------------------------------------------------
-
-async def _store_get(store: Any, key: str, default: Any = None) -> Any:
-    """Call ``store.get_setting(key)`` defensively.
-
-    Returns ``default`` on any failure (missing store, missing method, raised
-    exception, or ``None`` value).
-    """
+async def _safe_get(store: Any, key: str, default: Any) -> Any:
     if store is None:
         return default
     try:
@@ -83,257 +100,335 @@ async def _store_get(store: Any, key: str, default: Any = None) -> Any:
         value = await getter(key)
         return default if value is None else value
     except Exception as exc:  # noqa: BLE001
-        logger.debug("settings_view: store.get_setting(%s) failed: %s", key, exc)
+        logger.debug("settings_view: get_setting(%s) failed: %s", key, exc)
         return default
 
 
-async def _safe_load_system(store: Any) -> dict[str, Any]:
-    llm = await _store_get(store, "llm", {}) or {}
-    database = await _store_get(store, "database", {}) or {}
-    usage = await _store_get(store, "usage", {}) or {}
-    monitoring = await _store_get(store, "monitoring_status", {}) or {}
+# ── Tab: Quick Start ───────────────────────────────────────────────────────
 
-    return {
-        "llm_provider": llm.get("default_provider", _PLACEHOLDER) if isinstance(llm, dict) else _PLACEHOLDER,
-        "llm_model": llm.get("default_model", _PLACEHOLDER) if isinstance(llm, dict) else _PLACEHOLDER,
-        "tool_call_max_turns": llm.get("tool_call_max_turns", _PLACEHOLDER) if isinstance(llm, dict) else _PLACEHOLDER,
-        "db_host": database.get("host", _PLACEHOLDER) if isinstance(database, dict) else _PLACEHOLDER,
-        "db_port": database.get("port", _PLACEHOLDER) if isinstance(database, dict) else _PLACEHOLDER,
-        "db_name": database.get("name", _PLACEHOLDER) if isinstance(database, dict) else _PLACEHOLDER,
-        "tokens_in": usage.get("tokens_in", _PLACEHOLDER) if isinstance(usage, dict) else _PLACEHOLDER,
-        "tokens_out": usage.get("tokens_out", _PLACEHOLDER) if isinstance(usage, dict) else _PLACEHOLDER,
-        "cost": usage.get("cost", _PLACEHOLDER) if isinstance(usage, dict) else _PLACEHOLDER,
-        "monitoring_running": monitoring.get("running", _PLACEHOLDER) if isinstance(monitoring, dict) else _PLACEHOLDER,
-        "monitoring_rules": monitoring.get("rules", _PLACEHOLDER) if isinstance(monitoring, dict) else _PLACEHOLDER,
-        "monitoring_events": monitoring.get("events_total", _PLACEHOLDER) if isinstance(monitoring, dict) else _PLACEHOLDER,
-    }
-
-
-async def _safe_load_safety(store: Any) -> dict[str, Any]:
-    safety = await _store_get(store, "safety", {}) or {}
-    if not isinstance(safety, dict):
-        safety = {}
-    blacklist = safety.get("blacklist", {}) if isinstance(safety.get("blacklist"), dict) else {}
-    return {
-        "blacklist_tools": list(blacklist.get("tools", []) or []),
-        "blacklist_paths": list(blacklist.get("paths", []) or []),
-        "require_approval": list(safety.get("require_approval", []) or []),
-        "admin_users": list(safety.get("admin_users", []) or []),
-    }
-
-
-async def _safe_load_timeouts(store: Any) -> dict[str, Any]:
-    timeouts = await _store_get(store, "timeouts_system", {}) or {}
-    retry = await _store_get(store, "retry", {}) or {}
-    if not isinstance(timeouts, dict):
-        timeouts = {}
-    if not isinstance(retry, dict):
-        retry = {}
-    return {
-        "tool_call": timeouts.get("tool_call", _PLACEHOLDER),
-        "llm_api": timeouts.get("llm_api", _PLACEHOLDER),
-        "ssh_command": timeouts.get("ssh_command", _PLACEHOLDER),
-        "health_check": timeouts.get("health_check", _PLACEHOLDER),
-        "max_retries": retry.get("max_retries", _PLACEHOLDER),
-        "llm_max_retries": retry.get("llm_max_retries", _PLACEHOLDER),
-        "base_backoff": retry.get("base_backoff", _PLACEHOLDER),
-        "max_backoff": retry.get("max_backoff", _PLACEHOLDER),
-    }
-
-
-# ---------------------------------------------------------------------------
-# Tab builders
-# ---------------------------------------------------------------------------
-
-def _kv_item(key: str, value: Any) -> dict[str, Any]:
-    return {"key": key, "value": _fmt(value)}
-
-
-def _fmt(value: Any) -> str:
-    if value is None:
-        return _PLACEHOLDER
-    if isinstance(value, bool):
-        return "예" if value else "아니오"
-    return str(value)
-
-
-def _system_tab(data: dict[str, Any]) -> Component:
-    llm_items = [
-        _kv_item("LLM Provider", data.get("llm_provider")),
-        _kv_item("Default Model", data.get("llm_model")),
-        _kv_item("Tool Call Max Turns", data.get("tool_call_max_turns")),
-    ]
-    db_items = [
-        _kv_item("Host", data.get("db_host")),
-        _kv_item("Port", data.get("db_port")),
-        _kv_item("Database", data.get("db_name")),
-    ]
-    usage_items = [
-        _kv_item("Tokens In", data.get("tokens_in")),
-        _kv_item("Tokens Out", data.get("tokens_out")),
-        _kv_item("Cost", data.get("cost")),
-    ]
-    monitoring_items = [
-        _kv_item("Running", data.get("monitoring_running")),
-        _kv_item("Rules", data.get("monitoring_rules")),
-        _kv_item("Events Total", data.get("monitoring_events")),
-    ]
+def _quick_start_tab(llm: dict, persona: dict, apikey_status: dict) -> Component:
     return Component(
         type="stack",
-        id="tab-system",
-        props={"label": "시스템", "gap": "md"},
+        id="tab-quick-start",
+        props={"label": "빠른 시작", "gap": "md"},
         children=[
-            Component(type="heading", id="tab-system-h", props={"value": "시스템", "level": 3}),
-            Component(type="heading", id="tab-system-llm-h", props={"value": "LLM", "level": 4}),
-            Component(type="kv", id="tab-system-llm-kv", props={"items": llm_items}),
-            Component(type="divider", id="tab-system-div1", props={}),
-            Component(type="heading", id="tab-system-db-h", props={"value": "데이터베이스", "level": 4}),
-            Component(type="kv", id="tab-system-db-kv", props={"items": db_items}),
-            Component(type="divider", id="tab-system-div2", props={}),
-            Component(type="heading", id="tab-system-usage-h", props={"value": "사용량", "level": 4}),
-            Component(type="kv", id="tab-system-usage-kv", props={"items": usage_items}),
-            Component(type="divider", id="tab-system-div3", props={}),
-            Component(type="heading", id="tab-system-mon-h", props={"value": "모니터링 상태", "level": 4}),
-            Component(type="kv", id="tab-system-mon-kv", props={"items": monitoring_items}),
+            Component(type="heading", id="qs-h", props={"value": "빠른 시작", "level": 3}),
+            _llm_card(llm),
+            _apikey_card(apikey_status),
+            _persona_card(persona),
         ],
     )
 
 
-def _safety_list(list_id: str, values: list[Any], empty_text: str) -> Component:
-    if not values:
-        return Component(
-            type="text",
-            id=f"{list_id}-empty",
-            props={"value": empty_text},
-        )
-    children = [
-        Component(
-            type="text",
-            id=f"{list_id}-item-{idx}",
-            props={"value": str(v)},
-        )
-        for idx, v in enumerate(values)
-    ]
+def _llm_card(llm: dict) -> Component:
+    provider = llm.get("default_provider", "gemini") if isinstance(llm, dict) else "gemini"
+    model = llm.get("default_model", "") if isinstance(llm, dict) else ""
+    max_turns = llm.get("tool_call_max_turns", 10) if isinstance(llm, dict) else 10
     return Component(
         type="list",
-        id=list_id,
-        props={"variant": "plain"},
-        children=children,
-    )
-
-
-def _safety_tab(data: dict[str, Any]) -> Component:
-    return Component(
-        type="stack",
-        id="tab-safety",
-        props={"label": "안전", "gap": "md"},
+        id="qs-llm",
+        props={"variant": "settings-card"},
         children=[
-            Component(type="heading", id="tab-safety-h", props={"value": "안전 규칙", "level": 3}),
-            Component(type="heading", id="tab-safety-bt-h", props={"value": "차단된 도구", "level": 4}),
-            _safety_list("tab-safety-bt", data.get("blacklist_tools", []), "차단된 도구가 없습니다."),
-            Component(type="heading", id="tab-safety-bp-h", props={"value": "차단된 경로", "level": 4}),
-            _safety_list("tab-safety-bp", data.get("blacklist_paths", []), "차단된 경로가 없습니다."),
-            Component(type="heading", id="tab-safety-ra-h", props={"value": "승인 필요", "level": 4}),
-            _safety_list("tab-safety-ra", data.get("require_approval", []), "승인 규칙이 없습니다."),
-            Component(type="heading", id="tab-safety-au-h", props={"value": "관리자", "level": 4}),
-            _safety_list("tab-safety-au", data.get("admin_users", []), "관리자가 지정되지 않았습니다."),
+            Component(type="heading", id="qs-llm-h", props={"value": "LLM 프로바이더", "level": 4}),
+            Component(type="text", id="qs-llm-d", props={"value": "기본 모델과 도구 호출 제한을 설정합니다."}),
+            Component(
+                type="form",
+                id="qs-llm-form",
+                props={
+                    "action": {"kind": "settings_write", "key": "llm"},
+                    "submit_label": "저장",
+                },
+                children=[
+                    Component(
+                        type="select",
+                        id="qs-llm-provider",
+                        props={
+                            "name": "default_provider",
+                            "label": "프로바이더",
+                            "value": provider,
+                            "options": _PROVIDER_OPTIONS,
+                        },
+                    ),
+                    Component(
+                        type="field",
+                        id="qs-llm-model",
+                        props={
+                            "name": "default_model",
+                            "label": "기본 모델",
+                            "value": str(model),
+                            "type": "text",
+                        },
+                    ),
+                    Component(
+                        type="field",
+                        id="qs-llm-turns",
+                        props={
+                            "name": "tool_call_max_turns",
+                            "label": "도구 호출 최대 턴",
+                            "value": str(max_turns),
+                            "type": "number",
+                        },
+                    ),
+                ],
+            ),
         ],
     )
 
 
-def _timeouts_tab(data: dict[str, Any]) -> Component:
-    timeout_items = [
-        _kv_item("Tool Call", data.get("tool_call")),
-        _kv_item("LLM API", data.get("llm_api")),
-        _kv_item("SSH Command", data.get("ssh_command")),
-        _kv_item("Health Check", data.get("health_check")),
+def _apikey_card(status: dict) -> Component:
+    kv_items = [
+        {"key": f"{name} ({label})", "value": _mask_status(status.get(name))}
+        for name, label in _API_KEYS
     ]
-    retry_items = [
-        _kv_item("Max Retries", data.get("max_retries")),
-        _kv_item("LLM Max Retries", data.get("llm_max_retries")),
-        _kv_item("Base Backoff", data.get("base_backoff")),
-        _kv_item("Max Backoff", data.get("max_backoff")),
-    ]
-    placeholder_form = Component(
-        type="form",
-        id="tab-timeouts-form",
-        props={
-            "label": "편집 (읽기 전용 — Phase 2)",
-            "read_only": True,
-            "action": None,
-        },
-        children=[
+    forms: list[Component] = []
+    for name, label in _API_KEYS:
+        forms.append(
             Component(
-                type="field",
-                id="tab-timeouts-field-tool-call",
+                type="form",
+                id=f"qs-apikey-form-{name}",
                 props={
-                    "name": "tool_call",
-                    "label": "Tool Call Timeout",
-                    "value": _fmt(data.get("tool_call")),
-                    "read_only": True,
+                    "action": {"kind": "settings_write", "key": f"apikey:{name}"},
+                    "submit_label": f"{label} 저장",
                 },
-            ),
-            Component(
-                type="field",
-                id="tab-timeouts-field-llm-api",
-                props={
-                    "name": "llm_api",
-                    "label": "LLM API Timeout",
-                    "value": _fmt(data.get("llm_api")),
-                    "read_only": True,
-                },
-            ),
-            Component(
-                type="field",
-                id="tab-timeouts-field-max-retries",
-                props={
-                    "name": "max_retries",
-                    "label": "Max Retries",
-                    "value": _fmt(data.get("max_retries")),
-                    "read_only": True,
-                },
-            ),
-        ],
-    )
+                children=[
+                    Component(
+                        type="field",
+                        id=f"qs-apikey-field-{name}",
+                        props={
+                            "name": "value",
+                            "label": label,
+                            "value": "",
+                            "type": "password",
+                        },
+                    ),
+                ],
+            )
+        )
     return Component(
-        type="stack",
-        id="tab-timeouts",
-        props={"label": "타임아웃/재시도", "gap": "md"},
+        type="list",
+        id="qs-apikey",
+        props={"variant": "settings-card"},
         children=[
-            Component(type="heading", id="tab-timeouts-h", props={"value": "타임아웃 & 재시도", "level": 3}),
-            Component(type="heading", id="tab-timeouts-to-h", props={"value": "타임아웃", "level": 4}),
-            Component(type="kv", id="tab-timeouts-to-kv", props={"items": timeout_items}),
-            Component(type="divider", id="tab-timeouts-div", props={}),
-            Component(type="heading", id="tab-timeouts-re-h", props={"value": "재시도", "level": 4}),
-            Component(type="kv", id="tab-timeouts-re-kv", props={"items": retry_items}),
-            Component(type="divider", id="tab-timeouts-div2", props={}),
-            placeholder_form,
+            Component(type="heading", id="qs-apikey-h", props={"value": "API 키", "level": 4}),
+            Component(type="text", id="qs-apikey-d", props={"value": "각 프로바이더의 API 키를 입력하세요. 저장 후 마스킹 표시됩니다."}),
+            Component(type="kv", id="qs-apikey-status", props={"items": kv_items}),
+            *forms,
         ],
     )
 
 
-def _about_tab() -> Component:
-    about_md = (
-        "## BreadMind\n\n"
-        "자연어로 Kubernetes, Proxmox, OpenWrt를 관리하는 AI 인프라 에이전트.\n\n"
-        "- 다중 LLM 지원\n"
-        "- 6개 메신저 통합\n"
-        "- MCP 프로토콜\n"
-        "- 플러그인 시스템\n"
-        "- Commander/Worker 분산 아키텍처\n"
+def _mask_status(value: Any) -> str:
+    if value is None:
+        return "미설정"
+    if isinstance(value, dict):
+        # vault stores {"encrypted": ..., "stored_at": ...}
+        return "●●●● (저장됨)"
+    return mask_credential(str(value))
+
+
+def _persona_card(persona: dict) -> Component:
+    name = persona.get("name", "") if isinstance(persona, dict) else ""
+    preset = persona.get("preset", "professional") if isinstance(persona, dict) else "professional"
+    language = persona.get("language", "ko") if isinstance(persona, dict) else "ko"
+    return Component(
+        type="list",
+        id="qs-persona",
+        props={"variant": "settings-card"},
+        children=[
+            Component(type="heading", id="qs-persona-h", props={"value": "페르소나", "level": 4}),
+            Component(type="text", id="qs-persona-d", props={"value": "에이전트의 말투와 스타일을 설정합니다."}),
+            Component(
+                type="form",
+                id="qs-persona-form",
+                props={
+                    "action": {"kind": "settings_write", "key": "persona"},
+                    "submit_label": "저장",
+                },
+                children=[
+                    Component(
+                        type="field",
+                        id="qs-persona-name",
+                        props={
+                            "name": "name",
+                            "label": "이름",
+                            "value": str(name),
+                            "type": "text",
+                        },
+                    ),
+                    Component(
+                        type="select",
+                        id="qs-persona-preset",
+                        props={
+                            "name": "preset",
+                            "label": "프리셋",
+                            "value": preset,
+                            "options": _PERSONA_PRESET_OPTIONS,
+                        },
+                    ),
+                    Component(
+                        type="field",
+                        id="qs-persona-lang",
+                        props={
+                            "name": "language",
+                            "label": "언어",
+                            "value": str(language),
+                            "type": "text",
+                        },
+                    ),
+                ],
+            ),
+        ],
     )
+
+
+# ── Tab: Agent Behavior ────────────────────────────────────────────────────
+
+def _agent_behavior_tab(prompts: dict, instructions: str, embedding: dict) -> Component:
     return Component(
         type="stack",
-        id="tab-about",
-        props={"label": "정보", "gap": "md"},
+        id="tab-agent",
+        props={"label": "에이전트 동작", "gap": "md"},
         children=[
-            Component(type="heading", id="tab-about-h", props={"value": "정보", "level": 3}),
-            Component(type="text", id="tab-about-version", props={"value": "Version: dev"}),
-            Component(type="markdown", id="tab-about-md", props={"value": about_md}),
+            Component(type="heading", id="ab-h", props={"value": "에이전트 동작", "level": 3}),
+            _prompts_card(prompts),
+            _instructions_card(instructions),
+            _embedding_card(embedding),
+        ],
+    )
+
+
+def _prompts_card(prompts: dict) -> Component:
+    main = prompts.get("main_system_prompt", "") if isinstance(prompts, dict) else ""
+    behavior = prompts.get("behavior_prompt", "") if isinstance(prompts, dict) else ""
+    return Component(
+        type="list",
+        id="ab-prompts",
+        props={"variant": "settings-card"},
+        children=[
+            Component(type="heading", id="ab-prompts-h", props={"value": "시스템 프롬프트", "level": 4}),
+            Component(type="text", id="ab-prompts-d", props={"value": "에이전트의 핵심 지시사항입니다. 빈 값으로 저장하면 기본 프롬프트가 사용됩니다."}),
             Component(
-                type="text",
-                id="tab-about-link",
-                props={"value": "https://github.com/BreakPack/breadmind"},
+                type="form",
+                id="ab-prompts-form",
+                props={
+                    "action": {"kind": "settings_write", "key": "custom_prompts"},
+                    "submit_label": "저장",
+                },
+                children=[
+                    Component(
+                        type="field",
+                        id="ab-prompts-main",
+                        props={
+                            "name": "main_system_prompt",
+                            "label": "메인 시스템 프롬프트",
+                            "value": str(main),
+                            "type": "text",
+                            "multiline": True,
+                        },
+                    ),
+                    Component(
+                        type="field",
+                        id="ab-prompts-behavior",
+                        props={
+                            "name": "behavior_prompt",
+                            "label": "행동 가이드",
+                            "value": str(behavior),
+                            "type": "text",
+                            "multiline": True,
+                        },
+                    ),
+                ],
             ),
+        ],
+    )
+
+
+def _instructions_card(instructions: str) -> Component:
+    return Component(
+        type="list",
+        id="ab-inst",
+        props={"variant": "settings-card"},
+        children=[
+            Component(type="heading", id="ab-inst-h", props={"value": "사용자 지시사항", "level": 4}),
+            Component(type="text", id="ab-inst-d", props={"value": "에이전트가 항상 따라야 할 개인적인 지시사항을 입력하세요. (최대 8000자)"}),
+            Component(
+                type="form",
+                id="ab-inst-form",
+                props={
+                    "action": {"kind": "settings_write", "key": "custom_instructions"},
+                    "submit_label": "저장",
+                },
+                children=[
+                    Component(
+                        type="field",
+                        id="ab-inst-field",
+                        props={
+                            "name": "value",
+                            "label": "지시사항",
+                            "value": str(instructions),
+                            "type": "text",
+                            "multiline": True,
+                        },
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
+def _embedding_card(embedding: dict) -> Component:
+    provider = embedding.get("provider", "auto") if isinstance(embedding, dict) else "auto"
+    model = embedding.get("model_name", "") if isinstance(embedding, dict) else ""
+    return Component(
+        type="list",
+        id="ab-emb",
+        props={"variant": "settings-card"},
+        children=[
+            Component(type="heading", id="ab-emb-h", props={"value": "임베딩 백엔드", "level": 4}),
+            Component(type="text", id="ab-emb-warn", props={"value": "⚠️ 임베딩 변경 시 재시작이 필요합니다."}),
+            Component(
+                type="form",
+                id="ab-emb-form",
+                props={
+                    "action": {"kind": "settings_write", "key": "embedding_config"},
+                    "submit_label": "저장",
+                },
+                children=[
+                    Component(
+                        type="select",
+                        id="ab-emb-provider",
+                        props={
+                            "name": "provider",
+                            "label": "프로바이더",
+                            "value": provider,
+                            "options": _EMBEDDING_PROVIDER_OPTIONS,
+                        },
+                    ),
+                    Component(
+                        type="field",
+                        id="ab-emb-model",
+                        props={
+                            "name": "model_name",
+                            "label": "모델 이름 (선택)",
+                            "value": str(model) if model else "",
+                            "type": "text",
+                        },
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
+# ── Placeholder Tabs ───────────────────────────────────────────────────────
+
+def _placeholder_tab(tab_id: str, label: str, message: str) -> Component:
+    return Component(
+        type="stack",
+        id=tab_id,
+        props={"label": label, "gap": "md"},
+        children=[
+            Component(type="heading", id=f"{tab_id}-h", props={"value": label, "level": 3}),
+            Component(type="text", id=f"{tab_id}-msg", props={"value": message}),
         ],
     )
