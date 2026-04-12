@@ -17,6 +17,8 @@ from breadmind.hooks.handler import HookHandler
 
 logger = logging.getLogger(__name__)
 
+MAX_REROUTE_DEPTH = 3
+
 
 @dataclass
 class HookChain:
@@ -80,13 +82,26 @@ class HookChain:
                 continue
 
             if decision.kind == DecisionKind.REROUTE:
-                if reroute_ok:
-                    return decision, payload
-                logger.warning(
-                    "Hook %s returned REROUTE on event %s which does not allow reroute; ignoring",
-                    handler.name, self.event.value,
-                )
-                continue
+                if not reroute_ok:
+                    logger.warning(
+                        "Hook %s returned REROUTE on event %s which does not allow reroute; ignoring",
+                        handler.name, self.event.value,
+                    )
+                    continue
+                if payload.depth >= MAX_REROUTE_DEPTH:
+                    logger.warning(
+                        "Hook %s REROUTE ignored: depth %d >= %d",
+                        handler.name, payload.depth, MAX_REROUTE_DEPTH,
+                    )
+                    continue
+                target = decision.reroute_target or ""
+                if target in payload.visited:
+                    logger.warning(
+                        "Hook %s REROUTE ignored: target %r already visited",
+                        handler.name, target,
+                    )
+                    continue
+                return decision, payload
 
         if aggregated_patch:
             final = HookDecision(
