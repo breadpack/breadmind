@@ -197,3 +197,81 @@ async def test_plugin_unloaded_event_fires(fresh_global_bus):
         ),
     )
     assert seen and seen[0]["plugin_name"] == "demo"
+
+
+async def test_pre_compact_block_skips_compaction(fresh_global_bus):
+    from breadmind.memory import compressor
+    from breadmind.llm.base import LLMMessage
+
+    fresh_global_bus.register_hook(
+        HookEvent.PRE_COMPACT,
+        PythonHook(
+            name="skip",
+            event=HookEvent.PRE_COMPACT,
+            handler=lambda p: HookDecision.block("frozen"),
+        ),
+    )
+
+    # 15 messages with keep_recent=10 would normally trigger compaction;
+    # block must return the original unchanged.
+    original = [LLMMessage(role="user", content=f"m{i}") for i in range(15)]
+
+    class _BoomProvider:
+        async def chat(self, *a, **kw):
+            raise AssertionError("provider should not be called when blocked")
+
+    result = await compressor.compress_history(
+        list(original), _BoomProvider(), keep_recent=10,
+    )
+    assert len(result) == len(original)
+
+
+async def test_pre_compact_hook_is_called(fresh_global_bus):
+    from breadmind.memory import compressor
+    from breadmind.llm.base import LLMMessage
+
+    seen = []
+    fresh_global_bus.register_hook(
+        HookEvent.PRE_COMPACT,
+        PythonHook(
+            name="spy",
+            event=HookEvent.PRE_COMPACT,
+            handler=lambda p: (seen.append(dict(p.data)), HookDecision.proceed())[1],
+        ),
+    )
+
+    # len(messages) <= keep_recent triggers early-return after the hook fires,
+    # so no provider call is needed.
+    await compressor.compress_history(
+        [LLMMessage(role="user", content="a")],
+        provider=None,
+        keep_recent=10,
+    )
+    assert len(seen) == 1
+    assert "messages_count" in seen[0]
+    assert "messages" in seen[0]
+
+
+async def test_pre_compact_modify_replaces_messages(fresh_global_bus):
+    from breadmind.memory import compressor
+    from breadmind.llm.base import LLMMessage
+
+    replacement = [LLMMessage(role="system", content="SUMMARY")]
+    fresh_global_bus.register_hook(
+        HookEvent.PRE_COMPACT,
+        PythonHook(
+            name="replace",
+            event=HookEvent.PRE_COMPACT,
+            handler=lambda p: HookDecision.modify(messages=list(replacement)),
+        ),
+    )
+
+    # Originally 15 messages; modify replaces with 1 message. The replacement
+    # has len 1 <= keep_recent=10, so compress_history early-returns the
+    # replacement unchanged — proving the patch was honored.
+    original = [LLMMessage(role="user", content=f"m{i}") for i in range(15)]
+    result = await compressor.compress_history(
+        list(original), provider=None, keep_recent=10,
+    )
+    assert len(result) == 1
+    assert result[0].content == "SUMMARY"

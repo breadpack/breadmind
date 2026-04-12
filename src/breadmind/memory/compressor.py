@@ -85,6 +85,30 @@ async def compress_history(
     Returns:
         New message list: [summary_msg] + recent_messages
     """
+    # ─ PRE_COMPACT hook wiring ─
+    from breadmind.core.events import get_event_bus
+    from breadmind.hooks import HookEvent, HookPayload
+
+    decision = await get_event_bus().run_hook_chain(
+        HookEvent.PRE_COMPACT,
+        HookPayload(
+            event=HookEvent.PRE_COMPACT,
+            data={
+                "messages_count": len(messages),
+                "keep_recent": keep_recent,
+                "messages": list(messages),
+            },
+        ),
+    )
+    kind_value = getattr(getattr(decision, "kind", None), "value", "proceed")
+    if kind_value == "block":
+        return list(messages)  # skip compaction, return original
+    if kind_value == "modify":
+        patch = getattr(decision, "patch", None) or {}
+        if "messages" in patch:
+            messages = list(patch["messages"])
+    # ─ end hook wiring ─
+
     if len(messages) <= keep_recent:
         return messages
 
