@@ -114,3 +114,20 @@ def test_stats_endpoint_returns_aggregates(app_with_hooks):
     resp = client.get("/api/hooks/stats")
     assert resp.status_code == 200
     assert "stats" in resp.json()
+
+
+def test_main_app_registers_hooks_router():
+    """Ensure the main app bootstrap actually includes the hooks router."""
+    try:
+        from breadmind.web.app import WebApp
+    except Exception:
+        pytest.skip("main app module not importable in test env")
+    try:
+        web = WebApp()
+        app = web.app
+    except Exception:
+        pytest.skip("WebApp() not constructible without full context")
+    paths = {getattr(r, "path", "") for r in app.routes}
+    assert any("/api/hooks/list" in p for p in paths), (
+        f"hooks router not registered; found paths: {sorted(paths)[:20]}"
+    )
