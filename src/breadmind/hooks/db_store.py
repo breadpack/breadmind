@@ -44,14 +44,16 @@ class HookOverrideStore:
     async def insert(self, ov: HookOverride) -> None:
         cfg = ov.config_json
         if isinstance(cfg, dict):
+            cfg_param = json.dumps(cfg)
+        elif isinstance(cfg, str):
             cfg_param = cfg
         else:
-            cfg_param = json.loads(cfg)
+            cfg_param = json.dumps(cfg or {})
         async with self._pool.acquire() as conn:
             await conn.execute(
                 "INSERT INTO hook_overrides "
                 "(hook_id, source, event, type, tool_pattern, priority, enabled, config_json) "
-                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb)",
                 ov.hook_id, ov.source, ov.event, ov.type,
                 ov.tool_pattern, ov.priority, ov.enabled, cfg_param,
             )
