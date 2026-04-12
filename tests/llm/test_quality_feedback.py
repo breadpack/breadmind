@@ -1,7 +1,6 @@
 """Tests for SuccessTracker -- record/query, cold start, eviction."""
 from __future__ import annotations
 
-import pytest
 
 from breadmind.llm.quality_feedback import ModelIntentStats, SuccessTracker
 

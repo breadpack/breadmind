@@ -2,12 +2,9 @@
 import pytest
 
 from breadmind.core.protocols import (
-    AgentContext,
     LLMResponse,
     PromptBlock,
     TokenUsage,
-    ToolCallRequest,
-    ToolResult,
     ToolDefinition,
     ToolSchema,
 )

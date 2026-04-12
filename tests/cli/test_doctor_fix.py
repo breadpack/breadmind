@@ -6,7 +6,6 @@ import time
 import pytest
 
 from breadmind.cli.doctor_fix import (
-    DiagnosticResult,
     DoctorFix,
     FixAction,
     FixReport,

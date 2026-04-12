@@ -1,7 +1,6 @@
 """Tests for InputSanitizer."""
 from __future__ import annotations
 
-import pytest
 
 from breadmind.core.sanitizer import InputSanitizer, SanitizerConfig
 

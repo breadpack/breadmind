@@ -5,7 +5,6 @@ import base64
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 from breadmind.core.protocols.provider import Attachment
 from breadmind.plugins.builtin.tools.multimodal import (
@@ -166,7 +165,7 @@ class TestClaudeContentBlockConversion:
     """ClaudeAdapter.transform_messages()가 attachments를 올바르게 변환하는지 검증."""
 
     def test_message_with_attachments(self):
-        from breadmind.core.protocols.provider import Message, Attachment
+        from breadmind.core.protocols.provider import Message
 
         att = Attachment(
             type="image",

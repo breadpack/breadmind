@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -101,7 +100,7 @@ class TestDailyNotesManager:
         assert len(results) == 1
         note, lines = results[0]
         assert note.date == today
-        assert any("kubernetes" in l.lower() for l in lines)
+        assert any("kubernetes" in ln.lower() for ln in lines)
 
     def test_search_case_insensitive(self, manager: DailyNotesManager, notes_dir: Path) -> None:
         today = date.today()
@@ -144,5 +143,5 @@ class TestDailyNotesManager:
 
     def test_constructor_creates_base_dir(self, tmp_path: Path) -> None:
         new_dir = tmp_path / "deep" / "nested" / "notes"
-        mgr = DailyNotesManager(new_dir)
+        DailyNotesManager(new_dir)
         assert new_dir.is_dir()

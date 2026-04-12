@@ -1,6 +1,5 @@
 """Tests for LSP tools (with mocked LSPClient)."""
 from unittest.mock import AsyncMock, patch, MagicMock
-import pytest
 from breadmind.tools.lsp_client import LSPLocation, LSPSymbol
 
 

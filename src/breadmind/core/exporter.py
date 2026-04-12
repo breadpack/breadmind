@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any
 
@@ -161,7 +160,6 @@ class AgentConfigExporter:
     @staticmethod
     def export_config(agent) -> dict[str, Any]:
         """Extract the full configuration from an Agent instance as a dict."""
-        from breadmind.sdk.agent import Agent
 
         data: dict[str, Any] = {"name": agent.name}
 

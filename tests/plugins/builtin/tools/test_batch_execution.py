@@ -1,7 +1,7 @@
 import asyncio
 import time
 import pytest
-from breadmind.core.protocols import ToolCall, ToolDefinition, ToolResult, ExecutionContext
+from breadmind.core.protocols import ToolCall, ToolDefinition, ExecutionContext
 from breadmind.plugins.builtin.tools.registry import HybridToolRegistry
 
 

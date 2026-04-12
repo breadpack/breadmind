@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -11,7 +10,6 @@ from breadmind.core.events import EventBus, EventType
 from breadmind.mcp.server_manager import (
     MCPServerConfig,
     MCPServerManager,
-    MCPServerState,
 )
 from breadmind.tools.mcp_protocol import encode_message
 
@@ -137,7 +135,6 @@ async def test_add_server_success(manager, sample_config, event_bus):
     ]
     fake_proc = _build_fake_process(responses)
 
-    emitted: list[tuple[str, dict]] = []
 
     async def capture(data, *, _evt=[]):
         pass

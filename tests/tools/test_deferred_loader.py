@@ -1,6 +1,5 @@
 """Tests for deferred tool schema loading."""
 
-from breadmind.llm.base import ToolDefinition
 from breadmind.tools.deferred_loader import DeferredToolLoader
 from breadmind.tools.registry import ToolRegistry, tool
 

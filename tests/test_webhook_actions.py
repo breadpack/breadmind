@@ -1,10 +1,9 @@
 """Tests for webhook action handler system."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from breadmind.webhook.models import PipelineAction, PipelineContext, ActionType
-from breadmind.webhook.actions.base import ActionHandler, ActionResult, resolve_template
+from breadmind.webhook.actions.base import ActionResult, resolve_template
 from breadmind.webhook.actions.agent_action import AgentActionHandler
 from breadmind.webhook.actions.tool_action import ToolActionHandler
 from breadmind.webhook.actions.http_action import HttpActionHandler

@@ -5,7 +5,6 @@ Requires `boto3` (optional dependency). Falls back gracefully if not installed.
 
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import AsyncGenerator
 from typing import Any

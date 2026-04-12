@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from breadmind.llm.factory import (
     get_registered_providers,

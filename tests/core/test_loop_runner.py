@@ -1,8 +1,7 @@
 """Tests for in-session recurring prompt execution (LoopRunner)."""
 from __future__ import annotations
-import asyncio
 
-from breadmind.core.loop_runner import LoopRunner, LoopJob
+from breadmind.core.loop_runner import LoopRunner
 
 
 async def _echo_handler(prompt: str) -> str:

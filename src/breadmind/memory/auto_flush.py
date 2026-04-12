@@ -8,7 +8,7 @@ and writes them to persistent storage so nothing valuable is lost.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:

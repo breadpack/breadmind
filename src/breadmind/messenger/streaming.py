@@ -1,13 +1,12 @@
 """Channel-specific streaming optimization for messenger platforms."""
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Awaitable
+from typing import Any
 
 from breadmind.constants import TELEGRAM_MAX_MESSAGE_LENGTH, SLACK_MAX_MESSAGE_LENGTH
 

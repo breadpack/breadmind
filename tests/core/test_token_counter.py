@@ -1,7 +1,6 @@
 """TokenCounter 및 AutoCompactor 연동 테스트."""
 from __future__ import annotations
 
-from dataclasses import dataclass
 from unittest.mock import MagicMock, patch
 
 import pytest

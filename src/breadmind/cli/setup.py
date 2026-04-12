@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from breadmind.cli.ui import ConsoleUI, get_ui
+from breadmind.cli.ui import get_ui
 
 
 async def run_setup(args) -> None:

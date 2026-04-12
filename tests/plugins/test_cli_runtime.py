@@ -1,7 +1,7 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 from breadmind.plugins.builtin.runtimes.cli_runtime import CLIRuntime
-from breadmind.core.protocols import UserInput, AgentOutput, Progress
+from breadmind.core.protocols import AgentOutput, Progress
 
 
 def test_cli_runtime_creation():

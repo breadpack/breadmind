@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import os
-import sys
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
 
-import pytest
 
 from breadmind.tools.powershell import PowerShellExecutor, PowerShellResult
 

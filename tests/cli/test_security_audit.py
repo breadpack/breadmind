@@ -3,10 +3,8 @@ from __future__ import annotations
 
 import json
 import os
-import stat
 from unittest.mock import patch
 
-import pytest
 
 from breadmind.cli.security_audit import AuditFinding, SecurityAuditor, Severity
 

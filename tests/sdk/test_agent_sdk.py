@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 from breadmind.sdk.agent import Agent, AgentConfig, PromptConfig, SafetyConfig, MemoryConfig
 from breadmind.core.protocols import LLMResponse, TokenUsage
 

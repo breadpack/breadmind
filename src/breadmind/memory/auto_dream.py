@@ -147,7 +147,7 @@ class AutoDreamer:
         results: list[DreamResult] = []
         merged_ids: set[str] = set()
         word_sets = {e.id: self._word_set(e.content) for e in entries}
-        entry_map = {e.id: e for e in entries}
+        {e.id: e for e in entries}
 
         for i, a in enumerate(entries):
             if a.id in merged_ids:

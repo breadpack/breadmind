@@ -250,7 +250,6 @@ class ToolExecutor:
 
             # Pre-hooks: may block or modify arguments
             if self._hook_runner:
-                from breadmind.core.tool_hooks import ToolHookResult
                 hook_result = await self._hook_runner.run_pre_hooks(tc.name, tc.arguments)
                 if hook_result.action == "block":
                     elapsed = (time.monotonic() - t_start) * 1000
@@ -266,7 +265,6 @@ class ToolExecutor:
             if self._validator and tc.name in [d.name for d in self._tools.get_all_definitions()]:
                 defn = next((d for d in self._tools.get_all_definitions() if d.name == tc.name), None)
                 if defn and defn.parameters:
-                    from breadmind.tools.schema_validator import SchemaValidator
                     vr = self._validator.validate(tc_arguments, defn.parameters)
                     if not vr.valid:
                         errors = "; ".join(f"{e.field}: {e.message}" for e in vr.errors)

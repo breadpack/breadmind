@@ -1,7 +1,6 @@
 """v2 WorkingMemory: 세션별 대화 히스토리 관리."""
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any

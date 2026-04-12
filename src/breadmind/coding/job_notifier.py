@@ -42,7 +42,7 @@ class JobNotifier:
 
     def _format_success(self, job: Any) -> str:
         lines = [
-            f"✅ 코딩 작업 완료",
+            "✅ 코딩 작업 완료",
             f"프로젝트: {job.project}",
             f"에이전트: {job.agent}",
             f"소요 시간: {job.duration_seconds:.0f}초",
@@ -60,7 +60,7 @@ class JobNotifier:
 
     def _format_failure(self, job: Any) -> str:
         lines = [
-            f"❌ 코딩 작업 실패",
+            "❌ 코딩 작업 실패",
             f"프로젝트: {job.project}",
             f"에이전트: {job.agent}",
             f"소요 시간: {job.duration_seconds:.0f}초",
@@ -68,7 +68,7 @@ class JobNotifier:
         ]
         failed = [p for p in job.phases if p.status.value == "failed"]
         if failed:
-            lines.append(f"실패한 Phase:")
+            lines.append("실패한 Phase:")
             for p in failed[:3]:
                 lines.append(f"  - Phase {p.step}: {p.title}")
         if job.error:

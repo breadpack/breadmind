@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 from fastapi.testclient import TestClient
 from fastapi import FastAPI
 
-from breadmind.webhook.models import WebhookRule, Pipeline, PipelineAction, ActionType
+from breadmind.webhook.models import WebhookRule, Pipeline
 from breadmind.webhook.store import WebhookAutomationStore
 
 

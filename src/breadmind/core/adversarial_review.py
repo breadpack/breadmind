@@ -221,7 +221,6 @@ class AdversarialReviewer:
         lines = content.split("\n")
         func_start: int | None = None
         func_name = ""
-        func_indent = 0
 
         for i, raw_line in enumerate(lines):
             stripped = raw_line.lstrip()
@@ -241,7 +240,7 @@ class AdversarialReviewer:
                             )
                         )
                 func_start = i
-                func_indent = len(raw_line) - len(stripped)
+                len(raw_line) - len(stripped)
                 m = re.match(r"def\s+(\w+)", stripped)
                 func_name = m.group(1) if m else "?"
 

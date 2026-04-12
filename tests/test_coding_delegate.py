@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import platform
-import sys
 import pytest
 from unittest.mock import AsyncMock, patch
 

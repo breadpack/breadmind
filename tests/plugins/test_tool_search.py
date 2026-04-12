@@ -1,9 +1,8 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from breadmind.core.protocols import (
-    ToolDefinition, ToolFilter, ToolSchema, ToolCall, ToolResult,
-    Message, LLMResponse, TokenUsage, AgentContext, PromptBlock,
-    PromptContext, ToolCallRequest, ExecutionContext,
+    ToolDefinition, ToolFilter, Message, LLMResponse, TokenUsage, AgentContext, PromptBlock,
+    ToolCallRequest,
 )
 from breadmind.plugins.builtin.tools.registry import HybridToolRegistry
 from breadmind.plugins.builtin.tools.tool_search import (

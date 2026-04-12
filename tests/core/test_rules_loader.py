@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from breadmind.core.rules_loader import LoadedRule, RulesLoader
+from breadmind.core.rules_loader import RulesLoader
 
 
 class TestDiscover:

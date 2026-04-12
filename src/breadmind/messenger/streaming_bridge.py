@@ -1,12 +1,11 @@
 """Bridge connecting messenger gateways with streaming adapters."""
 from __future__ import annotations
 
-from typing import Any, Callable, Awaitable
+from typing import Callable
 
 from breadmind.messenger.streaming import (
     get_stream_adapter,
     StreamChunk,
-    BaseStreamAdapter,
 )
 
 

@@ -5,7 +5,6 @@ import json
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 
 from breadmind.core.role_registry import RoleDefinition, RoleRegistry
 

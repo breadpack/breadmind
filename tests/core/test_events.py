@@ -24,7 +24,8 @@ def test_no_listener_does_not_raise(bus):
 
 def test_off_removes_listener(bus):
     results = []
-    handler = lambda d: results.append(d)
+    def handler(d):
+        return results.append(d)
     bus.on("removable", handler)
     bus.off("removable", handler)
     bus.emit("removable", "data")

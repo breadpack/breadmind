@@ -1,7 +1,6 @@
 """Tests for cross-format plugin bundle loader."""
 from __future__ import annotations
 import json
-import os
 
 from breadmind.plugins.bundle_loader import BundleLoader, BundleFormat
 

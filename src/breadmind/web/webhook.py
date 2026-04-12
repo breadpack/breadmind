@@ -4,7 +4,7 @@ import hmac
 import logging
 import json
 from datetime import datetime, timezone
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 

@@ -3,12 +3,9 @@ from __future__ import annotations
 
 import json
 import logging
-from unittest.mock import patch
 
-import pytest
 
 from breadmind.core.logging import (
-    RequestContext,
     StructuredFormatter,
     generate_trace_id,
     get_request_context,
@@ -71,7 +68,7 @@ class TestRequestContextPropagation:
     """contextvars 전파 검증."""
 
     def test_request_context_propagation(self) -> None:
-        ctx = set_request_context(
+        set_request_context(
             trace_id="trace_001",
             user="alice",
             channel="slack",

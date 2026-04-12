@@ -43,7 +43,7 @@ async def voice_speak(text: str, engine: str = "system") -> str:
     elif engine == "google":
         try:
             from gtts import gTTS
-            import tempfile, os
+            import tempfile
             tts = gTTS(text=text)
             with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
                 tts.save(f.name)

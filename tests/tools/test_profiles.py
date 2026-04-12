@@ -5,7 +5,6 @@ import pytest
 
 from breadmind.tools.profiles import (
     PROFILES,
-    TOOL_GROUPS,
     ToolProfileManager,
 )
 

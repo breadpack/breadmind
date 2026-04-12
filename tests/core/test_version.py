@@ -1,5 +1,4 @@
 """플러그인 semver 버전 제약 테스트."""
-import pytest
 
 from breadmind.core.plugin import PluginManifest
 from breadmind.core.version import (

@@ -1,8 +1,6 @@
 """Tests for environment-based configuration profiles."""
 
-import os
 
-import pytest
 import yaml
 
 from breadmind.core.config_profiles import (

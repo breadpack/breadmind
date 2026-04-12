@@ -66,13 +66,13 @@ class MacroTools:
         for i, step in enumerate(macro.steps):
             try:
                 if step.tool == "browser_navigate":
-                    result = await self._engine.navigate(session=session, **step.params)
+                    await self._engine.navigate(session=session, **step.params)
                 elif step.tool == "browser_screenshot":
-                    result = await self._engine.screenshot(session=session, **step.params)
+                    await self._engine.screenshot(session=session, **step.params)
                 elif step.tool == "browser_action":
-                    result = await self._engine.do_action(session=session, **step.params)
+                    await self._engine.do_action(session=session, **step.params)
                 else:
-                    result = f"[skip] Unknown tool: {step.tool}"
+                    pass
                 results.append(f"Step {i+1}/{len(macro.steps)} ({step.tool}): OK")
             except Exception as e:
                 results.append(f"Step {i+1}/{len(macro.steps)} ({step.tool}): ERROR - {e}")

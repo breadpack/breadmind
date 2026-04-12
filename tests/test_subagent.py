@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock
-from breadmind.core.subagent import SubAgent, SubAgentResult
-from breadmind.llm.base import LLMMessage, LLMResponse, ToolCall, TokenUsage
+from breadmind.core.subagent import SubAgent
+from breadmind.llm.base import LLMResponse, ToolCall, TokenUsage
 
 
 def _make_response(content, tool_calls=None):
@@ -69,7 +69,7 @@ async def test_subagent_injects_context():
         tools=[], system_prompt="You are a K8s executor.", max_turns=3,
     )
     context = {"task_1": "Found pods: pod-a (128Mi), pod-b (256Mi)"}
-    result = await agent.run(context=context)
+    await agent.run(context=context)
     call_args = provider.chat.call_args
     messages = call_args.kwargs.get("messages") or call_args[0][0]
     context_in_messages = any("pod-a" in (m.content or "") for m in messages)

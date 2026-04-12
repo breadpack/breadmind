@@ -12,7 +12,6 @@ from breadmind.hooks import HookEvent, HookPayload
 from breadmind.plugins.container import ServiceContainer
 from breadmind.plugins.loader import LoadedComponents, PluginLoader
 from breadmind.plugins.manifest import PluginManifest
-from breadmind.plugins.protocol import ToolPlugin
 from breadmind.plugins.registry import PluginRegistry
 
 logger = logging.getLogger("breadmind.plugins")

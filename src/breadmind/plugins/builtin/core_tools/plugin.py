@@ -11,16 +11,6 @@ import logging
 from typing import Any, Callable
 
 from breadmind.plugins.builtin.core_tools.security import (
-    ALLOWED_SSH_HOSTS,
-    BASE_DIRECTORY,
-    DANGEROUS_PATTERNS,
-    SENSITIVE_FILE_PATTERNS,
-    SHELL_META_CHARS,
-    ToolSecurityConfig,
-    get_known_hosts as _get_known_hosts,
-    has_shell_metacharacters as _has_shell_metacharacters,
-    is_command_allowed as _is_command_allowed,
-    is_dangerous_command as _is_dangerous_command,
     validate_path as _validate_path,
 )
 from breadmind.plugins.builtin.core_tools.shell_tool import shell_exec  # noqa: F401

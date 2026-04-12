@@ -188,7 +188,6 @@ async def send_mouse_drag(
     duration: float = 0.5,
 ) -> None:
     """Drag from one screen position to another using SendInput."""
-    import time as _time
 
     user32 = ctypes.windll.user32
     button_map = {

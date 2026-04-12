@@ -3,8 +3,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from breadmind.core.protocols import (
-    AgentContext, AgentResponse, LLMResponse, PromptBlock, PromptContext,
-    TokenUsage,
+    AgentContext, LLMResponse, PromptBlock, TokenUsage,
 )
 from breadmind.plugins.builtin.agent_loop.message_loop import MessageLoopAgent
 from breadmind.plugins.builtin.agent_loop.spawner import Spawner

@@ -633,7 +633,7 @@ async def router_manage(
                     {"name": "password", "label": "비밀번호", "type": "password",
                      "placeholder": "SSH 비밀번호", "required": True},
                 ],
-                "submit_message": f"SSH 접속: {{username}}@{{host}}",
+                "submit_message": "SSH 접속: {username}@{host}",
             }
             form_json = _json.dumps(form, ensure_ascii=False)
             return (

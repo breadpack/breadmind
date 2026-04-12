@@ -7,7 +7,7 @@ auto-loaded at session start so the agent always has recent context.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 

@@ -7,6 +7,8 @@ import shutil
 import time
 from pathlib import Path
 
+from typing import Any
+
 from breadmind.tools.registry import ToolResult
 from breadmind.coding.adapters import get_adapter
 from breadmind.coding.executors.local import LocalExecutor
@@ -307,11 +309,10 @@ async def _execute_long_running(
     asyncio background task, independent of the user's session.
     Progress is tracked via JobTracker and visible in the Monitoring tab.
     """
-    import asyncio
     from breadmind.coding.job_tracker import JobTracker
 
     job_id = generate_short_id()
-    tracker = JobTracker.get_instance()
+    JobTracker.get_instance()
 
     # Ensure project directory exists
     project_path = Path(project)

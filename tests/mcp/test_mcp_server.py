@@ -8,7 +8,6 @@ from breadmind.mcp.server import (
     METHOD_NOT_FOUND,
     MCPServer,
     MCPServerConfig,
-    MCPToolDefinition,
 )
 
 

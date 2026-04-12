@@ -1,7 +1,7 @@
 """v2 프로토콜 타입 테스트."""
 from breadmind.core.protocols.provider import Message, LLMResponse, ToolCallRequest, TokenUsage
 from breadmind.core.protocols.prompt import PromptBlock, PromptContext, CompactResult
-from breadmind.core.protocols.tool import ToolDefinition, ToolCall, ToolResult, ToolFilter, ToolSchema
+from breadmind.core.protocols.tool import ToolDefinition, ToolResult, ToolFilter, ToolSchema
 from breadmind.core.protocols.memory import Episode, KGTriple
 from breadmind.core.protocols.agent import AgentContext, AgentResponse
 from breadmind.core.protocols.runtime import UserInput, AgentOutput, Progress
@@ -133,6 +133,6 @@ def test_progress():
 # --- Cross-module import test ---
 
 def test_protocols_package_import():
-    from breadmind.core.protocols import Message, PromptBlock, ToolDefinition, Episode, AgentContext, UserInput
+    from breadmind.core.protocols import Message, PromptBlock
     assert Message is not None
     assert PromptBlock is not None

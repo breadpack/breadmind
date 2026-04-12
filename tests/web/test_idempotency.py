@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from unittest.mock import patch
 
-import pytest
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from httpx import ASGITransport, AsyncClient
@@ -130,7 +128,7 @@ async def test_cache_ttl_expiry():
 async def test_concurrent_same_key():
     """Concurrent requests with the same key return 409 for the second."""
     app = FastAPI()
-    store = setup_idempotency(app)
+    setup_idempotency(app)
 
     started = asyncio.Event()
     proceed = asyncio.Event()

@@ -9,10 +9,7 @@ import pytest
 
 from breadmind.core.vcs import (
     GitBackend,
-    JujutsuBackend,
-    SaplingBackend,
     VCSManager,
-    VCSStatus,
     VCSType,
 )
 

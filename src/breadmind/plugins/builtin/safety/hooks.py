@@ -6,7 +6,7 @@ import json
 import logging
 import platform
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from fnmatch import fnmatch
 from typing import Any
 

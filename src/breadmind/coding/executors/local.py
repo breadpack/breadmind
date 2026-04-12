@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import platform
 
 from breadmind.coding.executors.base import Executor, ExecutionResult
 

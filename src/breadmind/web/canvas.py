@@ -1,10 +1,9 @@
 """Canvas (A2UI) foundation: agent-driven UI surface system."""
 from __future__ import annotations
-import json, logging
+import logging
 from dataclasses import dataclass, field
 
 from breadmind.utils.helpers import generate_short_id
-from typing import Any
 
 logger = logging.getLogger(__name__)
 

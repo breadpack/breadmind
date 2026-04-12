@@ -1,7 +1,7 @@
 """Tests for breadmind.core.metrics – Prometheus-compatible metrics registry."""
 from __future__ import annotations
 
-from breadmind.core.metrics import MetricType, MetricsRegistry, normalize_path
+from breadmind.core.metrics import MetricsRegistry, normalize_path
 
 
 def _make_registry() -> MetricsRegistry:

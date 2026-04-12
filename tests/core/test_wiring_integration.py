@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 
 
 # ── Helpers / Fixtures ─────────────────────────────────────────────────
@@ -323,7 +320,7 @@ async def test_context_overflow_emergency_compact():
     """Context overflow should trigger emergency compaction and retry."""
     from breadmind.plugins.builtin.agent_loop.message_loop import MessageLoopAgent
     from breadmind.core.protocols import (
-        AgentContext, AgentResponse, LLMResponse, Message, PromptContext, TokenUsage,
+        AgentContext, LLMResponse, Message, TokenUsage,
     )
 
     # Provider: first call raises context overflow, second succeeds
@@ -375,7 +372,7 @@ async def test_context_overflow_emergency_compact():
 async def test_context_overflow_no_compactor_returns_error():
     """Without compactor, context overflow returns error message."""
     from breadmind.plugins.builtin.agent_loop.message_loop import MessageLoopAgent
-    from breadmind.core.protocols import AgentContext, LLMResponse
+    from breadmind.core.protocols import AgentContext
 
     provider = MagicMock()
     provider.supports_feature = MagicMock(return_value=False)

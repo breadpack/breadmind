@@ -1,10 +1,8 @@
 """E2E: 멀티턴 + 도구 호출."""
 import pytest
-from unittest.mock import AsyncMock
 
 from breadmind.core.protocols import (
-    LLMResponse, TokenUsage, ToolCallRequest, ToolResult,
-    ToolDefinition, ToolSchema,
+    LLMResponse, TokenUsage, ToolCallRequest, ToolDefinition, ToolSchema,
 )
 from breadmind.plugins.builtin.agent_loop.message_loop import MessageLoopAgent
 from breadmind.plugins.builtin.safety.guard import SafetyGuard

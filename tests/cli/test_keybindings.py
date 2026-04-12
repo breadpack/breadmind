@@ -7,7 +7,6 @@ from pathlib import Path
 
 from breadmind.cli.keybindings import (
     DEFAULT_KEYBINDINGS,
-    Keybinding,
     KeybindingManager,
 )
 

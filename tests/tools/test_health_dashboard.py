@@ -7,9 +7,7 @@ import time
 import pytest
 
 from breadmind.tools.health_dashboard import (
-    ComponentHealth,
     ComponentStatus,
-    DashboardSnapshot,
     HealthDashboard,
 )
 

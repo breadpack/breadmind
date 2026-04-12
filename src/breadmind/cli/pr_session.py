@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -63,7 +63,7 @@ class PRSessionManager:
 
     def list_links(self) -> list[PRSessionLink]:
         """Return all PR-session links sorted by creation time (newest first)."""
-        return sorted(self._links.values(), key=lambda l: l.created_at, reverse=True)
+        return sorted(self._links.values(), key=lambda link: link.created_at, reverse=True)
 
     def unlink(self, pr_number: int) -> bool:
         """Remove a PR-session link. Returns True if it existed."""

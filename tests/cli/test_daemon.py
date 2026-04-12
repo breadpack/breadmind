@@ -1,17 +1,15 @@
 """Tests for breadmind.cli.daemon module."""
 import json
 import os
-import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from breadmind.cli.daemon import (
     DaemonState,
     _cleanup_pid_files,
-    _is_process_alive,
     daemon_status,
     get_pid_file,
     get_state_file,

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import pytest
-import pytest_asyncio
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -483,7 +482,7 @@ class TestPluginManager:
 
     @pytest.mark.asyncio
     async def test_unload_unregisters_coding_agent(self, tmp_path):
-        from breadmind.coding.adapters import get_adapter, unregister_adapter
+        from breadmind.coding.adapters import get_adapter
         manager = self._make_manager(tmp_path)
         manager.container.register("python", True)
         make_plugin_dir(manager._plugins_dir, FULL_MANIFEST)

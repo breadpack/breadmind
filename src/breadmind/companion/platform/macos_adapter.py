@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import platform
 import shutil
@@ -456,7 +455,7 @@ class MacOSAdapter(PlatformAdapter):
         # cliclick scroll: positive = up, negative = down
         scroll_amount = -amount if direction == "down" else amount
         proc = await asyncio.create_subprocess_exec(
-            "cliclick", f"m:{x},{y}", f"w:50",
+            "cliclick", f"m:{x},{y}", "w:50",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

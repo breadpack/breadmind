@@ -6,7 +6,6 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from time import monotonic
-from typing import Any
 
 from breadmind.webhook.actions.base import ActionHandler, ActionResult
 from breadmind.webhook.models import (

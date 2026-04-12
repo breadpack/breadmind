@@ -9,7 +9,6 @@ import pytest
 from breadmind.tools.usage_analytics import (
     AnalyticsEvent,
     UsageAnalytics,
-    UsageReport,
 )
 
 

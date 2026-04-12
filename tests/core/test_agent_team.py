@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
 
 from breadmind.core.agent_team import (
     AgentTeam,
@@ -54,7 +53,7 @@ async def test_task_board_complete_task() -> None:
 async def test_task_board_dependency_blocking() -> None:
     board = TaskBoard()
     t1 = await board.add_task("Task 1")
-    t2 = await board.add_task("Task 2", depends_on=[t1.id])
+    await board.add_task("Task 2", depends_on=[t1.id])
 
     # Agent should only be able to claim t1 since t2 depends on it
     claimed = await board.claim_task("agent_1")
@@ -187,7 +186,7 @@ async def test_agent_team_status() -> None:
 async def test_task_progress_tracking() -> None:
     board = TaskBoard()
     t1 = await board.add_task("T1")
-    t2 = await board.add_task("T2")
+    await board.add_task("T2")
     await board.add_task("T3")
 
     progress = board.get_progress()

@@ -398,7 +398,7 @@ class ToolBackend(PackageBackend):
     async def install(self, name: str, source: str = "") -> dict[str, Any]:
         return {
             "success": False,
-            "message": f"Install not supported for type 'tool'.",
+            "message": "Install not supported for type 'tool'.",
         }
 
     async def uninstall(self, name: str) -> dict[str, Any]:

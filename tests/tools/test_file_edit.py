@@ -1,6 +1,5 @@
 """Tests for file_edit tool with uniqueness enforcement."""
 
-import os
 
 from breadmind.tools.file_edit import (
     file_edit,

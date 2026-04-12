@@ -1,5 +1,4 @@
 """Tests for the Pre/Post tool-use hook system."""
-import sys
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -218,7 +217,7 @@ async def test_agent_blocks_tool_on_pre_hook_failure(
     ]
 
     ctx = AgentContext(user="test", channel="cli", session_id="s1")
-    resp = await agent.handle_message("do something", ctx)
+    await agent.handle_message("do something", ctx)
 
     # Tool should NOT have been executed
     mock_tool_registry.execute.assert_not_called()

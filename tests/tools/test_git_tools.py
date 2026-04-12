@@ -30,7 +30,7 @@ async def test_git_commit_with_coauthor():
         result = await git_commit("test commit")
         assert "Committed" in result
         # Verify the commit message includes co-author
-        commit_call_args = mock_exec.__wrapped__ if hasattr(mock_exec, '__wrapped__') else None
+        mock_exec.__wrapped__ if hasattr(mock_exec, '__wrapped__') else None
         # Check that the function was called (basic verification)
         assert call_count == 2
 

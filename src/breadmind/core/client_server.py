@@ -6,7 +6,7 @@ dedicated server process, control it from a lightweight client.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
 from breadmind.utils.helpers import generate_short_id

@@ -235,7 +235,7 @@ class AgentTeam:
         """Main loop for a single agent: claim task -> execute -> repeat."""
         while self._running and not self._task_board.all_done:
             # Check messages first
-            messages = await self._mailbox.receive(agent_id)
+            await self._mailbox.receive(agent_id)
 
             # Try to claim a task
             task = await self._task_board.claim_task(agent_id)

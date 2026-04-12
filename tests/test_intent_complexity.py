@@ -1,5 +1,5 @@
 """Tests for Intent complexity detection."""
-from breadmind.core.intent import classify, Intent
+from breadmind.core.intent import classify
 
 
 def test_simple_query_is_simple():

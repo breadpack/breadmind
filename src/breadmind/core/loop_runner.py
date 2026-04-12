@@ -1,8 +1,11 @@
 """In-session recurring prompt execution (/loop command)."""
 from __future__ import annotations
-import asyncio, logging, re, time
+import asyncio
+import logging
+import re
+import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Awaitable
+from typing import Callable, Awaitable
 
 logger = logging.getLogger(__name__)
 

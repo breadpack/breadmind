@@ -4,8 +4,6 @@ from __future__ import annotations
 import pytest
 
 from breadmind.messenger.streaming import (
-    BaseStreamAdapter,
-    BreakPreference,
     StreamConfig,
     TelegramStreamAdapter,
 )

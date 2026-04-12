@@ -1,8 +1,6 @@
 """Tool profiles and group shorthands for bulk allow/deny."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any
 
 # Group definitions
 TOOL_GROUPS: dict[str, list[str]] = {

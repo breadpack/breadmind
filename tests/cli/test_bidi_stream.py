@@ -1,7 +1,6 @@
 """BidiStreamHandler unit tests."""
 from __future__ import annotations
 
-import asyncio
 import io
 import json
 

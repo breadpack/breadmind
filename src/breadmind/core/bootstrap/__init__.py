@@ -17,7 +17,6 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any
 
 from breadmind.core.events import get_event_bus
 from breadmind.plugins.container import ServiceContainer
@@ -351,7 +350,7 @@ async def init_plugins(container: ServiceContainer):
     """Load all builtin and user plugins. Returns PluginManager."""
     from breadmind.plugins.manager import PluginManager
 
-    config = container.get("config")
+    container.get("config")
     registry = container.get("tool_registry")
 
     # User plugins directory
@@ -411,7 +410,6 @@ async def init_agent(config, provider, registry, guard, db, memory_components, o
         registry.set_metrics_collector(metrics_collector)
 
     # Initialize OpenTelemetry (optional)
-    otel_integration = None
     try:
         otel_enabled = os.environ.get("BREADMIND_OTEL_ENABLED", "").lower() in ("1", "true")
         if otel_enabled:
@@ -422,7 +420,7 @@ async def init_agent(config, provider, registry, guard, db, memory_components, o
                 endpoint=os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
                 log_user_prompts=os.environ.get("OTEL_LOG_USER_PROMPTS", "").lower() == "1",
             )
-            otel_integration = init_otel(otel_config)
+            init_otel(otel_config)
     except (ImportError, Exception) as e:
         logger.debug("OpenTelemetry not available: %s", e)
 

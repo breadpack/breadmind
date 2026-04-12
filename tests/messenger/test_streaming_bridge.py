@@ -4,7 +4,6 @@ from __future__ import annotations
 import pytest
 
 from breadmind.messenger.streaming import (
-    StreamChunk,
     TelegramStreamAdapter,
     WebSocketStreamAdapter,
 )

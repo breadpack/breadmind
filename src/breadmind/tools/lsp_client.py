@@ -5,7 +5,7 @@ import asyncio
 import json
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -199,12 +199,12 @@ class LSPClient:
             ]
 
             results = []
-            for i, l in enumerate(lines):
+            for i, line in enumerate(lines):
                 for pattern in patterns:
-                    if re.search(pattern, l):
+                    if re.search(pattern, line):
                         results.append(LSPLocation(
                             file_path=file_path, line=i, character=0,
-                            preview=l.rstrip(),
+                            preview=line.rstrip(),
                         ))
             return results
         except (IOError, IndexError):
@@ -223,12 +223,12 @@ class LSPClient:
                 return []
 
             results = []
-            for i, l in enumerate(lines):
-                if word in l:
-                    col = l.index(word)
+            for i, line in enumerate(lines):
+                if word in line:
+                    col = line.index(word)
                     results.append(LSPLocation(
                         file_path=file_path, line=i, character=col,
-                        preview=l.rstrip(),
+                        preview=line.rstrip(),
                     ))
             return results
         except (IOError, IndexError):

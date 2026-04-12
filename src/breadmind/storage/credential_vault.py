@@ -209,7 +209,6 @@ class CredentialVault:
                 if not data:
                     continue
                 # Old format: JSON string of OAuthCredentials dict
-                import json
                 if isinstance(data, str):
                     cred_id = key  # "oauth:google:default" etc.
                     if await self.exists(cred_id):

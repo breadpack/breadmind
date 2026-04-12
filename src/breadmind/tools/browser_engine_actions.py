@@ -12,7 +12,7 @@ from typing import Any, TYPE_CHECKING
 from breadmind.tools.browser_actions import (
     hover, drag_drop, upload_file, select_option, scroll,
     press_key, get_cookies, set_cookie, get_storage,
-    wait_for_navigation, export_pdf,
+    export_pdf,
 )
 
 if TYPE_CHECKING:

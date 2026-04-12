@@ -1,7 +1,6 @@
 import asyncio
 from uuid import UUID
 
-import pytest
 
 from breadmind.flow.events import FlowEvent, EventType, FlowActor
 from breadmind.flow.store import FlowEventStore

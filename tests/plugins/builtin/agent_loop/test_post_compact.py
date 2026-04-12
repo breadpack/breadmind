@@ -1,9 +1,8 @@
 """Tests for POST_COMPACT hook and compact_instructions in AutoCompactor."""
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, call
+from unittest.mock import AsyncMock
 
-import pytest
 
 from breadmind.core.protocols import LLMResponse, Message, TokenUsage
 from breadmind.plugins.builtin.agent_loop.auto_compact import (

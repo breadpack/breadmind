@@ -1,8 +1,6 @@
 """Tests for session trace auditing."""
 
-import time
 
-import pytest
 
 from breadmind.core.session_trace import SessionTrace, SessionTracer, TraceEntry
 

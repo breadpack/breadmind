@@ -1,6 +1,6 @@
 """Tests for granular permission pattern matching in SafetyGuard."""
 import pytest
-from breadmind.plugins.builtin.safety.guard import SafetyGuard, PermissionRule
+from breadmind.plugins.builtin.safety.guard import SafetyGuard
 
 
 @pytest.fixture

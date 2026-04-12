@@ -84,7 +84,7 @@ def setup_pwa_routes(app: FastAPI, app_state):
 def _generate_vapid_keys() -> dict:
     """Generate a VAPID key pair using cryptography library."""
     from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat, PublicFormat
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
     import base64
 
     private_key = ec.generate_private_key(ec.SECP256R1())
@@ -116,7 +116,7 @@ async def send_push(db, title: str, body: str, url: str = "/", tag: str | None =
         return
 
     try:
-        from pywebpush import webpush, WebPushException
+        from pywebpush import webpush, WebPushException  # noqa: F401
     except ImportError:
         logger.debug("pywebpush not installed, skipping push notification")
         return

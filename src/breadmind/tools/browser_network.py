@@ -1,7 +1,7 @@
 """CDP-based network monitoring with traffic capture, URL blocking, and HAR export."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 

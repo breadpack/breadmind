@@ -8,7 +8,6 @@ import pytest
 
 from breadmind.memory.hybrid_search import (
     HybridSearchEngine,
-    SearchResult,
     SimpleTextFTS,
 )
 

@@ -1,12 +1,10 @@
 """Tests for breadmind.storage.backup module."""
 from __future__ import annotations
 
-import asyncio
 import gzip
-import os
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 

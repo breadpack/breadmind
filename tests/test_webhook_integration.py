@@ -1,15 +1,14 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 from breadmind.web.webhook import WebhookEndpoint, WebhookManager
 from breadmind.webhook.models import (
     WebhookRule, Pipeline, PipelineAction,
-    ActionType, PermissionLevel,
+    ActionType,
 )
 from breadmind.webhook.store import WebhookAutomationStore
 from breadmind.webhook.rule_engine import RuleEngine
 from breadmind.webhook.pipeline_executor import PipelineExecutor, ExecutionLog
-from breadmind.webhook.actions.base import ActionResult
 
 
 @pytest.fixture

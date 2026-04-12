@@ -20,7 +20,7 @@ def create_package_tools(package_manager: PackageManager) -> list:
     Returns a list of @tool-decorated functions ready for registration
     with ToolRegistry.
     """
-    from breadmind.tools.package_manager import PackageAction, PackageType
+    from breadmind.tools.package_manager import PackageType
 
     def _type_or_none(type_str: str) -> PackageType | None:
         if not type_str:

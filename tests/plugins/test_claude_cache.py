@@ -1,6 +1,6 @@
 """ClaudeAdapter prompt caching 최적화 테스트."""
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from breadmind.core.protocols import Message, PromptBlock, TokenUsage
 from breadmind.plugins.builtin.providers.claude_adapter import ClaudeAdapter

@@ -1,8 +1,7 @@
 """Tests for BrowserMacroStore."""
 from __future__ import annotations
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 from breadmind.tools.browser_macro import BrowserMacro, MacroStep
 
 

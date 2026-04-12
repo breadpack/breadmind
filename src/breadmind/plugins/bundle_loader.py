@@ -1,8 +1,9 @@
 """Cross-format plugin bundle loader: detects and loads Codex/Claude/Cursor plugins."""
 from __future__ import annotations
-import json, logging, os
+import json
+import logging
+import os
 from dataclasses import dataclass, field
-from typing import Any
 
 logger = logging.getLogger(__name__)
 

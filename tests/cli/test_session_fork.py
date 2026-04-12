@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from breadmind.cli.session_fork import SessionBranch, SessionForker
+from breadmind.cli.session_fork import SessionForker
 
 
 @pytest.fixture

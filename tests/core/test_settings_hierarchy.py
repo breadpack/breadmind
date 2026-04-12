@@ -5,10 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 
 from breadmind.core.settings_hierarchy import (
-    ScopedSettings,
     SettingsHierarchy,
     SettingsScope,
 )

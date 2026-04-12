@@ -4,10 +4,10 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from breadmind.llm.base import (
-    Attachment,
+    Attachment,  # noqa: F401
     LLMMessage as Message,
     LLMResponse,
-    TokenUsage,
+    TokenUsage,  # noqa: F401
     ToolCall,
 )
 

@@ -104,7 +104,6 @@ class TestPeriodRollover:
         assert budget.get_usage_summary()["daily"]["total"] > 0
 
         # Simulate next day
-        import datetime
         tomorrow = date.today().replace(day=date.today().day + 1) if date.today().day < 28 else date.today()
         # Only test rollover logic if we can safely increment day
         if tomorrow != date.today():

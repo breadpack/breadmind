@@ -1,15 +1,12 @@
 """Tests for CLI backup and restore."""
 from __future__ import annotations
 
-import json
 import tarfile
 from pathlib import Path
 
 import pytest
 
 from breadmind.cli.backup_restore import (
-    MANIFEST_FILENAME,
-    BackupManifest,
     BackupOptions,
     CLIBackupManager,
 )

@@ -104,7 +104,7 @@ class RepoMapper:
         for fm in file_maps:
             rendered = self.render_file(fm)
             lines.append(rendered)
-            total = sum(len(l) for l in lines)
+            total = sum(len(ln) for ln in lines)
             if total > max_chars:
                 lines.append("... (truncated)")
                 break

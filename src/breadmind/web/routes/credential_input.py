@@ -7,13 +7,11 @@ password fields are encrypted in the CredentialVault.
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import secrets
 import time
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse

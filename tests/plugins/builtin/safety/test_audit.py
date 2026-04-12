@@ -1,12 +1,11 @@
 """Tests for the SafetyGuard audit log."""
 import json
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
 
 import pytest
 
 from breadmind.plugins.builtin.safety.audit import AuditEntry, AuditLog
-from breadmind.plugins.builtin.safety.guard import SafetyGuard, SafetyVerdict
+from breadmind.plugins.builtin.safety.guard import SafetyGuard
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────

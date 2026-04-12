@@ -1,6 +1,6 @@
 """Tests for tool concurrency safety classification."""
 
-from breadmind.tools.registry import ToolMetadata, ToolRegistry, tool
+from breadmind.tools.registry import ToolRegistry, tool
 
 
 def test_classify_batch_separates_readonly():

@@ -1,5 +1,5 @@
 """Tests for team integration with worktree isolation."""
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 import pytest
 from breadmind.core.agent_team import AgentTeam, TeammateConfig
 from breadmind.core.team_integration import IsolatedTeamRunner
@@ -32,7 +32,6 @@ async def test_isolated_team_creates_worktrees(team, mock_worktree_mgr):
     handler = AsyncMock(return_value="done")
 
     # Patch start to capture the wrapped handler
-    original_start = team.start
     captured_handler = None
 
     async def capture_start(h):

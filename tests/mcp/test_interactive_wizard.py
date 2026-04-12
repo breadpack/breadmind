@@ -3,11 +3,9 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import pytest
 
 from breadmind.mcp.interactive_wizard import (
     MCPInteractiveWizard,
-    WizardResponse,
     WizardState,
     WizardStep,
 )
@@ -38,7 +36,7 @@ def test_start_without_name_shows_options():
 def test_start_with_known_server_skips_select():
     """Providing a known server name should advance past selection."""
     wiz = _make_wizard()
-    resp = wiz.start(server_name="github")
+    wiz.start(server_name="github")
 
     # Should have moved past SELECT_SERVER
     assert wiz.state.server_name == "github"
@@ -51,7 +49,7 @@ def test_start_with_custom_name(mock_which):
     mock_which.return_value = None  # no runtimes available
 
     wiz = _make_wizard()
-    resp = wiz.start(server_name="my-custom-server")
+    wiz.start(server_name="my-custom-server")
 
     assert wiz.state.server_name == "my-custom-server"
     assert wiz.state.server_slug == "my-custom-server"

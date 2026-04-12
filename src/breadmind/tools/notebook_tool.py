@@ -1,7 +1,6 @@
 """Jupyter notebook (.ipynb) reading and cell-level editing."""
 
 import json
-import os
 
 from breadmind.tools.registry import tool
 

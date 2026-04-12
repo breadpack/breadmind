@@ -1,7 +1,6 @@
 """Tests for the adversarial code reviewer."""
 from __future__ import annotations
 
-import pytest
 
 from breadmind.core.adversarial_review import (
     AdversarialReviewer,

@@ -49,7 +49,7 @@ def test_rewind_returns_snapshots(tmp_path: Path):
     mgr = CheckpointManager(storage_dir=tmp_path / "cp")
     cp1 = mgr.create(label="v1", files=[str(f)])
     f.write_text("v2\n", encoding="utf-8")
-    cp2 = mgr.create(label="v2", files=[str(f)])
+    mgr.create(label="v2", files=[str(f)])
 
     snapshots = mgr.rewind(cp1.id)
     assert len(snapshots) == 1

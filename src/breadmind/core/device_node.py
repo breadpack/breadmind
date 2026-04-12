@@ -1,8 +1,8 @@
 """Device node foundation: peripheral devices exposing capabilities to the agent."""
 from __future__ import annotations
-import logging, time
+import logging
+import time
 from dataclasses import dataclass, field
-from typing import Any
 
 logger = logging.getLogger(__name__)
 

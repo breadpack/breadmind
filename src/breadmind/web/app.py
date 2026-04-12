@@ -7,7 +7,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
-from typing import Callable
 
 from breadmind.core.metrics import get_metrics_registry, normalize_path
 

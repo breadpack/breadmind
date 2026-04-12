@@ -2,11 +2,9 @@
 from __future__ import annotations
 
 import time
-from unittest.mock import patch
 
-import pytest
 
-from breadmind.messenger.dm_pairing import DMPairingManager, DMPolicy, PairingCode
+from breadmind.messenger.dm_pairing import DMPairingManager, DMPolicy
 
 
 def test_open_policy_allows_all(tmp_path):

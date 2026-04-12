@@ -14,7 +14,7 @@ class TestPowerUpManager:
     def test_list_lessons_by_category(self):
         mgr = PowerUpManager()
         basics = mgr.list_lessons(category="basics")
-        assert all(l.category == "basics" for l in basics)
+        assert all(lesson.category == "basics" for lesson in basics)
         assert len(basics) >= 1
 
     def test_get_lesson_by_id(self):

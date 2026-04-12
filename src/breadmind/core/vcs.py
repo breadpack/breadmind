@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import shutil
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
@@ -314,7 +313,7 @@ class VCSManager:
     def backend(self) -> VCSBackend:
         """Get the detected VCS backend. Raises if none detected."""
         if self._backend is None:
-            detected = self.detect()
+            self.detect()
             if self._backend is None:
                 raise RuntimeError(
                     f"No VCS detected in {self._root}. "

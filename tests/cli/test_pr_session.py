@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from breadmind.cli.pr_session import PRSessionLink, PRSessionManager
+from breadmind.cli.pr_session import PRSessionManager
 
 
 @pytest.fixture

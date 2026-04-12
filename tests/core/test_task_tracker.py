@@ -2,7 +2,7 @@
 import json
 import os
 import pytest
-from breadmind.core.task_tracker import TaskTracker, TaskStatus, TrackedTask
+from breadmind.core.task_tracker import TaskTracker, TaskStatus
 
 
 @pytest.fixture

@@ -1,4 +1,3 @@
-import pytest
 from breadmind.webhook.models import (
     WebhookRule, Pipeline, PipelineAction, PipelineContext,
     ActionType, FailureStrategy, PermissionLevel,

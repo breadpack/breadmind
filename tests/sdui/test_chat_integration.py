@@ -4,7 +4,6 @@ from __future__ import annotations
 from breadmind.flow.event_bus import FlowEventBus
 from breadmind.flow.store import FlowEventStore
 from breadmind.sdui.actions import ActionHandler
-from breadmind.sdui.spec import Component
 from breadmind.sdui.views import chat_view
 
 

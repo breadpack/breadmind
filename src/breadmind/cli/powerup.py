@@ -143,7 +143,7 @@ class PowerUpManager:
     def list_lessons(self, category: str | None = None) -> list[Lesson]:
         if category is None:
             return list(self._lessons)
-        return [l for l in self._lessons if l.category == category]
+        return [lesson for lesson in self._lessons if lesson.category == category]
 
     def get_lesson(self, lesson_id: str) -> Lesson | None:
         for lesson in self._lessons:
@@ -157,7 +157,7 @@ class PowerUpManager:
     def get_progress(self) -> dict:
         """Return completion stats."""
         total = len(self._lessons)
-        completed = len(self._completed & {l.id for l in self._lessons})
+        completed = len(self._completed & {lesson.id for lesson in self._lessons})
         return {
             "total": total,
             "completed": completed,

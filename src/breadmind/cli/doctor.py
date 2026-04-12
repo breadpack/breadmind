@@ -1,9 +1,8 @@
 import os
-import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 
-from breadmind.cli.ui import ConsoleUI, get_ui
+from breadmind.cli.ui import get_ui
 
 
 @dataclass
@@ -86,7 +85,7 @@ def check_config() -> CheckResult:
             if os.path.exists("config/config.yaml"):
                 return CheckResult("Config", "ok", "./config/config.yaml")
             return CheckResult("Config", "fail", f"Not found: {config_path}")
-        config = load_config(config_dir)
+        load_config(config_dir)
         return CheckResult("Config", "ok", config_path)
     except Exception as e:
         return CheckResult("Config", "fail", str(e))

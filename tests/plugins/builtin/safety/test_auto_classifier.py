@@ -3,17 +3,14 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 
-from breadmind.core.protocols import LLMResponse, Message, TokenUsage
+from breadmind.core.protocols import LLMResponse, TokenUsage
 from breadmind.plugins.builtin.safety.auto_classifier import (
     AutoSafetyClassifier,
-    SafetyClassification,
 )
-from breadmind.plugins.builtin.safety.guard import SafetyGuard, SafetyVerdict
+from breadmind.plugins.builtin.safety.guard import SafetyGuard
 
 
 # ── Helpers ──────────────────────────────────────────────────────────

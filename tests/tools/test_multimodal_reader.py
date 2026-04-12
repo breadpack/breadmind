@@ -4,7 +4,7 @@ import json
 import struct
 from unittest.mock import patch
 
-from breadmind.tools.multimodal_reader import image_read, pdf_read
+from breadmind.tools.multimodal_reader import image_read
 
 
 def test_pdf_read_fallback_no_pymupdf():

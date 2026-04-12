@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from breadmind.tools.auto_recommend import AutoRecommender, UsageRecord
+from breadmind.tools.auto_recommend import AutoRecommender
 
 
 @pytest.fixture

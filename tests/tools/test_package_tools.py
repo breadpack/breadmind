@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -71,7 +71,7 @@ class TestPkgSearch:
     async def test_search_no_type_filter(self, tools, mock_manager):
         mock_manager.search = AsyncMock(return_value=[])
         fn = _get_tool(tools, "pkg_search")
-        result = await fn(query="test", type="")
+        await fn(query="test", type="")
         # Should pass None as pkg_type
         mock_manager.search.assert_awaited_once_with("test", None, limit=10)
 

@@ -6,7 +6,6 @@ package is available, falling back gracefully when it is not installed.
 from __future__ import annotations
 
 import logging
-import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -48,8 +47,8 @@ class OTelIntegration:
         """Try to initialize OTel. No-op if packages not available."""
         try:
             from opentelemetry import metrics, trace
-            from opentelemetry.sdk.metrics import MeterProvider
-            from opentelemetry.sdk.trace import TracerProvider
+            from opentelemetry.sdk.metrics import MeterProvider  # noqa: F401
+            from opentelemetry.sdk.trace import TracerProvider  # noqa: F401
 
             self._meter = metrics.get_meter(self._config.service_name)
             self._tracer = trace.get_tracer(self._config.service_name)

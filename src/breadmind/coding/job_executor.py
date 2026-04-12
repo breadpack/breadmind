@@ -6,7 +6,6 @@ Can run standalone (async) or be dispatched via BackgroundJobManager.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time

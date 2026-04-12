@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import logging
 
-import pytest
 
 from breadmind.core.logging import LogRedactor, StructuredFormatter, setup_logging
 

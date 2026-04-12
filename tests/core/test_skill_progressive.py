@@ -1,7 +1,6 @@
 """Tests for skill progressive disclosure."""
-import os
 import pytest
-from breadmind.core.skill_store import SkillStore, Skill
+from breadmind.core.skill_store import SkillStore
 
 
 @pytest.fixture

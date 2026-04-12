@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Generator
 
@@ -15,7 +14,7 @@ try:
     from rich.markdown import Markdown as RichMarkdown
     from rich.panel import Panel
     from rich.table import Table
-    from rich.text import Text
+    from rich.text import Text  # noqa: F401
 
     _RICH_AVAILABLE = True
 except ImportError:
@@ -76,7 +75,6 @@ class ConsoleUI:
         Falls back to simple start/done messages without rich.
         """
         if self._rich:
-            from rich.status import Status
 
             with self._console.status(msg):
                 yield

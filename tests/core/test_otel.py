@@ -1,10 +1,8 @@
 """OpenTelemetry integration 테스트."""
 from __future__ import annotations
 
-import importlib
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from breadmind.core.otel import OTelConfig, OTelIntegration, get_otel, init_otel
 import breadmind.core.otel as otel_module

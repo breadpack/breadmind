@@ -1,8 +1,6 @@
 """Tests for chat frontend file structure and DOM requirements."""
 from __future__ import annotations
 
-import os
-import re
 from pathlib import Path
 
 STATIC_DIR = Path(__file__).resolve().parents[2] / "src" / "breadmind" / "web" / "static"

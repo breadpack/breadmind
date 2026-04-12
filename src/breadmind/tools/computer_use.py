@@ -1,7 +1,8 @@
 """Computer use (GUI automation) foundation. Provides screenshot and basic input tools.
 Requires platform-specific backends (not included). Falls back to description-only mode."""
 from __future__ import annotations
-import asyncio, base64, logging, os, sys
+import base64
+import logging
 from dataclasses import dataclass
 from breadmind.tools.registry import tool
 

@@ -5,10 +5,8 @@ import json
 import logging
 import os
 from collections import deque
-from collections.abc import Sequence
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)

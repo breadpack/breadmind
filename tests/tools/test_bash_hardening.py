@@ -4,10 +4,8 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from breadmind.tools.builtin import (
-    _contains_unc_path,
     _truncate_head_tail,
     shell_exec,
-    _background_jobs,
 )
 
 

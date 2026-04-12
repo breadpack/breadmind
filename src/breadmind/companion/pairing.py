@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
-from urllib.parse import quote, urlencode
+from urllib.parse import urlencode
 
 from breadmind.companion.config import CompanionConfig, save_config, _default_config_dir
 

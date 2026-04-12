@@ -1,4 +1,4 @@
-from breadmind.core.result_evaluator import ResultEvaluator, EvalResult
+from breadmind.core.result_evaluator import ResultEvaluator
 
 def test_success_result_is_normal():
     ev = ResultEvaluator()

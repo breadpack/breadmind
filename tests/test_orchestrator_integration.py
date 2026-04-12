@@ -37,7 +37,7 @@ async def test_full_pipeline_multi_domain():
                  "depends_on": ["t1"], "difficulty": "medium", "expected_output": "Issue fixed"},
             ]}))
         elif "diagnostics" in system.lower() or "diagnostician" in system.lower():
-            call_seq.append(f"subagent:diag")
+            call_seq.append("subagent:diag")
             return _resp(f"[OK] All healthy for: {user_msg[:30]}")
         elif "operations" in system.lower() or "executor" in system.lower():
             call_seq.append("subagent:executor")

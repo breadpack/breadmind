@@ -1,15 +1,12 @@
 """Tests for MCPHealthMonitor health tracking and auto-restart logic."""
 from __future__ import annotations
 
-import time
-from unittest.mock import patch
 
 import pytest
 
 from breadmind.mcp.health_monitor import (
     HealthStatus,
     MCPHealthMonitor,
-    ServerHealth,
 )
 
 

@@ -8,7 +8,7 @@ quality high for critical thinking steps.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
 
@@ -17,6 +17,12 @@ class TaskPhase(str, Enum):
     IMPLEMENTATION = "implementation"
     REVIEW = "review"
 
+
+PHASE_TO_DIFFICULTY: dict[TaskPhase, str] = {
+    TaskPhase.PLANNING: "high",
+    TaskPhase.IMPLEMENTATION: "medium",
+    TaskPhase.REVIEW: "low",
+}
 
 
 @dataclass
@@ -126,16 +132,11 @@ class OpusPlanManager:
 
     def get_difficulty_for_turn(self, messages: list[dict]) -> str:
         """Return the difficulty tier for the current turn."""
-        _phase_to_difficulty = {
-            TaskPhase.PLANNING: "high",
-            TaskPhase.IMPLEMENTATION: "medium",
-            TaskPhase.REVIEW: "low",
-        }
         if not self._strategy.auto_switch:
-            return _phase_to_difficulty[self._current_phase]
+            return PHASE_TO_DIFFICULTY[self._current_phase]
         detected = self.detect_phase(messages)
         self._current_phase = detected
-        return _phase_to_difficulty[detected]
+        return PHASE_TO_DIFFICULTY[detected]
 
     # ---- internal ---------------------------------------------------------
 
