@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time as _time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -44,7 +45,22 @@ class HookChain:
         aggregated_context: list[str] = []
 
         for handler in self._sorted():
+            t0 = _time.perf_counter()
             decision = await handler.run(payload)
+            duration_ms = (_time.perf_counter() - t0) * 1000.0
+            try:
+                from breadmind.hooks.trace import HookTraceEntry, get_trace_buffer
+                get_trace_buffer().record(HookTraceEntry(
+                    timestamp=_time.time(),
+                    hook_id=getattr(handler, "name", ""),
+                    event=self.event.value,
+                    decision=decision.kind.value,
+                    duration_ms=duration_ms,
+                    reason=decision.reason,
+                    error="",
+                ))
+            except Exception:
+                pass  # observability must never break the chain
 
             if decision.context:
                 aggregated_context.append(decision.context)
