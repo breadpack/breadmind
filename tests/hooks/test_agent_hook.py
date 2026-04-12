@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, patch
 
-import pytest
 
 from breadmind.hooks.agent_hook import READONLY_TOOLS, AgentHook
 from breadmind.hooks.decision import DecisionKind

@@ -5,7 +5,7 @@ import json
 import logging
 import re
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from breadmind.hooks.decision import HookDecision

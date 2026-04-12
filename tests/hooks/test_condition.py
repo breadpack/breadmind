@@ -1,7 +1,6 @@
 """Tests for breadmind.hooks.condition.matches_condition."""
 from __future__ import annotations
 
-import pytest
 
 from breadmind.hooks.condition import matches_condition
 from breadmind.hooks.events import HookEvent, HookPayload

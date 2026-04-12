@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 
 from breadmind.hooks.events import HookEvent, HookPayload
 from breadmind.hooks.http_hook import HttpHook

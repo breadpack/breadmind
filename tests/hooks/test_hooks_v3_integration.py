@@ -1,11 +1,10 @@
 """End-to-end: HookChain + new handler types + conditional filtering."""
-import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
 from breadmind.hooks.chain import HookChain
 from breadmind.hooks.decision import DecisionKind, HookDecision
 from breadmind.hooks.events import HookEvent, HookPayload
-from breadmind.hooks.handler import PythonHook, ShellHook
+from breadmind.hooks.handler import PythonHook
 from breadmind.hooks.prompt_hook import PromptHook
 from breadmind.hooks.agent_hook import AgentHook
 from breadmind.hooks.http_hook import HttpHook

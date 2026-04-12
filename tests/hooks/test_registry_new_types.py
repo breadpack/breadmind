@@ -1,4 +1,3 @@
-import pytest
 from breadmind.hooks.db_store import HookOverride
 from breadmind.hooks.events import HookEvent
 from breadmind.hooks.registry import HookRegistry
