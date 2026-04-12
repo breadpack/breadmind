@@ -37,7 +37,7 @@ def tool_hook_config_to_python_hook(cfg, event: HookEvent) -> PythonHook:
 
         if cfg.handler_type != HookHandlerType.COMMAND:
             # Preserve legacy PROMPT/AGENT dispatch semantics
-            result = await ToolHookRunner._invoke_hook(cfg, *legacy_args)
+            result = await ToolHookRunner()._invoke_hook(cfg, *legacy_args)
             if not isinstance(result, ToolHookResult):
                 return HookDecision.proceed()
             if result.action == "block":
