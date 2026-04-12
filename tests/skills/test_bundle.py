@@ -1,4 +1,4 @@
-from breadmind.skills.bundle import SkillBundle, parse_skill_md
+from breadmind.skills.bundle import parse_skill_md
 
 
 SAMPLE = """\

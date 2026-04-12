@@ -41,6 +41,7 @@ from breadmind.web.routes.bg_jobs import setup_bg_job_routes
 from breadmind.web.routes.coding_jobs import register_coding_job_routes
 from breadmind.web.routes.plugins import router as plugins_router
 from breadmind.web.routes.hooks import router as hooks_router
+from breadmind.web.routes.skills_bundle import router as skills_bundle_router
 from breadmind.web.routes.upload import router as upload_router
 from breadmind.web.routes.export import setup_export_routes
 from breadmind.web.routes.backup import setup_backup_routes
@@ -421,6 +422,7 @@ class WebApp:
         app.include_router(infra_router)
         app.include_router(plugins_router)
         app.include_router(hooks_router)
+        app.include_router(skills_bundle_router)
         app.include_router(upload_router)
         setup_export_routes(app, self)
         setup_backup_routes(app, self)
@@ -455,6 +457,27 @@ class WebApp:
                 logger.info("HookRegistry initialized")
             except Exception as e:
                 logger.warning("HookRegistry init failed: %s", e)
+
+        # --- SkillStore exposure (skills-v2) ---
+        # The skills_bundle router reads app.state.skill_store. The canonical
+        # instance lives on ctx.skill_store (see WebApp._CTX_ATTR_MAP); mirror
+        # it onto app.state at startup so the router can find it without
+        # reaching through app_state.
+        @app.on_event("startup")
+        async def _init_skill_store_state():
+            try:
+                store = self.ctx.skill_store
+            except Exception as e:  # pragma: no cover - defensive
+                logger.warning("skill_store access failed: %s", e)
+                return
+            if store is None:
+                logger.info("skill_store not configured; skills_bundle router will 503")
+                return
+            try:
+                app.state.skill_store = store
+                logger.info("skill_store exposed on app.state")
+            except Exception as e:
+                logger.warning("skill_store exposure failed: %s", e)
 
         # --- Prometheus metrics endpoint (outside versioning) ---
 

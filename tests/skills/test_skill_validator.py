@@ -1,7 +1,6 @@
 """Tests for skill_validator module."""
 from __future__ import annotations
 
-import pytest
 
 from breadmind.skills.skill_validator import (
     SkillValidator,

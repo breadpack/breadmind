@@ -1,4 +1,4 @@
-from breadmind.skills.checklist import ChecklistTracker, ChecklistState
+from breadmind.skills.checklist import ChecklistTracker
 
 
 def test_start_creates_state():
