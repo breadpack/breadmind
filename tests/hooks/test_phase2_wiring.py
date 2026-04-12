@@ -1,7 +1,7 @@
 import pytest
 
 from breadmind.core.events import EventBus
-from breadmind.hooks import HookDecision, HookEvent
+from breadmind.hooks import HookDecision, HookEvent, HookPayload
 from breadmind.hooks.handler import PythonHook
 
 
@@ -275,3 +275,30 @@ async def test_pre_compact_modify_replaces_messages(fresh_global_bus):
     )
     assert len(result) == 1
     assert result[0].content == "SUMMARY"
+
+
+async def test_memory_written_event_fires_from_chain():
+    """Observational event: just verify dispatch via the chain is reachable."""
+    from breadmind.core.events import EventBus
+    from breadmind.hooks import HookEvent, HookPayload
+
+    # Use a scoped bus so we don't depend on monkeypatch quirks
+    bus = EventBus()
+    seen = []
+    bus.register_hook(
+        HookEvent.MEMORY_WRITTEN,
+        PythonHook(
+            name="spy",
+            event=HookEvent.MEMORY_WRITTEN,
+            handler=lambda p: (seen.append(dict(p.data)), HookDecision.proceed())[1],
+        ),
+    )
+    await bus.run_hook_chain(
+        HookEvent.MEMORY_WRITTEN,
+        HookPayload(
+            event=HookEvent.MEMORY_WRITTEN,
+            data={"layer": "semantic", "kind": "entity", "item_id": "e1"},
+        ),
+    )
+    assert seen and seen[0]["layer"] == "semantic"
+    assert seen[0]["kind"] == "entity"

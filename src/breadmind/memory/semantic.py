@@ -21,6 +21,23 @@ class SemanticMemory:
         if self._db:
             await self._db.save_entity(entity)
         self._entities[entity.id] = entity
+        try:
+            from breadmind.core.events import get_event_bus
+            from breadmind.hooks import HookEvent, HookPayload
+
+            await get_event_bus().run_hook_chain(
+                HookEvent.MEMORY_WRITTEN,
+                HookPayload(
+                    event=HookEvent.MEMORY_WRITTEN,
+                    data={
+                        "layer": "semantic",
+                        "kind": "entity",
+                        "item_id": str(getattr(entity, "id", "") or ""),
+                    },
+                ),
+            )
+        except Exception:
+            pass  # observability must never break a write
 
     async def get_entity(self, entity_id: str) -> KGEntity | None:
         if self._db:
@@ -51,6 +68,23 @@ class SemanticMemory:
             rel_id = await self._db.save_relation(relation)
             relation.id = rel_id
         self._relations.append(relation)
+        try:
+            from breadmind.core.events import get_event_bus
+            from breadmind.hooks import HookEvent, HookPayload
+
+            await get_event_bus().run_hook_chain(
+                HookEvent.MEMORY_WRITTEN,
+                HookPayload(
+                    event=HookEvent.MEMORY_WRITTEN,
+                    data={
+                        "layer": "semantic",
+                        "kind": "relation",
+                        "item_id": str(getattr(relation, "id", "") or ""),
+                    },
+                ),
+            )
+        except Exception:
+            pass  # observability must never break a write
 
     async def get_relations(
         self, entity_id: str, direction: str = "both"
