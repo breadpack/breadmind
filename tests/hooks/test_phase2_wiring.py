@@ -78,3 +78,76 @@ async def test_gateway_wrapper_drops_blocked_message(fresh_global_bus):
     msg = IncomingMessage(text="x", user_id="u", channel_id="c", platform="slack")
     await gw._on_message(msg)
     assert received == []  # blocked
+
+
+async def test_safety_guard_hook_fires_on_deny(fresh_global_bus):
+    """When SafetyGuard denies, SAFETY_GUARD_TRIGGERED is dispatched."""
+    from breadmind.core.agent import CoreAgent
+    from breadmind.core.safety import SafetyGuard, SafetyResult
+
+    seen: list[dict] = []
+    fresh_global_bus.register_hook(
+        HookEvent.SAFETY_GUARD_TRIGGERED,
+        PythonHook(
+            name="spy",
+            event=HookEvent.SAFETY_GUARD_TRIGGERED,
+            handler=lambda p: (seen.append(dict(p.data)), HookDecision.proceed())[1],
+        ),
+    )
+
+    # Build a bare agent + blacklisting SafetyGuard
+    agent = CoreAgent.__new__(CoreAgent)
+    agent._safety = SafetyGuard(blacklist={"shell": ["shell_exec"]})
+    # Exercise the new _emit_safety_triggered helper (added by this task)
+    result = await agent._emit_safety_triggered(
+        action="shell_exec", params={"cmd": "ls"},
+        user="u1", channel="c1",
+        original=SafetyResult.DENY,
+    )
+    assert result == SafetyResult.DENY
+    assert seen and seen[0]["action"] == "shell_exec"
+    assert seen[0]["decision"] == "DENIED"
+
+
+async def test_safety_guard_hook_can_override_to_allow(fresh_global_bus):
+    from breadmind.core.agent import CoreAgent
+    from breadmind.core.safety import SafetyResult
+
+    fresh_global_bus.register_hook(
+        HookEvent.SAFETY_GUARD_TRIGGERED,
+        PythonHook(
+            name="allow",
+            event=HookEvent.SAFETY_GUARD_TRIGGERED,
+            handler=lambda p: HookDecision.modify(decision="ALLOWED"),
+        ),
+    )
+
+    agent = CoreAgent.__new__(CoreAgent)
+    result = await agent._emit_safety_triggered(
+        action="shell_exec", params={"cmd": "ls"},
+        user="u1", channel="c1",
+        original=SafetyResult.DENY,
+    )
+    assert result == SafetyResult.ALLOW
+
+
+async def test_safety_guard_hook_block_forces_deny(fresh_global_bus):
+    from breadmind.core.agent import CoreAgent
+    from breadmind.core.safety import SafetyResult
+
+    fresh_global_bus.register_hook(
+        HookEvent.SAFETY_GUARD_TRIGGERED,
+        PythonHook(
+            name="block",
+            event=HookEvent.SAFETY_GUARD_TRIGGERED,
+            handler=lambda p: HookDecision.block("policy"),
+        ),
+    )
+
+    agent = CoreAgent.__new__(CoreAgent)
+    result = await agent._emit_safety_triggered(
+        action="shell_exec", params={},
+        user="u1", channel="c1",
+        original=SafetyResult.REQUIRE_APPROVAL,
+    )
+    assert result == SafetyResult.DENY
