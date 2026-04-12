@@ -76,6 +76,61 @@ class EventBus:
     async def publish_fire_and_forget(self, event: "Event") -> None:
         asyncio.create_task(self.publish(event))
 
+    # ── v3 Hook Chain API ──────────────────────────────────────────────
+    def register_hook(self, event, handler, *, name: str | None = None) -> str:
+        """Register a blocking-capable hook handler. Returns hook_id."""
+        from breadmind.hooks.events import HookEvent
+
+        key = event.value if isinstance(event, HookEvent) else str(event)
+        if not hasattr(self, "_hook_chains"):
+            self._hook_chains = {}
+        import uuid
+        hook_id = name or f"{key}:{handler.__class__.__name__}:{uuid.uuid4().hex[:8]}"
+        handler_name = getattr(handler, "name", hook_id)
+        if handler_name != hook_id and not name:
+            hook_id = f"{key}:{handler_name}:{uuid.uuid4().hex[:6]}"
+        chain = self._hook_chains.setdefault(key, [])
+        chain.append((hook_id, handler))
+        return hook_id
+
+    def unregister_hook(self, hook_id: str) -> bool:
+        if not hasattr(self, "_hook_chains"):
+            return False
+        for key, entries in self._hook_chains.items():
+            for i, (hid, _handler) in enumerate(entries):
+                if hid == hook_id:
+                    entries.pop(i)
+                    return True
+        return False
+
+    async def run_hook_chain(self, event, payload):
+        """Run registered hooks for this event + dispatch listeners concurrently."""
+        from breadmind.hooks.chain import HookChain
+        from breadmind.hooks.decision import HookDecision
+        from breadmind.hooks.events import HookEvent
+
+        key = event.value if isinstance(event, HookEvent) else str(event)
+        hook_chains = getattr(self, "_hook_chains", {})
+        entries = hook_chains.get(key, [])
+
+        # fire-and-forget listeners (observability)
+        await self.async_emit(key, payload.data)
+
+        if not entries:
+            return HookDecision.proceed()
+
+        try:
+            hook_event = HookEvent(key)
+        except ValueError:
+            hook_event = HookEvent.NOTIFICATION
+
+        chain = HookChain(
+            event=hook_event,
+            handlers=[h for _hid, h in entries],
+        )
+        decision, _payload = await chain.run(payload)
+        return decision
+
 
 # ── v1 Compatibility Types ─────────────────────────────────────────────
 
