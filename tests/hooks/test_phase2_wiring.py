@@ -302,3 +302,51 @@ async def test_memory_written_event_fires_from_chain():
     )
     assert seen and seen[0]["layer"] == "semantic"
     assert seen[0]["kind"] == "entity"
+
+
+async def test_worker_dispatched_event_fires_from_chain():
+    from breadmind.core.events import EventBus
+    from breadmind.hooks import HookEvent, HookPayload
+
+    bus = EventBus()
+    seen = []
+    bus.register_hook(
+        HookEvent.WORKER_DISPATCHED,
+        PythonHook(
+            name="spy",
+            event=HookEvent.WORKER_DISPATCHED,
+            handler=lambda p: (seen.append(dict(p.data)), HookDecision.proceed())[1],
+        ),
+    )
+    await bus.run_hook_chain(
+        HookEvent.WORKER_DISPATCHED,
+        HookPayload(
+            event=HookEvent.WORKER_DISPATCHED,
+            data={"worker_id": "w1", "task_id": "t1", "task_kind": "shell"},
+        ),
+    )
+    assert seen and seen[0]["worker_id"] == "w1"
+
+
+async def test_worker_completed_event_fires_from_chain():
+    from breadmind.core.events import EventBus
+    from breadmind.hooks import HookEvent, HookPayload
+
+    bus = EventBus()
+    seen = []
+    bus.register_hook(
+        HookEvent.WORKER_COMPLETED,
+        PythonHook(
+            name="spy",
+            event=HookEvent.WORKER_COMPLETED,
+            handler=lambda p: (seen.append(dict(p.data)), HookDecision.proceed())[1],
+        ),
+    )
+    await bus.run_hook_chain(
+        HookEvent.WORKER_COMPLETED,
+        HookPayload(
+            event=HookEvent.WORKER_COMPLETED,
+            data={"worker_id": "w1", "task_id": "t1", "success": True},
+        ),
+    )
+    assert seen and seen[0]["success"] is True
