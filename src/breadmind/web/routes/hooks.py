@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from breadmind.hooks.db_store import HookOverride
@@ -157,3 +158,21 @@ async def list_traces(
 @router.get("/api/hooks/stats")
 async def hook_stats():
     return {"stats": get_trace_buffer().stats()}
+
+
+@router.websocket("/ws/hooks/traces")
+async def ws_trace_stream(websocket: WebSocket):
+    await websocket.accept()
+    buf = get_trace_buffer()
+    queue: asyncio.Queue = asyncio.Queue()
+    buf.subscribe(queue)
+    try:
+        while True:
+            entry = await queue.get()
+            await websocket.send_json(entry.to_dict())
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.debug("ws_trace_stream error: %s", e)
+    finally:
+        buf.unsubscribe(queue)
