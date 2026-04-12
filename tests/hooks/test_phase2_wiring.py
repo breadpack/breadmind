@@ -350,3 +350,27 @@ async def test_worker_completed_event_fires_from_chain():
         ),
     )
     assert seen and seen[0]["success"] is True
+
+
+async def test_credential_accessed_event_fires_from_chain():
+    from breadmind.core.events import EventBus
+    from breadmind.hooks import HookEvent, HookPayload
+
+    bus = EventBus()
+    seen = []
+    bus.register_hook(
+        HookEvent.CREDENTIAL_ACCESSED,
+        PythonHook(
+            name="spy",
+            event=HookEvent.CREDENTIAL_ACCESSED,
+            handler=lambda p: (seen.append(dict(p.data)), HookDecision.proceed())[1],
+        ),
+    )
+    await bus.run_hook_chain(
+        HookEvent.CREDENTIAL_ACCESSED,
+        HookPayload(
+            event=HookEvent.CREDENTIAL_ACCESSED,
+            data={"key": "openai_api_key", "requester": "llm"},
+        ),
+    )
+    assert seen and seen[0]["key"] == "openai_api_key"

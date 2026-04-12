@@ -74,10 +74,27 @@ class CredentialVault:
         if not data or "encrypted" not in data:
             return None
         try:
-            return decrypt_value(data["encrypted"])
+            value = decrypt_value(data["encrypted"])
         except Exception:
             logger.warning("Failed to decrypt credential: %s", credential_id)
             return None
+
+        # Fire observational CREDENTIAL_ACCESSED event (fire-and-forget).
+        # Observability must never break credential access.
+        try:
+            from breadmind.core.events import get_event_bus
+            from breadmind.hooks import HookEvent, HookPayload
+            await get_event_bus().run_hook_chain(
+                HookEvent.CREDENTIAL_ACCESSED,
+                HookPayload(
+                    event=HookEvent.CREDENTIAL_ACCESSED,
+                    data={"key": credential_id, "requester": ""},
+                ),
+            )
+        except Exception:
+            pass
+
+        return value
 
     async def delete(self, credential_id: str) -> bool:
         """Remove a credential.  Returns True if it existed."""
