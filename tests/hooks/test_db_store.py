@@ -1,7 +1,5 @@
 import json
 
-import pytest
-
 from breadmind.hooks.db_store import HookOverride, HookOverrideStore
 
 

@@ -24,6 +24,8 @@ class HookOverrideIn(BaseModel):
     enabled: bool = True
     config_json: dict = {}
     source: str | None = "user"
+    command: str | None = None
+    timeout_sec: float | None = None
 
 
 def _get_registry(request: Request):
@@ -93,6 +95,12 @@ async def create_hook(request: Request, body: HookOverrideIn):
     if body.type not in {"shell", "python"}:
         raise HTTPException(400, f"Unsupported type: {body.type}")
 
+    cfg = dict(body.config_json)
+    if body.command and "command" not in cfg:
+        cfg["command"] = body.command
+    if body.timeout_sec is not None and "timeout_sec" not in cfg:
+        cfg["timeout_sec"] = body.timeout_sec
+
     ov = HookOverride(
         hook_id=body.hook_id,
         source=body.source,
@@ -101,7 +109,7 @@ async def create_hook(request: Request, body: HookOverrideIn):
         tool_pattern=body.tool_pattern,
         priority=body.priority,
         enabled=body.enabled,
-        config_json=body.config_json,
+        config_json=cfg,
     )
     await reg.store.insert(ov)
     try:
@@ -115,6 +123,11 @@ async def create_hook(request: Request, body: HookOverrideIn):
 async def update_hook(hook_id: str, request: Request, body: HookOverrideIn):
     reg = _get_registry(request)
     await reg.store.delete(hook_id)
+    cfg = dict(body.config_json)
+    if body.command and "command" not in cfg:
+        cfg["command"] = body.command
+    if body.timeout_sec is not None and "timeout_sec" not in cfg:
+        cfg["timeout_sec"] = body.timeout_sec
     ov = HookOverride(
         hook_id=hook_id,
         source=body.source,
@@ -123,7 +136,7 @@ async def update_hook(hook_id: str, request: Request, body: HookOverrideIn):
         tool_pattern=body.tool_pattern,
         priority=body.priority,
         enabled=body.enabled,
-        config_json=body.config_json,
+        config_json=cfg,
     )
     await reg.store.insert(ov)
     try:

@@ -153,7 +153,7 @@ def _hooks_tab() -> Component:
                         type="field",
                         id="hooks-new-command",
                         props={
-                            "name": "config_json.command",
+                            "name": "command",
                             "label": "Shell 명령",
                             "type": "textarea",
                         },

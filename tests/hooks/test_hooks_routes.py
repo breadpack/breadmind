@@ -102,6 +102,24 @@ def test_create_rejects_unknown_event(app_with_hooks):
     assert resp.status_code == 400
 
 
+def test_create_via_flat_command_field(app_with_hooks):
+    """Regression: SDUI form sends flat 'command' field, not nested config_json."""
+    client = TestClient(app_with_hooks)
+    resp = client.post("/api/hooks/", json={
+        "hook_id": "user:sdui",
+        "event": "pre_tool_use",
+        "type": "shell",
+        "tool_pattern": "*",
+        "priority": 5,
+        "enabled": True,
+        "command": "echo from-sdui",
+    })
+    assert resp.status_code == 200
+    resp = client.get("/api/hooks/list")
+    hook = next(h for h in resp.json()["hooks"] if h["hook_id"] == "user:sdui")
+    assert hook["config"]["command"] == "echo from-sdui"
+
+
 def test_traces_endpoint_returns_list(app_with_hooks):
     client = TestClient(app_with_hooks)
     resp = client.get("/api/hooks/traces?limit=10")
