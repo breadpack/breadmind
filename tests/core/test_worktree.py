@@ -16,8 +16,9 @@ def _mock_process(returncode: int = 0, stdout: bytes = b"",
     return proc
 
 
+@patch("os.makedirs")
 @patch("asyncio.create_subprocess_exec")
-async def test_create_worktree(mock_exec: AsyncMock) -> None:
+async def test_create_worktree(mock_exec: AsyncMock, mock_makedirs: MagicMock) -> None:
     mock_exec.return_value = _mock_process(returncode=0)
 
     mgr = WorktreeManager(repo_path="/fake/repo")
@@ -31,8 +32,9 @@ async def test_create_worktree(mock_exec: AsyncMock) -> None:
     mock_exec.assert_called_once()
 
 
+@patch("os.makedirs")
 @patch("asyncio.create_subprocess_exec")
-async def test_remove_worktree_no_changes(mock_exec: AsyncMock) -> None:
+async def test_remove_worktree_no_changes(mock_exec: AsyncMock, mock_makedirs: MagicMock) -> None:
     # First call: create worktree
     # Second call: git status --porcelain (no changes)
     # Third call: git worktree remove
@@ -52,8 +54,9 @@ async def test_remove_worktree_no_changes(mock_exec: AsyncMock) -> None:
     assert mgr.get_worktree(info.id) is None
 
 
+@patch("os.makedirs")
 @patch("asyncio.create_subprocess_exec")
-async def test_remove_worktree_with_changes_not_forced(mock_exec: AsyncMock) -> None:
+async def test_remove_worktree_with_changes_not_forced(mock_exec: AsyncMock, mock_makedirs: MagicMock) -> None:
     mock_exec.side_effect = [
         _mock_process(returncode=0),  # create
         _mock_process(returncode=0, stdout=b"M file.py\n"),  # status (has changes)
@@ -69,8 +72,9 @@ async def test_remove_worktree_with_changes_not_forced(mock_exec: AsyncMock) -> 
     assert mgr.get_worktree(info.id).has_changes is True
 
 
+@patch("os.makedirs")
 @patch("asyncio.create_subprocess_exec")
-async def test_cleanup_all(mock_exec: AsyncMock) -> None:
+async def test_cleanup_all(mock_exec: AsyncMock, mock_makedirs: MagicMock) -> None:
     # Create two worktrees, then cleanup both
     mock_exec.side_effect = [
         _mock_process(returncode=0),  # create wt1

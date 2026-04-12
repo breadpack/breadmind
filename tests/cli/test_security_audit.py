@@ -20,6 +20,7 @@ def test_detects_world_readable_config(tmp_path):
     """Should detect world-readable config directory on non-win32."""
     config_dir = tmp_path / "config"
     config_dir.mkdir()
+    (config_dir / "credentials").mkdir()
 
     # Mock os.stat to return world-readable permissions and sys.platform to linux
     fake_stat = os.stat_result((0o40777, 0, 0, 0, 0, 0, 0, 0, 0, 0))
