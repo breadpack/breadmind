@@ -70,3 +70,31 @@ async def test_lifecycle_blocks_when_any_denies():
         LifecycleEvent.USER_PROMPT_SUBMIT, {"prompt": "x"},
     )
     assert result.allow is False
+
+
+from breadmind.plugins.builtin.safety.hooks import (
+    HookDefinition as ShellHookDef,
+    HookRunner as ShellRunner,
+)
+
+
+async def test_shell_runner_blocks_nonzero_pre():
+    runner = ShellRunner()
+    runner.register(ShellHookDef(
+        event="pre_tool_use",
+        tool_pattern="*",
+        command="import sys; sys.exit(1)",
+    ))
+    result = await runner.run_pre_tool_use("shell_exec", {"cmd": "ls"})
+    assert result.passed is False
+
+
+async def test_shell_runner_passes_zero():
+    runner = ShellRunner()
+    runner.register(ShellHookDef(
+        event="pre_tool_use",
+        tool_pattern="*",
+        command="pass",
+    ))
+    result = await runner.run_pre_tool_use("shell_exec", {"cmd": "ls"})
+    assert result.passed is True

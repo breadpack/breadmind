@@ -111,50 +111,59 @@ class HookRunner:
     async def run_pre_tool_use(
         self, tool_name: str, arguments: dict[str, Any],
     ) -> HookResult:
-        """Pre-tool-use hook 실행. 하나라도 실패하면 passed=False."""
+        from breadmind.hooks.chain import HookChain
+        from breadmind.hooks.events import HookEvent, HookPayload
+        from breadmind.hooks.handler import ShellHook
+
         hooks = self._matching_hooks("pre_tool_use", tool_name)
         if not hooks:
             return HookResult(passed=True)
 
-        env = self._build_env(tool_name, arguments)
-        outputs: list[str] = []
-        for hook in hooks:
-            r = await self._execute_hook(hook, env)
-            if not r.passed:
-                logger.warning(
-                    "Pre-tool hook failed for %s (pattern=%s): %s",
-                    tool_name, hook.tool_pattern, r.error,
-                )
-                return r
-            if r.output:
-                outputs.append(r.output)
-
-        return HookResult(passed=True, output="\n".join(outputs))
+        handlers = [
+            ShellHook(
+                name=f"safety-pre-{i}",
+                event=HookEvent.PRE_TOOL_USE,
+                command=h.command,
+                timeout_sec=float(h.timeout),
+                tool_pattern=h.tool_pattern,
+            )
+            for i, h in enumerate(hooks)
+        ]
+        chain = HookChain(event=HookEvent.PRE_TOOL_USE, handlers=handlers)
+        payload = HookPayload(
+            event=HookEvent.PRE_TOOL_USE,
+            data={"tool_name": tool_name, "args": dict(arguments)},
+        )
+        decision, _ = await chain.run(payload)
+        if decision.kind.value == "block":
+            return HookResult(passed=False, error=decision.reason)
+        return HookResult(passed=True, output=decision.context)
 
     async def run_post_tool_use(
         self, tool_name: str, arguments: dict[str, Any], result: str,
     ) -> HookResult:
-        """Post-tool-use hook 실행. 실패해도 차단하지 않음."""
+        from breadmind.hooks.chain import HookChain
+        from breadmind.hooks.events import HookEvent, HookPayload
+        from breadmind.hooks.handler import ShellHook
+
         hooks = self._matching_hooks("post_tool_use", tool_name)
         if not hooks:
             return HookResult(passed=True)
 
-        env = self._build_env(tool_name, arguments, result=result)
-        outputs: list[str] = []
-        errors: list[str] = []
-        for hook in hooks:
-            r = await self._execute_hook(hook, env)
-            if r.output:
-                outputs.append(r.output)
-            if r.error:
-                errors.append(r.error)
-                logger.warning(
-                    "Post-tool hook failed for %s (pattern=%s): %s",
-                    tool_name, hook.tool_pattern, r.error,
-                )
-
-        return HookResult(
-            passed=True,
-            output="\n".join(outputs),
-            error="; ".join(errors) if errors else None,
+        handlers = [
+            ShellHook(
+                name=f"safety-post-{i}",
+                event=HookEvent.POST_TOOL_USE,
+                command=h.command,
+                timeout_sec=float(h.timeout),
+                tool_pattern=h.tool_pattern,
+            )
+            for i, h in enumerate(hooks)
+        ]
+        chain = HookChain(event=HookEvent.POST_TOOL_USE, handlers=handlers)
+        payload = HookPayload(
+            event=HookEvent.POST_TOOL_USE,
+            data={"tool_name": tool_name, "args": dict(arguments), "result": result},
         )
+        decision, _ = await chain.run(payload)
+        return HookResult(passed=True, output=decision.context)
