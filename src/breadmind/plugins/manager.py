@@ -7,6 +7,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from breadmind.core.events import get_event_bus
+from breadmind.hooks import HookEvent, HookPayload
 from breadmind.plugins.container import ServiceContainer
 from breadmind.plugins.loader import LoadedComponents, PluginLoader
 from breadmind.plugins.manifest import PluginManifest
@@ -185,6 +187,18 @@ class PluginManager:
             "Loaded plugin: %s v%s (priority=%d)",
             manifest.name, manifest.version, manifest.priority,
         )
+
+        await get_event_bus().run_hook_chain(
+            HookEvent.PLUGIN_LOADED,
+            HookPayload(
+                event=HookEvent.PLUGIN_LOADED,
+                data={
+                    "plugin_name": manifest.name,
+                    "version": getattr(manifest, "version", ""),
+                    "path": str(plugin_dir),
+                },
+            ),
+        )
         return components
 
     def _register_safety(self, manifest: PluginManifest) -> None:
@@ -273,6 +287,14 @@ class PluginManager:
 
         self._manifests.pop(plugin_name, None)
         logger.info("Unloaded plugin: %s", plugin_name)
+
+        await get_event_bus().run_hook_chain(
+            HookEvent.PLUGIN_UNLOADED,
+            HookPayload(
+                event=HookEvent.PLUGIN_UNLOADED,
+                data={"plugin_name": plugin_name},
+            ),
+        )
 
     # ── Install / Uninstall ──────────────────────────────────────────────
 

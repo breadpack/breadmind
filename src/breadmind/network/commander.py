@@ -86,6 +86,22 @@ class Commander:
             },
             trace_id=trace_id,
         )
+        try:
+            from breadmind.core.events import get_event_bus
+            from breadmind.hooks import HookEvent, HookPayload
+            await get_event_bus().run_hook_chain(
+                HookEvent.WORKER_DISPATCHED,
+                HookPayload(
+                    event=HookEvent.WORKER_DISPATCHED,
+                    data={
+                        "worker_id": agent_id,
+                        "task_id": task_id,
+                        "task_kind": task_type,
+                    },
+                ),
+            )
+        except Exception:
+            pass
         await self._send(agent_id, msg)
         return task_id
 
@@ -138,6 +154,24 @@ class Commander:
             "Task %s completed by %s: %s",
             task_id, agent_id, payload.get("status"),
         )
+        try:
+            from breadmind.core.events import get_event_bus
+            from breadmind.hooks import HookEvent, HookPayload
+            status = payload.get("status")
+            success = status in (None, "success", "ok", "completed") and "error" not in payload
+            await get_event_bus().run_hook_chain(
+                HookEvent.WORKER_COMPLETED,
+                HookPayload(
+                    event=HookEvent.WORKER_COMPLETED,
+                    data={
+                        "worker_id": agent_id,
+                        "task_id": task_id or "",
+                        "success": bool(success),
+                    },
+                ),
+            )
+        except Exception:
+            pass
         if self._on_task_result:
             await self._on_task_result(agent_id, payload)
 

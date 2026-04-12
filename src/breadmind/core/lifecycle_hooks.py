@@ -1,7 +1,6 @@
 """Extended lifecycle hook types beyond tool pre/post."""
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import dataclass
 from enum import Enum
@@ -42,22 +41,8 @@ class LifecycleHookRunner:
 
     async def emit(self, event: LifecycleEvent,
                    data: dict[str, Any] | None = None) -> LifecycleHookResult:
-        result = LifecycleHookResult()
-        for handler in self._hooks.get(event.value, []):
-            try:
-                if asyncio.iscoroutinefunction(handler):
-                    hr = await handler(data or {})
-                else:
-                    hr = handler(data or {})
-                if isinstance(hr, LifecycleHookResult):
-                    if not hr.allow:
-                        result.allow = False
-                    if hr.modified_input is not None:
-                        result.modified_input = hr.modified_input
-                    if hr.permission_decision is not None:
-                        result.permission_decision = hr.permission_decision
-                    if hr.additional_context:
-                        result.additional_context += hr.additional_context
-            except Exception as e:
-                logger.error("Lifecycle hook error for %s: %s", event.value, e)
-        return result
+        from breadmind.hooks.legacy_adapters import run_legacy_lifecycle_chain
+        handlers = list(self._hooks.get(event.value, []))
+        if not handlers:
+            return LifecycleHookResult()
+        return await run_legacy_lifecycle_chain(handlers, event, data or {})

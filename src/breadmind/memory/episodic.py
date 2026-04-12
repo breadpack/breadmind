@@ -42,6 +42,23 @@ class EpisodicMemory:
             self._next_id += 1
 
         self._notes.append(note)
+        try:
+            from breadmind.core.events import get_event_bus
+            from breadmind.hooks import HookEvent, HookPayload
+
+            await get_event_bus().run_hook_chain(
+                HookEvent.MEMORY_WRITTEN,
+                HookPayload(
+                    event=HookEvent.MEMORY_WRITTEN,
+                    data={
+                        "layer": "episodic",
+                        "kind": "note",
+                        "item_id": str(getattr(note, "id", "") or ""),
+                    },
+                ),
+            )
+        except Exception:
+            pass  # observability must never break a write
         return note
 
     async def search_by_keywords(

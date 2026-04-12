@@ -72,34 +72,12 @@ class ToolHookRunner:
     async def run_pre_hooks(
         self, tool_name: str, arguments: dict
     ) -> ToolHookResult:
-        """Run all matching pre-hooks in priority order.
-
-        Returns aggregated result: if any hook blocks, result is block.
-        If any hook modifies, accumulate modifications.
-        """
-        matching = self._get_matching_hooks(tool_name, ToolHookType.PRE_TOOL_USE)
-        result = ToolHookResult()
-        current_args = dict(arguments)
-
-        for hook in matching:
-            hook_result = await self._invoke_hook(hook, tool_name, current_args)
-
-            if hook_result.action == "block":
-                return ToolHookResult(
-                    action="block", block_reason=hook_result.block_reason
-                )
-
-            if hook_result.action == "modify" and hook_result.modified_input is not None:
-                current_args.update(hook_result.modified_input)
-                result.action = "modify"
-                result.modified_input = dict(current_args)
-
-            if hook_result.additional_context:
-                if result.additional_context:
-                    result.additional_context += "\n"
-                result.additional_context += hook_result.additional_context
-
-        return result
+        """Run all matching pre-hooks via the new HookChain."""
+        from breadmind.hooks.legacy_adapters import run_legacy_pre_chain
+        configs = self._get_matching_hooks(tool_name, ToolHookType.PRE_TOOL_USE)
+        if not configs:
+            return ToolHookResult()
+        return await run_legacy_pre_chain(configs, tool_name, arguments)
 
     async def run_post_hooks(
         self,
@@ -108,20 +86,14 @@ class ToolHookRunner:
         result: str,
         success: bool,
     ) -> ToolHookResult:
-        """Run all matching post-hooks. Can inject additional context."""
-        matching = self._get_matching_hooks(tool_name, ToolHookType.POST_TOOL_USE)
-        aggregated = ToolHookResult()
-
-        for hook in matching:
-            hook_result = await self._invoke_hook(
-                hook, tool_name, arguments, result, success
-            )
-            if hook_result.additional_context:
-                if aggregated.additional_context:
-                    aggregated.additional_context += "\n"
-                aggregated.additional_context += hook_result.additional_context
-
-        return aggregated
+        """Run all matching post-hooks via the new HookChain."""
+        from breadmind.hooks.legacy_adapters import run_legacy_post_chain
+        configs = self._get_matching_hooks(tool_name, ToolHookType.POST_TOOL_USE)
+        if not configs:
+            return ToolHookResult()
+        return await run_legacy_post_chain(
+            configs, tool_name, arguments, result, success,
+        )
 
     def _matches(self, pattern: str, tool_name: str) -> bool:
         """Glob-style matching: '*' matches all, 'shell_*' matches shell_exec etc."""

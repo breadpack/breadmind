@@ -218,3 +218,50 @@ class ConversationSummarizer:
         )
         result.extend(tail)
         return result
+
+
+async def chat_with_hooks(provider, chat_impl, *, messages, **kwargs):
+    """Wrap a provider's chat call with LLM_REQUEST / LLM_RESPONSE hooks.
+
+    Subclasses can call this from their own ``chat()`` instead of invoking
+    the raw implementation directly. Phase 1 does not enforce usage — wiring
+    is provided so concrete providers can opt in.
+    """
+    from breadmind.core.events import get_event_bus
+    from breadmind.hooks import HookEvent, HookPayload
+
+    bus = get_event_bus()
+
+    req_payload = HookPayload(
+        event=HookEvent.LLM_REQUEST,
+        data={
+            "provider": getattr(provider, "name", ""),
+            "messages": list(messages),
+            "kwargs": dict(kwargs),
+        },
+    )
+    req_decision = await bus.run_hook_chain(HookEvent.LLM_REQUEST, req_payload)
+    if req_decision.kind.value == "block":
+        raise PermissionError(req_decision.reason or "llm request blocked")
+    if req_decision.kind.value == "modify":
+        new_messages = req_decision.patch.get("messages", messages)
+        new_kwargs = req_decision.patch.get("kwargs", kwargs)
+        messages, kwargs = new_messages, new_kwargs
+    if req_decision.kind.value == "reply":
+        return req_decision.reply
+
+    result = await chat_impl(messages, **kwargs)
+
+    resp_payload = HookPayload(
+        event=HookEvent.LLM_RESPONSE,
+        data={
+            "provider": getattr(provider, "name", ""),
+            "text": result.get("text", "") if isinstance(result, dict) else str(result),
+            "result": result,
+        },
+    )
+    resp_decision = await bus.run_hook_chain(HookEvent.LLM_RESPONSE, resp_payload)
+    if resp_decision.kind.value == "modify":
+        if isinstance(result, dict) and "text" in resp_decision.patch:
+            result = {**result, "text": resp_decision.patch["text"]}
+    return result

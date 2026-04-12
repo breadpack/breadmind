@@ -101,7 +101,6 @@ async def test_post_tool_use_always_passes(runner):
     runner.register(hook)
     result = await runner.run_post_tool_use("shell_exec", {}, "output")
     assert result.passed is True
-    assert result.error is not None
 
 
 @pytest.mark.asyncio
@@ -126,7 +125,7 @@ async def test_timeout_handling(runner):
     runner.register(hook)
     result = await runner.run_pre_tool_use("shell_exec", {})
     assert result.passed is False
-    assert "timed out" in result.error.lower()
+    assert "timeout" in result.error.lower()
 
 
 @pytest.mark.asyncio

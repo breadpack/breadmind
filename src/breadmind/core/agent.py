@@ -232,6 +232,72 @@ class CoreAgent:
             except Exception:
                 pass
 
+    async def _emit_hook(self, event, data):
+        """Publish a hook event through the shared EventBus chain.
+
+        Returns the aggregated HookDecision (or None for unknown event names).
+        """
+        from breadmind.core.events import get_event_bus
+        from breadmind.hooks import HookEvent, HookPayload
+
+        if isinstance(event, str):
+            try:
+                event = HookEvent(event)
+            except ValueError:
+                return None
+        payload = HookPayload(event=event, data=dict(data or {}))
+        bus = get_event_bus()
+        return await bus.run_hook_chain(event, payload)
+
+    async def _emit_safety_triggered(
+        self,
+        action: str,
+        params: dict,
+        user: str,
+        channel: str,
+        original,
+    ):
+        """Emit SAFETY_GUARD_TRIGGERED after SafetyGuard.check() returns DENY/REQUIRE_APPROVAL.
+
+        Returns the effective SafetyResult after honoring hook decisions:
+        - block  -> DENY
+        - modify patch["decision"] == "ALLOWED" -> ALLOW
+        - modify patch["decision"] == "REQUIRE_APPROVAL" -> REQUIRE_APPROVAL
+        - modify patch["decision"] == "DENIED" -> DENY
+        - reply / proceed -> unchanged `original`
+        """
+        from breadmind.core.events import get_event_bus
+        from breadmind.core.safety import SafetyResult
+        from breadmind.hooks import HookEvent, HookPayload
+
+        payload = HookPayload(
+            event=HookEvent.SAFETY_GUARD_TRIGGERED,
+            data={
+                "action": action,
+                "params": dict(params or {}),
+                "user": user,
+                "channel": channel,
+                "decision": original.value if hasattr(original, "value") else str(original),
+            },
+        )
+        decision = await get_event_bus().run_hook_chain(
+            HookEvent.SAFETY_GUARD_TRIGGERED, payload,
+        )
+        kind = getattr(decision, "kind", None)
+        kind_value = kind.value if kind is not None else "proceed"
+        if kind_value == "block":
+            return SafetyResult.DENY
+        if kind_value == "modify":
+            patch = getattr(decision, "patch", {}) or {}
+            new_decision = patch.get("decision")
+            if new_decision == "ALLOWED":
+                return SafetyResult.ALLOW
+            if new_decision == "REQUIRE_APPROVAL":
+                return SafetyResult.REQUIRE_APPROVAL
+            if new_decision == "DENIED":
+                return SafetyResult.DENY
+        return original
+
     def get_usage(self) -> dict[str, int]:
         return dict(self._total_usage)
 
@@ -333,6 +399,30 @@ class CoreAgent:
             data={"user": user, "channel": channel, "session_id": session_id},
             source="agent",
         ))
+
+        # hooks-v2: emit SESSION_START through the hook chain
+        from breadmind.hooks import HookEvent as _HookEvent
+        await self._emit_hook(_HookEvent.SESSION_START, {
+            "session_id": session_id,
+            "user": user,
+            "channel": channel,
+        })
+
+        # hooks-v2: emit USER_PROMPT_SUBMIT and honor block/modify/reply decisions
+        _decision = await self._emit_hook(_HookEvent.USER_PROMPT_SUBMIT, {
+            "prompt": message,
+            "session_id": session_id,
+            "user": user,
+            "channel": channel,
+        })
+        if _decision is not None:
+            _kind = getattr(_decision.kind, "value", _decision.kind)
+            if _kind == "block":
+                return f"(blocked by hook: {_decision.reason})"
+            if _kind == "reply":
+                return _decision.reply if isinstance(_decision.reply, str) else str(_decision.reply)
+            if _kind == "modify":
+                message = _decision.patch.get("prompt", message)
 
         # Step 1: Classify intent (rule-based, no LLM call)
         from breadmind.core.intent import classify as classify_intent, get_think_budget
@@ -644,6 +734,13 @@ class CoreAgent:
             data={"user": user, "channel": channel, "session_id": session_id, "reason": "max_turns"},
             source="agent",
         ))
+        # hooks-v2: emit STOP through the hook chain at natural loop exit
+        await self._emit_hook(_HookEvent.STOP, {
+            "session_id": session_id,
+            "user": user,
+            "channel": channel,
+            "reason": "max_turns",
+        })
         final = "Maximum tool call turns reached. Please try a simpler request."
         if self._notifications:
             prefix = "\n".join(self._notifications) + "\n\n"

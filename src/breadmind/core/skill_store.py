@@ -29,6 +29,13 @@ class Skill:
     frontmatter_only: bool = False  # True = only name/description loaded
     full_loaded: bool = False  # True = prompt_template fully loaded
     file_path: str = ""  # source file for lazy loading
+    depends_on: list[str] = field(default_factory=list)
+    priority: int = 0
+    tags: list[str] = field(default_factory=list)
+    bundle_path: str = ""
+    reference_markers: list[str] = field(default_factory=list)
+    version: str = ""
+    author: str = ""
 
 
 class SkillStore:
@@ -74,6 +81,42 @@ class SkillStore:
                     await self._retriever.index_skill(skill)
                 except Exception as e:
                     logger.warning(f"Failed to index skill '{name}': {e}")
+            return skill
+
+    async def install_bundle(self, directory) -> Skill:
+        """Install a skill from a directory bundle (SKILL.md + references/)."""
+        from pathlib import Path
+
+        from breadmind.skills.loader import BundleLoader
+
+        bundle = BundleLoader().load(Path(directory))
+        if not bundle.name:
+            raise ValueError(f"Bundle at {directory} missing 'name' in frontmatter")
+
+        async with self._lock:
+            self._skills.pop(bundle.name, None)
+            skill = Skill(
+                name=bundle.name,
+                description=bundle.description,
+                prompt_template=bundle.body,
+                steps=[],
+                trigger_keywords=list(bundle.trigger_keywords),
+                source=f"bundle:{bundle.bundle_path}",
+                file_path=str(Path(directory) / "SKILL.md"),
+                depends_on=list(bundle.depends_on),
+                priority=int(bundle.priority),
+                tags=list(bundle.tags),
+                bundle_path=str(bundle.bundle_path),
+                reference_markers=list(bundle.reference_markers),
+                version=bundle.version,
+                author=bundle.author,
+            )
+            self._skills[bundle.name] = skill
+            if self._retriever:
+                try:
+                    await self._retriever.index_skill(skill)
+                except Exception as e:
+                    logger.warning(f"Failed to index skill '{bundle.name}': {e}")
             return skill
 
     async def update_skill(self, name: str, **kwargs) -> None:

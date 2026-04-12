@@ -42,6 +42,29 @@ def get_all_platform_configs() -> dict[str, dict]:
     return get_platform_configs()
 
 
+async def emit_messenger_received(incoming: "IncomingMessage"):
+    """Emit MESSENGER_RECEIVED hook chain and return the decision.
+
+    Callers should honor block/reply and apply modify patches locally.
+    """
+    from breadmind.core.events import get_event_bus
+    from breadmind.hooks import HookEvent, HookPayload
+
+    payload = HookPayload(
+        event=HookEvent.MESSENGER_RECEIVED,
+        data={
+            "text": incoming.text,
+            "user_id": incoming.user_id,
+            "channel_id": incoming.channel_id,
+            "platform": incoming.platform,
+            "is_approval": incoming.is_approval,
+        },
+    )
+    return await get_event_bus().run_hook_chain(
+        HookEvent.MESSENGER_RECEIVED, payload,
+    )
+
+
 class MessengerGateway(ABC):
     _connected: bool = False
     _enabled: bool = True
@@ -52,9 +75,49 @@ class MessengerGateway(ABC):
         Subclasses should call ``super().__init__(platform, on_message)`` or
         simply set ``_platform`` and ``_on_message`` themselves for backward
         compatibility.
+
+        The provided ``on_message`` callback is wrapped so every incoming
+        message first flows through the MESSENGER_RECEIVED hook chain before
+        reaching the client callback.
         """
         self._platform = platform
-        self._on_message = on_message
+        self._user_on_message = on_message
+        self._on_message = self._make_wrapped_on_message() if on_message else None
+
+    def _make_wrapped_on_message(self) -> Callable:
+        user_cb = self._user_on_message
+
+        async def _wrapped(incoming: "IncomingMessage"):
+            decision = await emit_messenger_received(incoming)
+            kind = getattr(decision, "kind", None)
+            kind_value = kind.value if kind is not None else "proceed"
+            if kind_value == "block":
+                logger.info(
+                    "MESSENGER_RECEIVED blocked by hook: %s",
+                    getattr(decision, "reason", ""),
+                )
+                return
+            if kind_value == "reply":
+                # Reply semantics for messenger are platform-specific;
+                # Phase 2 just drops the message and logs.
+                logger.info(
+                    "MESSENGER_RECEIVED reply decision (Phase 2: drop+log)",
+                )
+                return
+            if kind_value == "modify":
+                patch = getattr(decision, "patch", {}) or {}
+                if "text" in patch:
+                    incoming.text = patch["text"]
+                if "user_id" in patch:
+                    incoming.user_id = patch["user_id"]
+                if "channel_id" in patch:
+                    incoming.channel_id = patch["channel_id"]
+            if user_cb is None:
+                return
+            result = user_cb(incoming)
+            if asyncio.iscoroutine(result):
+                await result
+        return _wrapped
 
     @abstractmethod
     async def start(self):
