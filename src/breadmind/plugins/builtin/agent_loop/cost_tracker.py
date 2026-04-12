@@ -52,7 +52,13 @@ def _load_pricing() -> dict[str, dict[str, float]]:
     try:
         if _PRICING_FILE.exists():
             with open(_PRICING_FILE, encoding="utf-8") as f:
-                return yaml.safe_load(f)
+                data = yaml.safe_load(f)
+            if isinstance(data, dict) and 'models' in data:
+                return {
+                    model_name: model_config.get('pricing', {})
+                    for model_name, model_config in data['models'].items()
+                }
+            return data
     except Exception:
         pass
     return _FALLBACK_PRICING

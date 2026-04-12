@@ -49,12 +49,21 @@ async def test_planner_handles_invalid_json():
 
 @pytest.mark.asyncio
 async def test_planner_injects_role_summaries():
+    from breadmind.core.role_registry import RoleDefinition
+
     provider = AsyncMock()
     provider.chat = AsyncMock(return_value=_make_plan_response([
         {"id": "task_1", "description": "check", "role": "general_analyst",
          "depends_on": [], "difficulty": "low", "expected_output": "result"},
     ]))
-    planner = Planner(provider=provider, role_registry=RoleRegistry())
+    registry = RoleRegistry()
+    # Register a role so it appears in the planner system prompt
+    registry._roles["k8s_diagnostician"] = RoleDefinition(
+        name="k8s_diagnostician",
+        domain="k8s",
+        description="Diagnoses Kubernetes cluster issues",
+    )
+    planner = Planner(provider=provider, role_registry=registry)
     await planner.plan("check something")
     call_args = provider.chat.call_args
     messages = call_args.kwargs.get("messages") or call_args[0][0]

@@ -62,10 +62,10 @@ def test_event_type_filtering(runner):
 
 @pytest.mark.asyncio
 async def test_pre_tool_use_passes_on_success(runner):
-    # Use python -c for cross-platform compatibility
     hook = HookDefinition(
         event="pre_tool_use", tool_pattern="shell_*",
         command="import os; print(os.environ.get('TOOL_NAME', ''))",
+        shell="python",
     )
     runner.register(hook)
     result = await runner.run_pre_tool_use("shell_exec", {"command": "ls"})
@@ -78,6 +78,7 @@ async def test_pre_tool_use_fails_on_nonzero_exit(runner):
     hook = HookDefinition(
         event="pre_tool_use", tool_pattern="*",
         command="import sys; sys.exit(1)",
+        shell="python",
     )
     runner.register(hook)
     result = await runner.run_pre_tool_use("shell_exec", {"command": "rm -rf /"})
@@ -96,6 +97,7 @@ async def test_post_tool_use_always_passes(runner):
     hook = HookDefinition(
         event="post_tool_use", tool_pattern="*",
         command="import sys; sys.exit(1)",
+        shell="python",
     )
     runner.register(hook)
     result = await runner.run_post_tool_use("shell_exec", {}, "output")
@@ -107,6 +109,7 @@ async def test_post_tool_use_receives_result_env(runner):
     hook = HookDefinition(
         event="post_tool_use", tool_pattern="*",
         command="import os; print(os.environ.get('TOOL_RESULT', ''))",
+        shell="python",
     )
     runner.register(hook)
     result = await runner.run_post_tool_use("shell_exec", {}, "my_result_data")
@@ -120,6 +123,7 @@ async def test_timeout_handling(runner):
         event="pre_tool_use", tool_pattern="*",
         command="import time; time.sleep(30)",
         timeout=1,
+        shell="python",
     )
     runner.register(hook)
     result = await runner.run_pre_tool_use("shell_exec", {})
@@ -132,6 +136,7 @@ async def test_env_variables_passed_correctly(runner):
     hook = HookDefinition(
         event="pre_tool_use", tool_pattern="*",
         command="import os, json; args = json.loads(os.environ['TOOL_ARGS']); print(args['key'])",
+        shell="python",
     )
     runner.register(hook)
     result = await runner.run_pre_tool_use("test_tool", {"key": "value123"})
@@ -144,10 +149,12 @@ async def test_multiple_pre_hooks_first_failure_stops(runner):
     runner.register(HookDefinition(
         event="pre_tool_use", tool_pattern="*",
         command="import sys; sys.exit(1)",
+        shell="python",
     ))
     runner.register(HookDefinition(
         event="pre_tool_use", tool_pattern="*",
         command="print('should not run')",
+        shell="python",
     ))
     result = await runner.run_pre_tool_use("shell_exec", {})
     assert result.passed is False

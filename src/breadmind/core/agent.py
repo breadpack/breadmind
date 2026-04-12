@@ -681,7 +681,6 @@ class CoreAgent:
                 tool_gap_detector=self._tool_gap_detector,
                 context_builder=self._context_builder,
                 pending_approvals=self._pending_approvals,
-                notify_progress=self._notify_progress,
                 on_new_tool_detected=self._detect_new_tool,
                 _injected_provider=self._provider,
             )

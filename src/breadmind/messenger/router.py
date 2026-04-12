@@ -116,7 +116,8 @@ class MessengerGateway(ABC):
                 return
             result = user_cb(incoming)
             if asyncio.iscoroutine(result):
-                await result
+                return await result
+            return result
         return _wrapped
 
     @abstractmethod

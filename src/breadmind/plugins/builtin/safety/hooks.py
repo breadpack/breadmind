@@ -20,6 +20,7 @@ class HookDefinition:
     tool_pattern: str  # glob pattern (e.g., "shell_*", "*", "k8s_*")
     command: str  # shell command to execute
     timeout: int = 10  # seconds
+    shell: str = "auto"  # "sh" | "python" | "auto"
 
 
 @dataclass
@@ -126,6 +127,7 @@ class HookRunner:
                 command=h.command,
                 timeout_sec=float(h.timeout),
                 tool_pattern=h.tool_pattern,
+                shell=h.shell,
             )
             for i, h in enumerate(hooks)
         ]
@@ -157,6 +159,7 @@ class HookRunner:
                 command=h.command,
                 timeout_sec=float(h.timeout),
                 tool_pattern=h.tool_pattern,
+                shell=h.shell,
             )
             for i, h in enumerate(hooks)
         ]

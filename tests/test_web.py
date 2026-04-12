@@ -1055,6 +1055,10 @@ def test_check_update_no_update_available(monkeypatch):
 
     monkeypatch.setattr(aiohttp, "ClientSession", lambda: mock_session)
 
+    # Mock importlib.metadata.version so "current" returns a known value
+    import importlib.metadata
+    monkeypatch.setattr(importlib.metadata, "version", lambda name: "0.1.0")
+
     app = WebApp(message_handler=lambda m, **kw: "ok")
     client = TestClient(app.app)
     resp = client.get("/api/update/check")

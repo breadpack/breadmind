@@ -80,6 +80,7 @@ async def test_shell_runner_blocks_nonzero_pre():
         event="pre_tool_use",
         tool_pattern="*",
         command="import sys; sys.exit(1)",
+        shell="python",
     ))
     result = await runner.run_pre_tool_use("shell_exec", {"cmd": "ls"})
     assert result.passed is False
@@ -91,6 +92,7 @@ async def test_shell_runner_passes_zero():
         event="pre_tool_use",
         tool_pattern="*",
         command="pass",
+        shell="python",
     ))
     result = await runner.run_pre_tool_use("shell_exec", {"cmd": "ls"})
     assert result.passed is True
