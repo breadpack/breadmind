@@ -25,6 +25,9 @@ _EVENT_OPTIONS = [
 
 _TYPE_OPTIONS = [
     {"value": "shell", "label": "shell"},
+    {"value": "prompt", "label": "prompt (LLM)"},
+    {"value": "agent", "label": "agent (multi-turn)"},
+    {"value": "http", "label": "http (webhook)"},
 ]
 
 _HOOKS_COLUMNS: list[dict[str, Any]] = [

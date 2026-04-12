@@ -9,6 +9,9 @@ from breadmind.hooks.chain import HookChain
 from breadmind.hooks.db_store import HookOverride
 from breadmind.hooks.events import HookEvent
 from breadmind.hooks.handler import HookHandler, ShellHook
+from breadmind.hooks.http_hook import HttpHook
+from breadmind.hooks.prompt_hook import PromptHook
+from breadmind.hooks.agent_hook import AgentHook
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +92,8 @@ class HookRegistry:
     @staticmethod
     def _build_from_override(ov: HookOverride, event: HookEvent) -> HookHandler | None:
         cfg = ov.config_json or {}
+        if_cond = cfg.get("if") or cfg.get("if_condition")
+
         if ov.type == "shell":
             command = cfg.get("command", "")
             if not command:
@@ -99,11 +104,61 @@ class HookRegistry:
                 priority=ov.priority, tool_pattern=ov.tool_pattern,
                 timeout_sec=float(cfg.get("timeout_sec", 10.0)),
                 shell=cfg.get("shell", "auto"),
+                if_condition=if_cond,
             )
+
+        if ov.type == "prompt":
+            prompt_text = cfg.get("prompt", "")
+            if not prompt_text:
+                logger.warning("DB prompt hook %r missing prompt", ov.hook_id)
+                return None
+            return PromptHook(
+                name=ov.hook_id, event=event, prompt=prompt_text,
+                priority=ov.priority, tool_pattern=ov.tool_pattern,
+                timeout_sec=float(cfg.get("timeout_sec", 15.0)),
+                provider=cfg.get("provider"),
+                model=cfg.get("model"),
+                api_key=cfg.get("api_key"),
+                endpoint=cfg.get("endpoint"),
+                if_condition=if_cond,
+            )
+
+        if ov.type == "agent":
+            prompt_text = cfg.get("prompt", "")
+            if not prompt_text:
+                logger.warning("DB agent hook %r missing prompt", ov.hook_id)
+                return None
+            allowed = cfg.get("allowed_tools", "readonly")
+            return AgentHook(
+                name=ov.hook_id, event=event, prompt=prompt_text,
+                priority=ov.priority, tool_pattern=ov.tool_pattern,
+                timeout_sec=float(cfg.get("timeout_sec", 30.0)),
+                max_turns=int(cfg.get("max_turns", 3)),
+                provider=cfg.get("provider"),
+                model=cfg.get("model"),
+                allowed_tools=allowed,
+                if_condition=if_cond,
+            )
+
+        if ov.type == "http":
+            url = cfg.get("url", "")
+            if not url:
+                logger.warning("DB http hook %r missing url", ov.hook_id)
+                return None
+            return HttpHook(
+                name=ov.hook_id, event=event, url=url,
+                priority=ov.priority, tool_pattern=ov.tool_pattern,
+                timeout_sec=float(cfg.get("timeout_sec", 10.0)),
+                headers=cfg.get("headers", {}),
+                method=cfg.get("method", "POST"),
+                allow_http=cfg.get("allow_http", False),
+                allowed_hosts=cfg.get("allowed_hosts"),
+                if_condition=if_cond,
+            )
+
         if ov.type == "python":
-            logger.warning(
-                "DB-only Python hook %r not supported in Phase 1", ov.hook_id,
-            )
+            logger.warning("DB-only Python hook %r not supported", ov.hook_id)
             return None
+
         logger.warning("Unknown override type %r", ov.type)
         return None

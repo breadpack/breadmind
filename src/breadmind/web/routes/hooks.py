@@ -92,7 +92,7 @@ async def create_hook(request: Request, body: HookOverrideIn):
         HookEvent(body.event)
     except ValueError:
         raise HTTPException(400, f"Unknown event: {body.event}")
-    if body.type not in {"shell", "python"}:
+    if body.type not in {"shell", "python", "prompt", "agent", "http"}:
         raise HTTPException(400, f"Unsupported type: {body.type}")
 
     cfg = dict(body.config_json)

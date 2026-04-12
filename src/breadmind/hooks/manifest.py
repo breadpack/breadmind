@@ -7,6 +7,9 @@ from typing import Any, Callable
 
 from breadmind.hooks.events import HookEvent
 from breadmind.hooks.handler import HookHandler, PythonHook, ShellHook
+from breadmind.hooks.http_hook import HttpHook
+from breadmind.hooks.prompt_hook import PromptHook
+from breadmind.hooks.agent_hook import AgentHook
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +79,45 @@ def load_hooks_from_manifest(
                 name=name, event=ev, handler=resolved,
                 priority=priority, tool_pattern=tool_pattern,
                 timeout_sec=timeout,
+            ))
+        elif hook_type == "prompt":
+            prompt_text = entry.get("prompt", "")
+            if not prompt_text:
+                logger.warning("Prompt hook %s missing prompt; skipping", name)
+                continue
+            out.append(PromptHook(
+                name=name, event=ev, prompt=prompt_text,
+                priority=priority, tool_pattern=tool_pattern,
+                timeout_sec=timeout,
+                provider=entry.get("provider"),
+                model=entry.get("model"),
+                if_condition=entry.get("if"),
+            ))
+        elif hook_type == "agent":
+            prompt_text = entry.get("prompt", "")
+            if not prompt_text:
+                logger.warning("Agent hook %s missing prompt; skipping", name)
+                continue
+            out.append(AgentHook(
+                name=name, event=ev, prompt=prompt_text,
+                priority=priority, tool_pattern=tool_pattern,
+                timeout_sec=timeout,
+                max_turns=int(entry.get("max_turns", 3)),
+                allowed_tools=entry.get("allowed_tools", "readonly"),
+                if_condition=entry.get("if"),
+            ))
+        elif hook_type == "http":
+            url = entry.get("url", "")
+            if not url:
+                logger.warning("HTTP hook %s missing url; skipping", name)
+                continue
+            out.append(HttpHook(
+                name=name, event=ev, url=url,
+                priority=priority, tool_pattern=tool_pattern,
+                timeout_sec=timeout,
+                headers=entry.get("headers", {}),
+                method=entry.get("method", "POST"),
+                if_condition=entry.get("if"),
             ))
         else:
             logger.warning("Unknown hook type %r in %s", hook_type, path)
