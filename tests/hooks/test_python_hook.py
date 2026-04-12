@@ -1,5 +1,4 @@
 import asyncio
-import pytest
 
 from breadmind.hooks import HookDecision, HookEvent, HookPayload
 from breadmind.hooks.handler import PythonHook

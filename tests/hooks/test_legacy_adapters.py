@@ -1,5 +1,12 @@
+from breadmind.core.lifecycle_hooks import (
+    LifecycleEvent, LifecycleHookResult, LifecycleHookRunner,
+)
 from breadmind.core.tool_hooks import (
     ToolHookConfig, ToolHookResult, ToolHookRunner, ToolHookType,
+)
+from breadmind.plugins.builtin.safety.hooks import (
+    HookDefinition as ShellHookDef,
+    HookRunner as ShellRunner,
 )
 
 
@@ -40,11 +47,6 @@ async def test_tool_hook_runner_modify_accumulates():
     assert result.modified_input == {"cmd": "safe", "note": "ok"}
 
 
-from breadmind.core.lifecycle_hooks import (
-    LifecycleEvent, LifecycleHookResult, LifecycleHookRunner,
-)
-
-
 async def test_lifecycle_user_prompt_submit_modifies_input():
     runner = LifecycleHookRunner()
 
@@ -70,12 +72,6 @@ async def test_lifecycle_blocks_when_any_denies():
         LifecycleEvent.USER_PROMPT_SUBMIT, {"prompt": "x"},
     )
     assert result.allow is False
-
-
-from breadmind.plugins.builtin.safety.hooks import (
-    HookDefinition as ShellHookDef,
-    HookRunner as ShellRunner,
-)
 
 
 async def test_shell_runner_blocks_nonzero_pre():

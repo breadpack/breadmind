@@ -8,7 +8,7 @@ from typing import Any
 from breadmind.hooks.chain import HookChain
 from breadmind.hooks.db_store import HookOverride
 from breadmind.hooks.events import HookEvent
-from breadmind.hooks.handler import HookHandler, PythonHook, ShellHook
+from breadmind.hooks.handler import HookHandler, ShellHook
 
 logger = logging.getLogger(__name__)
 

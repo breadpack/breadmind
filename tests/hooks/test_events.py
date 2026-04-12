@@ -1,7 +1,6 @@
 from breadmind.hooks.events import (
     HookEvent,
     HookPayload,
-    EVENT_POLICY,
     is_blockable,
     is_mutable,
     allows_reply,

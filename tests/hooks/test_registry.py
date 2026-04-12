@@ -1,6 +1,6 @@
 from breadmind.hooks import HookDecision, HookEvent, HookPayload
 from breadmind.hooks.db_store import HookOverride
-from breadmind.hooks.handler import PythonHook, ShellHook
+from breadmind.hooks.handler import PythonHook
 from breadmind.hooks.registry import HookRegistry
 
 

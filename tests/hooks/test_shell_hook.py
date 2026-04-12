@@ -1,5 +1,3 @@
-import pytest
-import sys
 
 from breadmind.hooks import HookEvent, HookPayload
 from breadmind.hooks.handler import ShellHook

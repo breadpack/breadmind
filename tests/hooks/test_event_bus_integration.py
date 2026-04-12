@@ -1,4 +1,3 @@
-from breadmind.core.events import EventBus
 from breadmind.hooks import HookDecision, HookEvent, HookPayload
 from breadmind.hooks.handler import PythonHook
 
