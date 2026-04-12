@@ -38,3 +38,35 @@ async def test_tool_hook_runner_modify_accumulates():
     result = await runner.run_pre_hooks("shell_exec", {"cmd": "rm -rf /"})
     assert result.action == "modify"
     assert result.modified_input == {"cmd": "safe", "note": "ok"}
+
+
+from breadmind.core.lifecycle_hooks import (
+    LifecycleEvent, LifecycleHookResult, LifecycleHookRunner,
+)
+
+
+async def test_lifecycle_user_prompt_submit_modifies_input():
+    runner = LifecycleHookRunner()
+
+    def h(data):
+        return LifecycleHookResult(
+            allow=True, modified_input="sanitized: " + data["prompt"],
+        )
+
+    runner.on(LifecycleEvent.USER_PROMPT_SUBMIT, h)
+    result = await runner.emit(
+        LifecycleEvent.USER_PROMPT_SUBMIT,
+        {"prompt": "rm -rf /"},
+    )
+    assert result.allow is True
+    assert result.modified_input == "sanitized: rm -rf /"
+
+
+async def test_lifecycle_blocks_when_any_denies():
+    runner = LifecycleHookRunner()
+    runner.on(LifecycleEvent.USER_PROMPT_SUBMIT, lambda d: LifecycleHookResult(allow=False))
+    runner.on(LifecycleEvent.USER_PROMPT_SUBMIT, lambda d: LifecycleHookResult(allow=True))
+    result = await runner.emit(
+        LifecycleEvent.USER_PROMPT_SUBMIT, {"prompt": "x"},
+    )
+    assert result.allow is False

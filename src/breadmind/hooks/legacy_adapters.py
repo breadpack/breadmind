@@ -134,3 +134,106 @@ async def run_legacy_post_chain(
         action="continue",
         additional_context=decision.context,
     )
+
+
+def _lifecycle_to_hook_event(ev) -> HookEvent | None:
+    from breadmind.core.lifecycle_hooks import LifecycleEvent
+    mapping = {
+        LifecycleEvent.STOP: HookEvent.STOP,
+        LifecycleEvent.SUBAGENT_STOP: HookEvent.SUBAGENT_STOP,
+        LifecycleEvent.PRE_COMPACT: HookEvent.PRE_COMPACT,
+        LifecycleEvent.USER_PROMPT_SUBMIT: HookEvent.USER_PROMPT_SUBMIT,
+        LifecycleEvent.PERMISSION_REQUEST: HookEvent.NOTIFICATION,
+        LifecycleEvent.SESSION_START: HookEvent.SESSION_START,
+        LifecycleEvent.SESSION_END: HookEvent.SESSION_END,
+    }
+    return mapping.get(ev)
+
+
+async def run_legacy_lifecycle_chain(handlers, lifecycle_event, data):
+    """Run legacy LifecycleHookRunner handlers through the new HookChain.
+
+    Preserves legacy quirks:
+    - Denial is sticky across observational events (aggregated outside chain).
+    - permission_decision (non-blockable/non-mutable) piggybacks via side
+      channel since the chain drops MODIFY patches for non-mutable events.
+    - Handler exceptions are swallowed (do not propagate, do not BLOCK).
+    """
+    from breadmind.core.lifecycle_hooks import LifecycleHookResult
+
+    hook_event = _lifecycle_to_hook_event(lifecycle_event)
+    if hook_event is None:
+        return LifecycleHookResult()
+
+    sidecar: dict[str, Any] = {
+        "permission_decision": None,
+        "denied": False,
+    }
+
+    py_hooks: list[PythonHook] = []
+    for idx, fn in enumerate(handlers):
+        def _make(fn=fn):
+            async def _wrap(payload):
+                try:
+                    result = fn(payload.data)
+                    if _a.iscoroutine(result):
+                        result = await result
+                except Exception as e:
+                    logger.error(
+                        "Lifecycle hook error for %s: %s",
+                        payload.event.value, e,
+                    )
+                    return HookDecision.proceed()
+
+                if not isinstance(result, LifecycleHookResult):
+                    return HookDecision.proceed()
+
+                if not result.allow:
+                    sidecar["denied"] = True
+                if result.permission_decision is not None:
+                    sidecar["permission_decision"] = result.permission_decision
+
+                ctx = result.additional_context or ""
+
+                if result.modified_input is not None:
+                    d = HookDecision(
+                        kind=DecisionKind.MODIFY,
+                        patch={"__lifecycle_modified_input__": result.modified_input},
+                    )
+                    d.context = ctx
+                    return d
+
+                if not result.allow:
+                    # For blockable events, short-circuit like the new chain.
+                    # For observational events, chain ignores BLOCK but we
+                    # already recorded it in the sidecar for aggregation.
+                    return HookDecision.block("lifecycle denied")
+
+                return HookDecision.proceed(context=ctx)
+            return _wrap
+
+        py_hooks.append(PythonHook(
+            name=f"legacy-lifecycle-{idx}",
+            event=hook_event,
+            handler=_make(),
+        ))
+
+    chain = HookChain(event=hook_event, handlers=py_hooks)
+    payload = HookPayload(event=hook_event, data=dict(data or {}))
+    decision, _final = await chain.run(payload)
+
+    out = LifecycleHookResult()
+    out.additional_context = decision.context or ""
+
+    if sidecar["denied"] or decision.kind == DecisionKind.BLOCK:
+        out.allow = False
+
+    if decision.kind == DecisionKind.MODIFY:
+        mi = decision.patch.get("__lifecycle_modified_input__")
+        if mi is not None:
+            out.modified_input = mi
+
+    if sidecar["permission_decision"] is not None:
+        out.permission_decision = sidecar["permission_decision"]
+
+    return out
