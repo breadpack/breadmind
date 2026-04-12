@@ -14,6 +14,7 @@ from breadmind.hooks.events import (
     is_blockable,
     is_mutable,
 )
+from breadmind.hooks.condition import matches_condition
 from breadmind.hooks.handler import HookHandler
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,9 @@ class HookChain:
         aggregated_context: list[str] = []
 
         for handler in self._sorted():
+            if_cond = getattr(handler, "if_condition", None)
+            if if_cond is not None and not matches_condition(if_cond, payload):
+                continue
             t0 = _time.perf_counter()
             decision = await handler.run(payload)
             duration_ms = (_time.perf_counter() - t0) * 1000.0

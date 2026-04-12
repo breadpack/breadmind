@@ -39,6 +39,7 @@ class PythonHook:
     priority: int = 0
     tool_pattern: str | None = None
     timeout_sec: float = 5.0
+    if_condition: str | list[str] | None = None
 
     async def run(self, payload: HookPayload) -> HookDecision:
         try:
@@ -103,6 +104,7 @@ class ShellHook:
     tool_pattern: str | None = None
     timeout_sec: float = 10.0
     shell: str = "auto"  # "sh" | "python" | "auto"
+    if_condition: str | list[str] | None = None
 
     def _resolve_executable(self) -> tuple[str, list[str]]:
         choice = self.shell
