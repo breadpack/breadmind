@@ -122,3 +122,24 @@ Events actively wired in BreadMind publishers:
 4. **`messenger_sending`**: needs a common send chokepoint — consider adding a `MessengerGateway.send` base method and routing all gateways through it.
 5. **`HookDecision.reply` field naming collision**: Phase 1 Task 1 uses a post-class classmethod attachment workaround. Cleanup: rename the field to `reply_value` and adjust the one test + chain accumulation path.
 6. **Phase 3 / Phase 4 specs**: `hooks-skills-observability` (web UI editor + trace) and `skills-v2` (structured skill bundles) remain outstanding.
+
+## Phase 3 status (2026-04-12)
+
+- **Trace capture** — `src/breadmind/hooks/trace.py` adds `HookTraceEntry` + `HookTraceBuffer` (in-memory ring buffer, default 500 entries). `HookChain.run` records one entry per handler invocation with duration, decision, reason.
+- **Admin API** — `src/breadmind/web/routes/hooks.py` exposes:
+  - `GET /api/hooks/list` — merged manifest + DB view
+  - `POST /api/hooks/` — create a new DB override
+  - `PUT /api/hooks/{hook_id}` — upsert a DB override
+  - `DELETE /api/hooks/{hook_id}` — delete a DB override (manifest hooks return 400)
+  - `GET /api/hooks/traces?limit=N&event=&hook_id=` — recent traces
+  - `GET /api/hooks/stats` — per-hook aggregates (total, avg ms, block/modify/error counts)
+  - `WS /ws/hooks/traces` — live-stream trace entries as JSON
+- **Admin UI** — `src/breadmind/sdui/views/hooks_view.py` builds a 3-tab SDUI schema (Hooks / Traces / Stats) following the project's `UISpec`/`Component` conventions.
+- **Bootstrap** — `web/app.py` startup handler initializes `HookRegistry(store=HookOverrideStore(pool=...))` on `app.state.hook_registry` when the DB pool is available.
+
+### Known gaps
+- **Manifest hook seeding**: `HookRegistry._manifest` is populated only by explicit `add_manifest_hook()` calls. The plugin loader does not yet walk each installed plugin's `plugin.json` `hooks` section and feed them into the registry — `/api/hooks/list` currently shows only the DB-backed entries in production until that wiring lands.
+- **Thread-safety of WS fan-out**: `HookTraceBuffer.record()` can be called from sync contexts (e.g. from inside a synchronous shell hook). `asyncio.Queue.put_nowait` is not thread-safe across loops; the existing `try/except Exception: pass` suppresses any race but live WS events from foreign threads may be lost. Cleanest fix: store `loop` per subscriber and use `loop.call_soon_threadsafe(queue.put_nowait, entry)`.
+- **Trace persistence**: ring buffer is in-memory only. A `hook_executions` DB table was considered and deferred.
+- **SDUI `live_stream` renderer**: the schema declares a `live_stream` component type; verify the static/sdui/ renderer supports `ws_url` + `fallback_http` props or add renderer support in a follow-up.
+- **Private attribute access in routes**: `/api/hooks/list` reads `reg._manifest`. Consider adding a public accessor on `HookRegistry`.
