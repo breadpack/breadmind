@@ -151,3 +151,49 @@ async def test_safety_guard_hook_block_forces_deny(fresh_global_bus):
         original=SafetyResult.REQUIRE_APPROVAL,
     )
     assert result == SafetyResult.DENY
+
+
+async def test_plugin_loaded_event_fires(fresh_global_bus):
+    """Directly exercising the emit helper — no real plugin needed."""
+    from breadmind.core.events import get_event_bus
+    from breadmind.hooks import HookEvent, HookPayload
+
+    seen = []
+    fresh_global_bus.register_hook(
+        HookEvent.PLUGIN_LOADED,
+        PythonHook(
+            name="spy",
+            event=HookEvent.PLUGIN_LOADED,
+            handler=lambda p: (seen.append(dict(p.data)), HookDecision.proceed())[1],
+        ),
+    )
+    await get_event_bus().run_hook_chain(
+        HookEvent.PLUGIN_LOADED,
+        HookPayload(
+            event=HookEvent.PLUGIN_LOADED,
+            data={"plugin_name": "demo", "version": "0.1.0", "path": "/tmp/demo"},
+        ),
+    )
+    assert seen and seen[0]["plugin_name"] == "demo"
+
+
+async def test_plugin_unloaded_event_fires(fresh_global_bus):
+    from breadmind.core.events import get_event_bus
+    from breadmind.hooks import HookEvent, HookPayload
+
+    seen = []
+    fresh_global_bus.register_hook(
+        HookEvent.PLUGIN_UNLOADED,
+        PythonHook(
+            name="spy",
+            event=HookEvent.PLUGIN_UNLOADED,
+            handler=lambda p: (seen.append(dict(p.data)), HookDecision.proceed())[1],
+        ),
+    )
+    await get_event_bus().run_hook_chain(
+        HookEvent.PLUGIN_UNLOADED,
+        HookPayload(
+            event=HookEvent.PLUGIN_UNLOADED, data={"plugin_name": "demo"},
+        ),
+    )
+    assert seen and seen[0]["plugin_name"] == "demo"
