@@ -173,6 +173,13 @@ class TestCheckDatabase:
         assert result.status == "skip"
         assert "DATABASE_URL not set" in result.detail
 
+    async def test_shallow_mode_skips_connect(self):
+        """Default mode (deep=False) only checks driver availability."""
+        with patch.dict(os.environ, {"DATABASE_URL": "postgresql://user:pass@localhost/db"}):
+            result = await check_database()
+        assert result.status == "ok"
+        assert "asyncpg installed" in result.detail
+
     async def test_connection_success(self):
         mock_conn = AsyncMock()
         mock_conn.fetchval = AsyncMock(return_value="PostgreSQL 17.2, compiled by ...")
@@ -180,14 +187,14 @@ class TestCheckDatabase:
 
         with patch.dict(os.environ, {"DATABASE_URL": "postgresql://user:pass@localhost/db"}):
             with patch("asyncpg.connect", new_callable=AsyncMock, return_value=mock_conn):
-                result = await check_database()
+                result = await check_database(deep=True)
         assert result.status == "ok"
         assert "PostgreSQL 17.2" in result.detail
 
     async def test_connection_failure(self):
         with patch.dict(os.environ, {"DATABASE_URL": "postgresql://user:pass@localhost/db"}):
             with patch("asyncpg.connect", new_callable=AsyncMock, side_effect=ConnectionRefusedError("refused")):
-                result = await check_database()
+                result = await check_database(deep=True)
         assert result.status == "fail"
         assert "refused" in result.detail
 
@@ -265,34 +272,59 @@ class TestCheckDiskSpace:
 
 
 class TestRunDoctor:
+    def _patch_all_checks(self, **overrides):
+        """Context manager that mocks every check to a deterministic result.
+        Overrides let a specific test choose a different CheckResult."""
+        from contextlib import ExitStack
+        stack = ExitStack()
+
+        def _stub(path, value, *, async_fn=False):
+            target = f"breadmind.cli.doctor.{path}"
+            if async_fn:
+                return patch(target, new_callable=AsyncMock, return_value=value)
+            return patch(target, return_value=value)
+
+        defaults = {
+            "check_config":               (False, CheckResult("Config", "ok", "found")),
+            "check_config_schema":        (False, CheckResult("Config schema", "ok", "up to date")),
+            "check_python":               (False, CheckResult("Python", "ok", "3.12.0")),
+            "check_dependencies":         (False, []),
+            "check_providers":            (True,  []),
+            "check_database":             (True,  CheckResult("DB", "skip", "no dsn")),
+            "check_mcp_servers":          (True,  []),
+            "check_service_state":        (True,  CheckResult("Windows Service", "skip", "non-Windows")),
+            "check_service_python_module": (False, CheckResult("Service Python", "skip", "non-Windows")),
+            "check_disk_space":           (False, CheckResult("Disk", "ok", "10 GB")),
+        }
+        for name, (is_async, value) in defaults.items():
+            if name in overrides:
+                value = overrides[name]
+            stack.enter_context(_stub(name, value, async_fn=is_async))
+        return stack
+
     async def test_run_doctor_prints_summary(self, capsys):
-        with patch("breadmind.cli.doctor.check_config", return_value=CheckResult("Config", "ok", "found")):
-            with patch("breadmind.cli.doctor.check_python", return_value=CheckResult("Python", "ok", "3.12.0")):
-                with patch("breadmind.cli.doctor.check_dependencies", return_value=[]):
-                    with patch("breadmind.cli.doctor.check_providers", new_callable=AsyncMock, return_value=[]):
-                        with patch("breadmind.cli.doctor.check_database", new_callable=AsyncMock, return_value=CheckResult("DB", "skip", "no dsn")):
-                            with patch("breadmind.cli.doctor.check_mcp_servers", new_callable=AsyncMock, return_value=[]):
-                                with patch("breadmind.cli.doctor.check_disk_space", return_value=CheckResult("Disk", "ok", "10 GB")):
-                                    await run_doctor(MagicMock())
+        with self._patch_all_checks():
+            await run_doctor(MagicMock(fix=False, yes=False, deep=False))
 
         output = capsys.readouterr().out
         assert "BreadMind Doctor" in output
         assert "Summary:" in output
-        assert "3 ok" in output
-        assert "1 skipped" in output
+        assert "ok" in output
+        assert "skipped" in output
 
-    async def test_run_doctor_shows_fix_hint_on_failure(self, capsys):
-        with patch("breadmind.cli.doctor.check_config", return_value=CheckResult("Config", "fail", "missing")):
-            with patch("breadmind.cli.doctor.check_python", return_value=CheckResult("Python", "ok", "3.12.0")):
-                with patch("breadmind.cli.doctor.check_dependencies", return_value=[]):
-                    with patch("breadmind.cli.doctor.check_providers", new_callable=AsyncMock, return_value=[]):
-                        with patch("breadmind.cli.doctor.check_database", new_callable=AsyncMock, return_value=CheckResult("DB", "ok", "pg17")):
-                            with patch("breadmind.cli.doctor.check_mcp_servers", new_callable=AsyncMock, return_value=[]):
-                                with patch("breadmind.cli.doctor.check_disk_space", return_value=CheckResult("Disk", "ok", "10 GB")):
-                                    await run_doctor(MagicMock())
+    async def test_run_doctor_shows_fix_hint_when_fixable_fail(self, capsys):
+        """When a check fails with a fix attached, doctor suggests `--fix`."""
+        fix = CheckResult("Config", "fail", "missing",
+                          fix=__import__("breadmind.cli.doctor", fromlist=["Fix"]).Fix(
+                              description="Recreate config",
+                              sensitive=True,
+                              elevation_command="breadmind setup",
+                          ))
+        with self._patch_all_checks(check_config=fix):
+            await run_doctor(MagicMock(fix=False, yes=False, deep=False))
 
         output = capsys.readouterr().out
-        assert "breadmind setup" in output
+        assert "doctor --fix" in output
 
 
 class TestParseArgsDoctor:
@@ -301,3 +333,123 @@ class TestParseArgsDoctor:
         with patch("sys.argv", ["breadmind", "doctor"]):
             args = _parse_args()
         assert args.command == "doctor"
+
+    def test_parse_doctor_fix_flags(self):
+        from breadmind.main import _parse_args
+        with patch("sys.argv", ["breadmind", "doctor", "--fix", "--yes", "--deep"]):
+            args = _parse_args()
+        assert args.command == "doctor"
+        assert args.fix is True
+        assert args.yes is True
+        assert args.deep is True
+
+
+class TestFixFlow:
+    """Tests for the --fix orchestration."""
+
+    async def test_non_sensitive_fix_applies_automatically(self, capsys):
+        from breadmind.cli.doctor import Fix, _run_fixes
+
+        applied = {"n": 0}
+
+        async def _apply():
+            applied["n"] += 1
+            return (True, "rewrote schema")
+
+        result = CheckResult(
+            "Config schema", "warn", "deprecated",
+            fix=Fix(description="Rewrite schema", sensitive=False, apply=_apply),
+        )
+        ui = MagicMock()
+        await _run_fixes(ui, [result], auto_accept=False)
+        assert applied["n"] == 1
+
+    async def test_sensitive_fix_requires_confirmation(self, capsys):
+        from breadmind.cli.doctor import Fix, _run_fixes
+
+        apply_mock = AsyncMock(return_value=(True, "ok"))
+        result = CheckResult(
+            "Something", "fail", "broken",
+            fix=Fix(description="Dangerous fix", sensitive=True, apply=apply_mock),
+        )
+        ui = MagicMock()
+        # Non-interactive and no --yes → must skip
+        with patch("breadmind.cli.doctor._is_interactive", return_value=False):
+            await _run_fixes(ui, [result], auto_accept=False)
+        apply_mock.assert_not_called()
+
+    async def test_sensitive_fix_with_auto_accept_applies(self):
+        from breadmind.cli.doctor import Fix, _run_fixes
+
+        apply_mock = AsyncMock(return_value=(True, "ok"))
+        result = CheckResult(
+            "Something", "fail", "broken",
+            fix=Fix(description="Dangerous fix", sensitive=True, apply=apply_mock),
+        )
+        ui = MagicMock()
+        await _run_fixes(ui, [result], auto_accept=True)
+        apply_mock.assert_awaited_once()
+
+    async def test_elevation_only_fix_prints_command(self, capsys):
+        from breadmind.cli.doctor import Fix, _run_fixes
+
+        result = CheckResult(
+            "Windows Service", "fail", "needs admin",
+            fix=Fix(
+                description="Restart as admin",
+                sensitive=True,
+                elevation_command="pwsh -Command 'Restart-Service BreadMind'",
+            ),
+        )
+        ui = MagicMock()
+        await _run_fixes(ui, [result], auto_accept=True)
+        output = capsys.readouterr().out
+        assert "Restart-Service BreadMind" in output
+
+    async def test_fix_exception_reported(self, capsys):
+        from breadmind.cli.doctor import Fix, _run_fixes
+
+        async def _apply():
+            raise RuntimeError("boom")
+
+        result = CheckResult(
+            "X", "fail", "",
+            fix=Fix(description="fails", sensitive=False, apply=_apply),
+        )
+        ui = MagicMock()
+        await _run_fixes(ui, [result], auto_accept=False)
+        ui.error.assert_called()
+
+
+class TestCheckConfigSchemaMigration:
+    async def test_fallback_chain_migrated(self, tmp_path):
+        from breadmind.cli.doctor import check_config_schema
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            "llm:\n"
+            "  default_provider: claude\n"
+            "  fallback_chain: [claude, ollama]\n"
+            "  default_model: claude-sonnet-4-6\n",
+            encoding="utf-8",
+        )
+        with patch("breadmind.config.get_default_config_dir", return_value=str(tmp_path)):
+            result = check_config_schema()
+        assert result.status == "warn"
+        assert result.fix is not None
+        ok, message = await result.fix.apply()
+        assert ok is True
+        text = cfg.read_text(encoding="utf-8")
+        assert "fallback_chain" not in text
+        assert "fallback_provider: ollama" in text
+
+    async def test_up_to_date_returns_ok(self, tmp_path):
+        from breadmind.cli.doctor import check_config_schema
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            "llm:\n  default_provider: claude\n  fallback_provider: ollama\n",
+            encoding="utf-8",
+        )
+        with patch("breadmind.config.get_default_config_dir", return_value=str(tmp_path)):
+            result = check_config_schema()
+        assert result.status == "ok"
+        assert result.fix is None

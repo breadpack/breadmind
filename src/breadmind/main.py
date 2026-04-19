@@ -64,8 +64,14 @@ def _parse_args() -> argparse.Namespace:
     # breadmind version
     sub.add_parser("version", help="Show current version")
 
-    # breadmind doctor
-    sub.add_parser("doctor", help="Check system health and configuration")
+    # breadmind doctor [--fix] [--yes] [--deep]
+    doctor_parser = sub.add_parser("doctor", help="Check system health and configuration")
+    doctor_parser.add_argument("--fix", action="store_true",
+                               help="Apply auto-fix for detected issues")
+    doctor_parser.add_argument("--yes", action="store_true",
+                               help="Auto-accept sensitive fixes (use with --fix)")
+    doctor_parser.add_argument("--deep", action="store_true",
+                               help="Run deeper checks (DB connection, etc.), slower")
 
     # breadmind chat
     chat_parser = sub.add_parser("chat", help="Start interactive CLI chat")
