@@ -2,35 +2,43 @@ from __future__ import annotations
 
 import os
 import time
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Callable
 
 from .base import LLMProvider
 
 
+# A builder receives the per-provider settings dict (from config.llm.providers[name])
+# and the full AppConfig, returning a ready-to-use LLMProvider.
+ProviderBuilder = Callable[[dict[str, Any], Any], LLMProvider]
+
+
 @dataclass
 class ProviderInfo:
-    name: str           # provider id (e.g. "gemini")
-    cls: type           # provider class
-    env_key: str | None # env var for API key (None = no key needed)
+    name: str                   # provider id (e.g. "gemini")
+    cls: type | None            # provider class (may be None when builder doesn't need it)
+    env_key: str | None = None  # env var for API key (None = no key needed)
     display_name: str = ""
-    models: list[str] | None = None
+    models: list[str] = field(default_factory=list)
     free_tier: bool = False
     signup_url: str = ""
+    builder: ProviderBuilder | None = None  # custom construction logic (optional)
 
 
 _PROVIDER_REGISTRY: dict[str, ProviderInfo] = {}
 
 
 def register_provider(
-    name: str, cls: type, env_key: str | None = None, *,
+    name: str, cls: type | None, env_key: str | None = None, *,
     display_name: str = "", models: list[str] | None = None,
     free_tier: bool = False, signup_url: str = "",
+    builder: ProviderBuilder | None = None,
 ) -> None:
     _PROVIDER_REGISTRY[name] = ProviderInfo(
         name=name, cls=cls, env_key=env_key,
         display_name=display_name or name.capitalize(),
         models=models or [], free_tier=free_tier, signup_url=signup_url,
+        builder=builder,
     )
 
 
@@ -55,7 +63,10 @@ def get_provider_options() -> list[dict]:
 
 
 def get_valid_provider_names() -> tuple[str, ...]:
-    return tuple(_PROVIDER_REGISTRY.keys()) + ("cli",)
+    names = tuple(_PROVIDER_REGISTRY.keys())
+    if "cli" not in names:
+        names = names + ("cli",)
+    return names
 
 
 def get_env_key_to_provider_map() -> dict[str, str]:
@@ -66,40 +77,93 @@ def get_env_key_to_provider_map() -> dict[str, str]:
     }
 
 
-def create_provider(config: Any) -> LLMProvider:
-    name = config.llm.default_provider
+# --- Builders --------------------------------------------------------------
 
-    if name == "cli":
-        from breadmind.llm.cli import CLIProvider
-        model = config.llm.default_model or "claude -p"
-        parts = model.split()
-        return CLIProvider(command=parts[0], args=parts[1:], name="cli")
+def _default_builder(info: ProviderInfo) -> ProviderBuilder:
+    """Default builder for API-key providers. Reads the env key, merges
+    provider settings, and instantiates info.cls with the common kwargs.
+
+    Provider-specific settings (config.llm.providers[name]) are forwarded
+    as kwargs, so any provider-specific constructor param (e.g. azure
+    endpoint, openrouter site_url) is supported without factory changes.
+    """
+    def build(settings: dict[str, Any], config: Any) -> LLMProvider:
+        if info.cls is None:
+            raise RuntimeError(f"Provider '{info.name}' has no cls and no custom builder")
+        kwargs: dict[str, Any] = {"default_model": config.llm.default_model}
+        if info.env_key:
+            raw_key = os.environ.get(info.env_key, "")
+            keys = [k.strip() for k in raw_key.split(",") if k.strip()]
+            if keys:
+                kwargs["api_key"] = keys[0]
+                if len(keys) > 1:
+                    kwargs["api_keys"] = keys
+        # Provider-specific overrides (base_url, deployment, site_url, ...).
+        kwargs.update(settings)
+        return info.cls(**kwargs)
+    return build
+
+
+def _ollama_builder(settings: dict[str, Any], config: Any) -> LLMProvider:
+    """Ollama needs base_url (optional) and a model name. When Ollama is the
+    requested provider we honor config.llm.default_model; when reached via
+    fallback we keep the Ollama-specific default so a Claude-named model
+    doesn't leak into Ollama."""
+    from breadmind.llm.ollama import OllamaProvider
+    from breadmind.constants import DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_URL
+
+    base_url = settings.get("base_url", DEFAULT_OLLAMA_URL)
+    if config.llm.default_provider == "ollama" and config.llm.default_model:
+        model = settings.get("default_model", config.llm.default_model)
+    else:
+        model = settings.get("default_model", DEFAULT_OLLAMA_MODEL)
+    return OllamaProvider(base_url=base_url, default_model=model)
+
+
+def _cli_builder(settings: dict[str, Any], config: Any) -> LLMProvider:
+    """CLI provider: `command` in settings or fall back to default_model."""
+    from breadmind.llm.cli import CLIProvider
+    command_line = settings.get("command") or config.llm.default_model or "claude -p"
+    parts = command_line.split()
+    return CLIProvider(command=parts[0], args=parts[1:], name="cli")
+
+
+# --- Public entry point ----------------------------------------------------
+
+def create_provider(config: Any) -> LLMProvider:
+    """Build the LLM provider for config.llm.default_provider. Falls back
+    to config.llm.fallback_provider on unknown names or missing API keys."""
+    return _create_by_name(config.llm.default_provider, config, visited=set())
+
+
+def _create_by_name(name: str, config: Any, visited: set[str]) -> LLMProvider:
+    if name in visited:
+        raise RuntimeError(
+            f"Fallback cycle detected while resolving provider: {sorted(visited | {name})}"
+        )
+    visited = visited | {name}
 
     info = _PROVIDER_REGISTRY.get(name)
     if info is None:
-        from breadmind.llm.ollama import OllamaProvider
-        return OllamaProvider()
+        fallback = config.llm.fallback_provider
+        if fallback and fallback != name:
+            print(f"Warning: provider '{name}' not registered, falling back to '{fallback}'")
+            return _create_by_name(fallback, config, visited)
+        raise ValueError(f"Unknown provider '{name}' and no fallback configured")
 
-    if info.env_key:
-        raw_key = os.environ.get(info.env_key, "")
-        if not raw_key:
-            from breadmind.llm.ollama import OllamaProvider
-            print(f"Warning: {info.env_key} not set, falling back to ollama")
-            return OllamaProvider()
+    if info.env_key and not os.environ.get(info.env_key, "").strip():
+        fallback = config.llm.fallback_provider
+        if fallback and fallback != name:
+            print(f"Warning: {info.env_key} not set, falling back to '{fallback}'")
+            return _create_by_name(fallback, config, visited)
+        # If no fallback, let the provider itself decide how to fail.
 
-        keys = [k.strip() for k in raw_key.split(",") if k.strip()]
-        if len(keys) > 1:
-            return info.cls(
-                api_key=keys[0],
-                default_model=config.llm.default_model,
-                api_keys=keys,
-            )
-        return info.cls(api_key=keys[0], default_model=config.llm.default_model)
-
-    return info.cls()
+    settings = config.llm.providers.get(name, {})
+    builder = info.builder or _default_builder(info)
+    return builder(settings, config)
 
 
-# --- Provider auto-registration (Single Source of Truth) ---
+# --- Provider auto-registration (Single Source of Truth) ------------------
 
 # Core providers (always available)
 from breadmind.llm.claude import ClaudeProvider  # noqa: E402
@@ -122,10 +186,14 @@ register_provider("grok", GrokProvider, "XAI_API_KEY",
 register_provider("ollama", OllamaProvider, None,
                    display_name="Ollama (Local)", free_tier=True,
                    models=["llama3.1", "mistral", "qwen2.5"],
-                   signup_url="https://ollama.com/download")
+                   signup_url="https://ollama.com/download",
+                   builder=_ollama_builder)
+register_provider("cli", None, None,
+                   display_name="CLI Passthrough",
+                   builder=_cli_builder)
 
 
-# --- Auth Profile Rotation ---
+# --- Auth Profile Rotation ------------------------------------------------
 
 @dataclass
 class AuthProfile:
@@ -171,7 +239,7 @@ class AuthRotator:
         return sum(1 for p in self._profiles if now >= p.cooldown_until)
 
 
-# --- OpenAI-compatible providers (always available — uses openai SDK) ---
+# --- OpenAI-compatible providers (always available — uses openai SDK) ----
 
 from breadmind.llm.openai_provider import OpenAIProvider  # noqa: E402
 from breadmind.llm.deepseek import DeepSeekProvider  # noqa: E402

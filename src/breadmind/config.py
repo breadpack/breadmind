@@ -63,6 +63,8 @@ class LLMConfig(BaseModel):
     default_model: str = DEFAULT_MODEL
     tool_call_max_turns: int = 20
     tool_call_timeout_seconds: int = DEFAULT_TOOL_TIMEOUT
+    fallback_provider: str = "ollama"
+    providers: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class DatabaseConfig(BaseModel):
@@ -395,6 +397,10 @@ async def apply_db_settings(config: AppConfig, db) -> dict:
                 config.llm.tool_call_max_turns = llm_settings["tool_call_max_turns"]
             if "tool_call_timeout_seconds" in llm_settings:
                 config.llm.tool_call_timeout_seconds = llm_settings["tool_call_timeout_seconds"]
+            if "fallback_provider" in llm_settings:
+                config.llm.fallback_provider = llm_settings["fallback_provider"]
+            if "providers" in llm_settings and isinstance(llm_settings["providers"], dict):
+                config.llm.providers = llm_settings["providers"]
 
         mcp_settings = await db.get_setting("mcp")
         if mcp_settings:
