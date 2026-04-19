@@ -186,6 +186,11 @@ async def restart_service_if_running() -> None:
         return
     if not await _service_exists():
         return
+    from breadmind.cli.service import is_admin
+    if not is_admin():
+        print("  BreadMind service is registered but restart needs Administrator rights.")
+        print("  Run from an elevated shell: breadmind service restart")
+        return
     nssm = _nssm_path()
     if nssm is None:
         print("  BreadMind service detected, but NSSM not found — skipping restart.")
@@ -196,6 +201,7 @@ async def restart_service_if_running() -> None:
         print("  Service restarted.")
     else:
         print("  Service restart returned non-zero — check logs in %APPDATA%\\breadmind")
+        print("  Or retry: breadmind service restart (from elevated shell)")
 
 
 # --- Orchestrator ---------------------------------------------------------

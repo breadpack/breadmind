@@ -47,6 +47,20 @@ def _parse_args() -> argparse.Namespace:
     update_parser.add_argument("--no-restart", action="store_true",
                                help="Do not restart the BreadMind service after updating")
 
+    # breadmind service <action>
+    service_parser = sub.add_parser(
+        "service",
+        help="Manage the BreadMind Windows service (status/install/start/stop/restart/remove)",
+    )
+    service_sub = service_parser.add_subparsers(dest="service_action")
+    service_sub.add_parser("status", help="Show service state (no admin required)")
+    svc_install = service_sub.add_parser("install", help="Register service via NSSM (admin required)")
+    svc_install.add_argument("--config-dir", default=None, help="Config directory to pass to the service")
+    service_sub.add_parser("start",   help="Start service (admin required)")
+    service_sub.add_parser("stop",    help="Stop service (admin required)")
+    service_sub.add_parser("restart", help="Restart service (admin required)")
+    service_sub.add_parser("remove",  help="Unregister service (admin required)")
+
     # breadmind version
     sub.add_parser("version", help="Show current version")
 
@@ -334,6 +348,11 @@ async def run():
             check_only=getattr(args, "check", False),
             no_restart=getattr(args, "no_restart", False),
         )
+        sys.exit(rc)
+
+    if args.command == "service":
+        from breadmind.cli.service import run_service_command
+        rc = await run_service_command(args)
         sys.exit(rc)
 
     if args.command == "doctor":
