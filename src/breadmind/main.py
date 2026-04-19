@@ -41,7 +41,11 @@ def _parse_args() -> argparse.Namespace:
     web_parser.add_argument("--commander-url", default="", help="Commander WebSocket URL (worker mode only)")
 
     # breadmind update
-    sub.add_parser("update", help="Check for updates and install if available")
+    update_parser = sub.add_parser("update", help="Check for updates and install if available")
+    update_parser.add_argument("--check", action="store_true",
+                               help="Only check; do not install")
+    update_parser.add_argument("--no-restart", action="store_true",
+                               help="Do not restart the BreadMind service after updating")
 
     # breadmind version
     sub.add_parser("version", help="Show current version")
@@ -166,59 +170,6 @@ def _get_version() -> str:
         return version("breadmind")
     except Exception:
         return "0.0.0"
-
-
-async def _run_update():
-    """Check for updates and install if available."""
-    import aiohttp
-
-    current = _get_version()
-    print(f"  Current version: v{current}")
-    print("  Checking for updates...")
-
-    latest = current
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                "https://api.github.com/repos/breadpack/breadmind/releases/latest",
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    tag = data.get("tag_name", "").lstrip("v")
-                    if tag:
-                        latest = tag
-    except Exception as e:
-        print(f"  Failed to check updates: {e}")
-        return
-
-    try:
-        from packaging.version import Version
-        update_available = Version(latest) > Version(current)
-    except Exception:
-        update_available = latest != current and latest > current
-
-    if not update_available:
-        print(f"  Already up to date (v{current})")
-        return
-
-    print(f"  Update available: v{current} → v{latest}")
-    print("  Installing...")
-
-    proc = await asyncio.create_subprocess_exec(
-        sys.executable, "-m", "pip", "install", "--upgrade",
-        "git+https://github.com/breadpack/breadmind.git",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await proc.communicate()
-
-    if proc.returncode == 0:
-        new_ver = _get_version()
-        print(f"  Updated to v{new_ver}")
-        print("  Restart the service to apply: breadmind --web")
-    else:
-        print(f"  Update failed:\n{stderr.decode('utf-8', errors='replace')[-500:]}")
 
 
 async def _run_plugin_command(args):
@@ -378,8 +329,12 @@ async def run():
         return
 
     if args.command == "update":
-        await _run_update()
-        return
+        from breadmind.cli.updater import run_update
+        rc = await run_update(
+            check_only=getattr(args, "check", False),
+            no_restart=getattr(args, "no_restart", False),
+        )
+        sys.exit(rc)
 
     if args.command == "doctor":
         from breadmind.cli.doctor import run_doctor
