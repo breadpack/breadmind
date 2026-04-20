@@ -405,6 +405,106 @@ class TestFixFlow:
         await _run_fixes(ui, [result], auto_accept=True)
         output = capsys.readouterr().out
         assert "Restart-Service BreadMind" in output
+        assert "--elevated" in output  # hint to user
+
+    async def test_elevated_flag_invokes_command(self, capsys):
+        """With --elevated, elevation_command runs via run_elevation_command."""
+        from breadmind.cli import doctor
+        from breadmind.cli.doctor import Fix, _run_fixes
+
+        called = {"cmd": None}
+
+        async def _fake_run(command):
+            called["cmd"] = command
+            return (True, "ok")
+
+        result = CheckResult(
+            "Windows Service", "fail", "needs admin",
+            fix=Fix(
+                description="Restart as admin",
+                sensitive=True,
+                elevation_command="Start-Process pwsh -Verb RunAs -ArgumentList '-Command','restart'",
+            ),
+        )
+        ui = MagicMock()
+        with patch.object(doctor, "run_elevation_command", _fake_run):
+            await _run_fixes(ui, [result], auto_accept=False, elevated=True)
+        assert "Start-Process" in called["cmd"]
+        ui.success.assert_called()
+
+    async def test_elevated_flag_failure_reported(self, capsys):
+        from breadmind.cli import doctor
+        from breadmind.cli.doctor import Fix, _run_fixes
+
+        async def _fake_run(command):
+            return (False, "UAC denied")
+
+        result = CheckResult(
+            "Windows Service", "fail", "needs admin",
+            fix=Fix(
+                description="Restart as admin",
+                sensitive=True,
+                elevation_command="Start-Process pwsh -Verb RunAs -ArgumentList '-Command','restart'",
+            ),
+        )
+        ui = MagicMock()
+        with patch.object(doctor, "run_elevation_command", _fake_run):
+            await _run_fixes(ui, [result], auto_accept=False, elevated=True)
+        ui.error.assert_called()
+
+
+class TestRunElevationCommand:
+    async def test_windows_injects_wait_into_start_process(self, monkeypatch):
+        """Start-Process -Verb RunAs should get -Wait so it blocks until UAC child exits."""
+        from breadmind.cli import doctor
+
+        monkeypatch.setattr(doctor.os, "name", "nt")
+        captured: list[tuple] = []
+
+        class _FakeProc:
+            returncode = 0
+            async def communicate(self):
+                return (b"done", b"")
+
+        async def _fake_exec(*args, **kwargs):
+            captured.append(args)
+            return _FakeProc()
+
+        monkeypatch.setattr(
+            doctor.asyncio, "create_subprocess_exec", _fake_exec
+        )
+        ok, _ = await doctor.run_elevation_command(
+            "Start-Process pwsh -Verb RunAs -ArgumentList '-Command','do-stuff'"
+        )
+        assert ok is True
+        # Inspect the last arg passed to powershell.exe (the -Command value)
+        ps_command = captured[0][-1]
+        assert "-Verb RunAs -Wait" in ps_command
+
+    async def test_windows_does_not_double_wait(self, monkeypatch):
+        from breadmind.cli import doctor
+
+        monkeypatch.setattr(doctor.os, "name", "nt")
+        captured: list[tuple] = []
+
+        class _FakeProc:
+            returncode = 0
+            async def communicate(self):
+                return (b"", b"")
+
+        async def _fake_exec(*args, **kwargs):
+            captured.append(args)
+            return _FakeProc()
+
+        monkeypatch.setattr(
+            doctor.asyncio, "create_subprocess_exec", _fake_exec
+        )
+        await doctor.run_elevation_command(
+            "Start-Process pwsh -Verb RunAs -Wait -ArgumentList '-Command','do-stuff'"
+        )
+        ps_command = captured[0][-1]
+        # -Wait must appear exactly once (was already present).
+        assert ps_command.count("-Wait") == 1
 
     async def test_fix_exception_reported(self, capsys):
         from breadmind.cli.doctor import Fix, _run_fixes

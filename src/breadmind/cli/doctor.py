@@ -80,6 +80,7 @@ async def run_doctor(args) -> None:
         await _run_fixes(
             ui, results,
             auto_accept=bool(getattr(args, "yes", False)),
+            elevated=bool(getattr(args, "elevated", False)),
         )
 
 
@@ -135,7 +136,9 @@ def _ask_yes_no(prompt: str, default: bool = False) -> bool:
     return answer in ("y", "yes")
 
 
-async def _run_fixes(ui, results: list[CheckResult], *, auto_accept: bool) -> None:
+async def _run_fixes(
+    ui, results: list[CheckResult], *, auto_accept: bool, elevated: bool = False,
+) -> None:
     fixable = [r for r in results if r.fix is not None]
     if not fixable:
         return
@@ -151,10 +154,22 @@ async def _run_fixes(ui, results: list[CheckResult], *, auto_accept: bool) -> No
 
         # Case 1: only an elevation_command is available - cannot apply in-process.
         if fix.apply is None:
-            if fix.elevation_command:
-                print("    Run manually:")
+            if not fix.elevation_command:
+                skipped += 1
+                continue
+            if elevated:
+                print(f"    Launching elevated: {fix.elevation_command}")
+                ok, message = await run_elevation_command(fix.elevation_command)
+                if ok:
+                    applied += 1
+                    ui.success(f"    elevated command completed")
+                else:
+                    failed += 1
+                    ui.error(f"    elevated command failed: {message}")
+            else:
+                print("    Run manually (or re-run doctor with --elevated):")
                 print(f"      {fix.elevation_command}")
-            skipped += 1
+                skipped += 1
             continue
 
         # Case 2: in-process fix. Prompt only for sensitive ones.
@@ -177,6 +192,42 @@ async def _run_fixes(ui, results: list[CheckResult], *, auto_accept: bool) -> No
             ui.error(f"    {message}")
 
     ui.info(f"Fix summary: {applied} applied, {skipped} skipped, {failed} failed")
+
+
+async def run_elevation_command(command: str) -> tuple[bool, str]:
+    """Synchronously execute an elevation_command.
+
+    On Windows, if the command is a `Start-Process ... -Verb RunAs ...`
+    snippet we insert `-Wait` so this call blocks until the elevated
+    process exits. Other commands are passed through unchanged and run
+    via powershell.exe under the current user.
+
+    On POSIX, the command is passed to the user's shell. `sudo` inside
+    the command handles elevation interactively.
+    """
+    if os.name == "nt":
+        cmd = command
+        # Make Start-Process block by adding -Wait when missing.
+        if ("Start-Process" in cmd and "-Verb RunAs" in cmd
+                and "-Wait" not in cmd):
+            cmd = cmd.replace("-Verb RunAs", "-Verb RunAs -Wait", 1)
+        proc = await asyncio.create_subprocess_exec(
+            "powershell.exe", "-NoProfile", "-Command", cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+    else:
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+    out, _ = await proc.communicate()
+    output = out.decode("utf-8", errors="replace")
+    if output.strip():
+        for line in output.splitlines()[-5:]:
+            print(f"      {line}")
+    return (proc.returncode == 0, output[-200:] if output else "")
 
 
 # --- Checks ----------------------------------------------------------------

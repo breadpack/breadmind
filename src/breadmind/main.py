@@ -72,6 +72,8 @@ def _parse_args() -> argparse.Namespace:
                                help="Auto-accept sensitive fixes (use with --fix)")
     doctor_parser.add_argument("--deep", action="store_true",
                                help="Run deeper checks (DB connection, etc.), slower")
+    doctor_parser.add_argument("--elevated", action="store_true",
+                               help="Auto-invoke admin/elevation commands (will trigger UAC)")
 
     # breadmind chat
     chat_parser = sub.add_parser("chat", help="Start interactive CLI chat")
