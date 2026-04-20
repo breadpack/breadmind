@@ -562,10 +562,29 @@ class CoreAgent:
                 )
             except asyncio.TimeoutError:
                 logger.warning(json.dumps({"event": "llm_call", "status": "timeout", "user": user}))
-                return "요청 시간이 초과되었습니다."
-            except Exception:
+                err = (
+                    "요청 시간이 초과되었습니다. LLM 공급자 응답이 지연되고 있습니다. "
+                    "Settings → LLM에서 공급자 상태를 확인해주세요."
+                )
+                if self._working_memory is not None:
+                    self._working_memory.add_message(
+                        session_id,
+                        LLMMessage(role="assistant", content=err),
+                    )
+                return err
+            except Exception as exc:
                 logger.exception("LLM provider error")
-                return "서비스 오류가 발생했습니다."
+                err = (
+                    "LLM 공급자를 사용할 수 없습니다. Settings → LLM에서 "
+                    "공급자와 API 키 설정을 확인해주세요.\n\n"
+                    f"({type(exc).__name__}: {exc})"
+                )
+                if self._working_memory is not None:
+                    self._working_memory.add_message(
+                        session_id,
+                        LLMMessage(role="assistant", content=err),
+                    )
+                return err
 
             duration_ms = (time.monotonic() - t0) * 1000
             self._accumulate_usage(response)
