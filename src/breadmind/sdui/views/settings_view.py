@@ -504,16 +504,31 @@ def _quick_start_tab(llm: dict, persona: dict, apikey_status: dict) -> Component
 
 
 def _llm_card(llm: dict) -> Component:
+    from breadmind.llm.factory import get_provider_options
+
     provider = llm.get("default_provider", "gemini") if isinstance(llm, dict) else "gemini"
     model = llm.get("default_model", "") if isinstance(llm, dict) else ""
     max_turns = llm.get("tool_call_max_turns", 10) if isinstance(llm, dict) else 10
+
+    # Build model dropdown options from the currently selected provider's
+    # registered model list. If the saved model isn't in the list (e.g. a
+    # custom value or a model from a different provider), surface it as the
+    # first option so the user can see and keep it.
+    providers_by_id = {p["id"]: p for p in get_provider_options()}
+    current_models = list(providers_by_id.get(provider, {}).get("models", []))
+    if model and str(model) not in current_models:
+        current_models.insert(0, str(model))
+    if not current_models:
+        current_models = [str(model) or ""]
+    model_options = [{"value": m, "label": m} for m in current_models]
+
     return Component(
         type="list",
         id="qs-llm",
         props={"variant": "settings-card"},
         children=[
             Component(type="heading", id="qs-llm-h", props={"value": "LLM 프로바이더", "level": 4}),
-            Component(type="text", id="qs-llm-d", props={"value": "기본 모델과 도구 호출 제한을 설정합니다."}),
+            Component(type="text", id="qs-llm-d", props={"value": "기본 모델과 도구 호출 제한을 설정합니다. 프로바이더 변경 후 저장하면 해당 프로바이더의 모델 목록이 나타납니다."}),
             Component(
                 type="form",
                 id="qs-llm-form",
@@ -533,13 +548,13 @@ def _llm_card(llm: dict) -> Component:
                         },
                     ),
                     Component(
-                        type="field",
+                        type="select",
                         id="qs-llm-model",
                         props={
                             "name": "default_model",
                             "label": "기본 모델",
                             "value": str(model),
-                            "type": "text",
+                            "options": model_options,
                         },
                     ),
                     Component(
