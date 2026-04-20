@@ -121,24 +121,37 @@ async def install(config_dir: str | None = None) -> int:
     err = str(Path(cfg) / "breadmind.err")
 
     # Wipe any prior partial registration; ignore failures (may not exist).
+    # Also resets NSSM's throttle/PAUSED state when a previous install crash-looped.
     await _run(str(nssm), "remove", SERVICE_NAME, "confirm")
 
+    # `-s` (ignore user site-packages) is critical: the service runs as
+    # LocalSystem and cannot read the caller's user site-packages anyway.
+    # Without it, pip's "already satisfied" heuristic during install can put
+    # deps in user-site only, and the service then crashes with
+    # ModuleNotFoundError for yaml/aiohttp/etc.
     rc, out = await _run(
         str(nssm), "install", SERVICE_NAME, python,
-        "-m", "breadmind", "web", "--config-dir", cfg,
+        "-s", "-m", "breadmind", "web", "--config-dir", cfg,
     )
     if rc != 0:
         print(f"  nssm install failed:\n{out}")
         return rc
 
-    for key, value in (
+    # PYTHONNOUSERSITE=1 belts-and-braces with `-s`: even if an operator
+    # later edits AppParameters, the env var still blocks user-site leakage.
+    # AppRotate* prevents the crash-loop err log from growing to hundreds of MB.
+    settings: tuple[tuple[str, str], ...] = (
         ("AppDirectory", cfg),
         ("Description", "BreadMind AI Infrastructure Agent"),
         ("Start", "SERVICE_AUTO_START"),
-        ("AppEnvironmentExtra", "PYTHONUNBUFFERED=1"),
+        ("AppEnvironmentExtra", "PYTHONUNBUFFERED=1 PYTHONNOUSERSITE=1"),
         ("AppStdout", log),
         ("AppStderr", err),
-    ):
+        ("AppRotateFiles", "1"),
+        ("AppRotateOnline", "1"),
+        ("AppRotateBytes", "1048576"),
+    )
+    for key, value in settings:
         await _run(str(nssm), "set", SERVICE_NAME, key, value)
 
     print(f"  Registered '{SERVICE_NAME}' with AUTO_START.")

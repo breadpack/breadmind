@@ -159,7 +159,72 @@ class TestInstallHappyPath:
         monkeypatch.setattr(service, "_run", fake_run)
         rc = await service.install(config_dir=str(tmp_path))
         assert rc == 0
-        # First call: remove (cleanup). Second: install. Then at least 6 `set` calls.
         verbs = [c[1] if len(c) > 1 else c[0] for c in calls]
         assert "install" in verbs
         assert verbs.count("set") >= 6
+
+    async def test_install_passes_dash_s_to_python(self, monkeypatch, tmp_path):
+        """`-s` before `-m breadmind` prevents the service from inheriting
+        the caller's user site-packages, which LocalSystem can't read anyway."""
+        monkeypatch.setattr(service.os, "name", "nt")
+        monkeypatch.setattr(service, "is_admin", lambda: True)
+        fake_nssm = tmp_path / "nssm.exe"
+        fake_nssm.write_text("")
+        monkeypatch.setattr(service, "nssm_path", lambda: fake_nssm)
+
+        captured: dict[str, tuple[str, ...]] = {}
+
+        async def fake_run(*args):
+            if len(args) > 1 and args[1] == "install":
+                captured["install"] = args
+            return (0, "")
+
+        monkeypatch.setattr(service, "_run", fake_run)
+        await service.install(config_dir=str(tmp_path))
+        assert "install" in captured
+        args = captured["install"]
+        # args = (nssm, install, BreadMind, python, -s, -m, breadmind, web, --config-dir, cfg)
+        assert "-s" in args
+        # `-s` must come before `-m`
+        assert args.index("-s") < args.index("-m")
+
+    async def test_install_sets_pythonnousersite_env(self, monkeypatch, tmp_path):
+        """PYTHONNOUSERSITE=1 goes into AppEnvironmentExtra so the service
+        ignores user site-packages even when `-s` is edited out later."""
+        monkeypatch.setattr(service.os, "name", "nt")
+        monkeypatch.setattr(service, "is_admin", lambda: True)
+        fake_nssm = tmp_path / "nssm.exe"
+        fake_nssm.write_text("")
+        monkeypatch.setattr(service, "nssm_path", lambda: fake_nssm)
+
+        env_value: list[str] = []
+
+        async def fake_run(*args):
+            if len(args) >= 5 and args[1] == "set" and args[3] == "AppEnvironmentExtra":
+                env_value.append(args[4])
+            return (0, "")
+
+        monkeypatch.setattr(service, "_run", fake_run)
+        await service.install(config_dir=str(tmp_path))
+        assert env_value, "AppEnvironmentExtra was never set"
+        assert "PYTHONNOUSERSITE=1" in env_value[0]
+        assert "PYTHONUNBUFFERED=1" in env_value[0]
+
+    async def test_install_configures_log_rotation(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(service.os, "name", "nt")
+        monkeypatch.setattr(service, "is_admin", lambda: True)
+        fake_nssm = tmp_path / "nssm.exe"
+        fake_nssm.write_text("")
+        monkeypatch.setattr(service, "nssm_path", lambda: fake_nssm)
+
+        set_keys: list[str] = []
+
+        async def fake_run(*args):
+            if len(args) >= 4 and args[1] == "set":
+                set_keys.append(args[3])
+            return (0, "")
+
+        monkeypatch.setattr(service, "_run", fake_run)
+        await service.install(config_dir=str(tmp_path))
+        for key in ("AppRotateFiles", "AppRotateOnline", "AppRotateBytes"):
+            assert key in set_keys, f"log rotation key {key} not set"
