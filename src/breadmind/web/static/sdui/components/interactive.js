@@ -63,14 +63,15 @@ function Field(c, render, ctx) {
     if (ctx.setFormValue) ctx.setFormValue(name, ev.target.value);
   };
   const onKeyDown = (ev) => {
-    // Submit on Enter (without shift) for single-line OR multiline forms
-    if (ev.key === 'Enter' && !ev.shiftKey && !c.props.multiline) {
+    // Single-line: Enter submits. Multiline: only when submit_on_enter opt-in
+    // (e.g. chat composer). Shift+Enter always inserts a newline in textareas.
+    if (ev.key === 'Enter' && !ev.shiftKey && (!c.props.multiline || c.props.submit_on_enter)) {
       ev.preventDefault();
       ev.target.form && ev.target.form.requestSubmit && ev.target.form.requestSubmit();
     }
   };
   const input = c.props.multiline
-    ? html`<textarea id=${c.id} name=${name} placeholder=${c.props.placeholder || ''} value=${val} onInput=${onInput} rows="3" />`
+    ? html`<textarea id=${c.id} name=${name} placeholder=${c.props.placeholder || ''} value=${val} onInput=${onInput} onKeyDown=${onKeyDown} rows="3" />`
     : html`<input id=${c.id} type=${c.props.type || 'text'} name=${name} placeholder=${c.props.placeholder || ''} value=${val} onInput=${onInput} onKeyDown=${onKeyDown} />`;
   return html`<label class="sdui-field">${c.props.label ? html`<span>${c.props.label}</span>` : null}${input}</label>`;
 }

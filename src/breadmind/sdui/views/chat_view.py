@@ -21,12 +21,16 @@ async def build(
     working_memory: Any = None,
 ) -> UISpec:
     # Default session_id so the form action always carries a usable value.
+    # CoreAgent.handle_message stores under f"{user}:{channel}", where channel
+    # equals this session_id when dispatched from SDUI. Use the same composite
+    # key when reading so the chat view actually sees persisted messages.
     effective_session_id = session_id or f"sdui:{user_id}"
+    storage_key = f"{user_id}:{effective_session_id}"
 
     message_items: list[Component] = []
     if working_memory is not None:
         try:
-            raw = working_memory.get_session_messages(effective_session_id) or []
+            raw = working_memory.get_session_messages(storage_key) or []
         except Exception:
             raw = []
         for i, m in enumerate(raw):
@@ -56,8 +60,9 @@ async def build(
             }, children=[
                 Component(type="field", id="msg", props={
                     "name": "text",
-                    "placeholder": "메시지를 입력하세요",
+                    "placeholder": "메시지를 입력하세요 (Shift+Enter 줄바꿈)",
                     "multiline": True,
+                    "submit_on_enter": True,
                 }),
                 Component(type="button", id="send", props={"label": "보내기", "variant": "primary"}),
             ]),
