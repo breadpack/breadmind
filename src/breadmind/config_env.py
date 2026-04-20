@@ -119,11 +119,24 @@ async def save_api_key_to_db(db, key_name: str, plaintext_value: str):
 
 async def load_api_keys_from_db(db):
     """Load all encrypted API keys from DB and set in environment."""
+    import logging
+    logger = logging.getLogger(__name__)
     for key_name in _VALID_API_KEY_NAMES:
         try:
             data = await db.get_setting(f"apikey:{key_name}")
-            if data and "encrypted" in data:
-                plaintext = decrypt_value(data["encrypted"])
-                os.environ[key_name] = plaintext
-        except Exception:
-            pass  # Key not found or decryption failed
+        except Exception as exc:
+            logger.warning("load_api_keys_from_db: get_setting(%s) failed: %s", key_name, exc)
+            continue
+        if not data or "encrypted" not in data:
+            continue
+        try:
+            plaintext = decrypt_value(data["encrypted"])
+        except Exception as exc:
+            logger.warning(
+                "load_api_keys_from_db: decrypt failed for %s (%s: %s) — "
+                "BREADMIND_MASTER_KEY may have changed since the key was stored",
+                key_name, type(exc).__name__, exc,
+            )
+            continue
+        os.environ[key_name] = plaintext
+        logger.info("load_api_keys_from_db: hydrated %s from DB", key_name)

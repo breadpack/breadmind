@@ -207,22 +207,19 @@ async def _ensure_projector(app: Any) -> tuple[UISpecProjector | None, Any]:
                             elif key.startswith("apikey:"):
                                 # Fetch the fresh secret from the vault and push
                                 # it into os.environ under the matching env var
-                                # so create_provider's env lookup sees it.
+                                # so create_provider's env lookup sees it. The
+                                # slug after "apikey:" is already the env key
+                                # name (e.g. "GEMINI_API_KEY").
                                 import os
-                                from breadmind.llm.factory import (
-                                    _PROVIDER_REGISTRY,
-                                )
                                 slug = key.split(":", 1)[1]
                                 vault = getattr(app_state, "_credential_vault", None)
-                                if vault is not None:
+                                if vault is not None and slug:
                                     try:
                                         secret = await vault.retrieve(key)
                                     except Exception:
                                         secret = None
                                     if secret:
-                                        info = _PROVIDER_REGISTRY.get(slug)
-                                        if info is not None and info.env_key:
-                                            os.environ[info.env_key] = secret
+                                        os.environ[slug] = secret
 
                             from breadmind.llm.factory import create_provider
                             old_inner = llm_holder.current

@@ -460,11 +460,53 @@ async def run():
     from breadmind.config import apply_db_settings
     db_extra_settings: dict = await apply_db_settings(config, db)
 
+    # apply_db_settings catches and silently ignores errors, which can leave
+    # API keys un-hydrated into os.environ if an earlier DB call raised.
+    # Run the API key hydration explicitly so create_provider always sees
+    # persisted keys on startup.
+    from breadmind.config_env import load_api_keys_from_db
+    try:
+        await load_api_keys_from_db(db)
+    except Exception as e:
+        logger.warning("explicit load_api_keys_from_db failed: %s", e)
+
     # First-run setup wizard (CLI mode only, web has its own UI)
     if not args.command == "web":
         from breadmind.core.setup_wizard import is_first_run_async, run_cli_wizard
         if await is_first_run_async(db):
             await run_cli_wizard(db, config)
+
+    # Initialize credential vault BEFORE create_provider so API keys
+    # persisted via Settings UI are hydrated into os.environ and the
+    # factory picks them up on startup (not just on hot-reload).
+    credential_vault = None
+    try:
+        from breadmind.storage.credential_vault import CredentialVault
+        credential_vault = CredentialVault(db)
+        await credential_vault.migrate_plaintext_credentials()
+        from breadmind.core.router_manager import get_router_manager
+        get_router_manager().set_vault(credential_vault)
+
+        try:
+            apikey_ids = await credential_vault.list_ids(prefix="apikey:")
+        except Exception as hydrate_exc:
+            logger.warning("apikey hydration list failed: %s", hydrate_exc)
+            apikey_ids = []
+        for vault_id in apikey_ids:
+            env_key = vault_id.removeprefix("apikey:")
+            if not env_key:
+                continue
+            if os.environ.get(env_key, "").strip():
+                continue  # honour explicit env override
+            try:
+                secret = await credential_vault.retrieve(vault_id)
+            except Exception as retrieve_exc:
+                logger.warning("apikey retrieve failed for %s: %s", vault_id, retrieve_exc)
+                secret = None
+            if secret:
+                os.environ[env_key] = secret
+    except Exception as e:
+        logger.warning("Credential vault init failed: %s", e)
 
     provider = create_provider(config)
     registry, guard, mcp_manager, search_engine, meta_tools = await init_tools(config, safety_cfg)
@@ -480,17 +522,6 @@ async def run():
             perms.get("user_permissions", {}),
             perms.get("admin_users", []),
         )
-
-    # Initialize credential vault
-    credential_vault = None
-    try:
-        from breadmind.storage.credential_vault import CredentialVault
-        credential_vault = CredentialVault(db)
-        await credential_vault.migrate_plaintext_credentials()
-        from breadmind.core.router_manager import get_router_manager
-        get_router_manager().set_vault(credential_vault)
-    except Exception as e:
-        logger.warning("Credential vault init failed: %s", e)
 
     memory_components = await init_memory(
         db, provider, config, registry, mcp_manager, search_engine,
