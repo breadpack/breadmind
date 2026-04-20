@@ -16,3 +16,6 @@ breadmind_test.log
 # Superpowers agent-generated docs (plans/specs)
 docs/superpowers/
 *.png
+
+# Git worktrees (isolated workspaces)
+.worktrees/
