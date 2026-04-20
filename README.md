@@ -79,11 +79,25 @@ install.sh 실행 흐름:
        └─ 데이터: breadmind-pgdata 볼륨 (영속)
 
 8. 시스템 서비스 등록 + 시작
-   ├─ Linux → systemd (breadmind.service)
+   ├─ Linux → systemd (breadmind.service, User=$USER)
    └─ macOS → launchd (dev.breadpack.breadmind.plist)
 
 완료 후: http://localhost:8080 에서 웹 대시보드 접근
 ```
+
+Windows (install.ps1)도 동일한 1~6단계를 수행하며 8단계는 NSSM 서비스로 등록됩니다:
+
+```
+8. 시스템 서비스 등록 + 시작 (Windows)
+   └─ NSSM 서비스 BreadMind (LocalSystem, AUTO_START)
+      ├─ python.exe -s -m breadmind web ...
+      ├─ PYTHONNOUSERSITE=1 (user site-packages 격리, LocalSystem이 읽지 못함)
+      └─ 로그 자동 회전 (1MB 단위)
+```
+
+> **NSSM 설치는 관리자 권한이 필요합니다.** 일반 PowerShell에서 실행하면 패키지 설치만
+> 완료되고 서비스 등록은 건너뜁니다. 이 경우 관리자 PowerShell에서
+> `breadmind service install` 을 실행하면 동일한 서비스가 등록됩니다.
 
 #### 설치 옵션
 
@@ -112,8 +126,43 @@ Docker 컨테이너:
     └── Volume: breadmind-pgdata (데이터 영속)
 
 시스템 서비스:
-├── Linux: systemctl status breadmind
-└── macOS: launchctl list | grep breadmind
+├── Linux:   systemctl status breadmind
+├── macOS:   launchctl list | grep breadmind
+└── Windows: sc query BreadMind  (또는 `breadmind service status`)
+```
+
+#### 설치 후 확인 / 복구
+
+```bash
+# 버전 확인
+breadmind version
+
+# 시스템 진단 (설정 + 의존성 + 서비스 + 포트 등)
+breadmind doctor
+
+# 감지된 문제 자동 수정 (민감 작업은 확인 요청)
+breadmind doctor --fix
+
+# 관리자 권한이 필요한 수정까지 자동 처리 (UAC 프롬프트 발생)
+breadmind doctor --fix --elevated
+
+# Windows 서비스 상태/제어
+breadmind service status       # 상태 확인 (권한 불필요)
+breadmind service install      # NSSM 서비스 등록 (관리자)
+breadmind service start|stop|restart|remove   # 제어 (관리자)
+```
+
+#### 자동 업데이트
+
+```bash
+# 설치 모드(editable / git / pypi)를 자동 감지해서 알맞은 방식으로 업그레이드
+breadmind update
+
+# 확인만 (설치 안 함)
+breadmind update --check
+
+# 업데이트 후 서비스 재시작 건너뛰기
+breadmind update --no-restart
 ```
 
 ### pip 설치 (수동)

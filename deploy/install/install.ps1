@@ -403,13 +403,21 @@ function Setup-Service {
     # Strategy 1: NSSM service
     if (Install-Nssm) {
         try {
-            nssm install BreadMind $pythonPath "-m" "breadmind" "web" "--config-dir" $ConfigDir
+            # `-s` stops Python from adding per-user site-packages to sys.path.
+            # The NSSM wrapper runs the service as LocalSystem, which can't read
+            # the installer's user-site anyway; without `-s` pip's "already
+            # satisfied" logic can leave deps there and the service crash-loops
+            # with ModuleNotFoundError. PYTHONNOUSERSITE=1 belts-and-braces.
+            nssm install BreadMind $pythonPath "-s" "-m" "breadmind" "web" "--config-dir" $ConfigDir
             nssm set BreadMind AppDirectory $ConfigDir
             nssm set BreadMind Description "BreadMind AI Infrastructure Agent"
             nssm set BreadMind Start SERVICE_AUTO_START
-            nssm set BreadMind AppEnvironmentExtra "PYTHONUNBUFFERED=1"
+            nssm set BreadMind AppEnvironmentExtra "PYTHONUNBUFFERED=1 PYTHONNOUSERSITE=1"
             nssm set BreadMind AppStdout $logFile
             nssm set BreadMind AppStderr $errFile
+            nssm set BreadMind AppRotateFiles 1
+            nssm set BreadMind AppRotateOnline 1
+            nssm set BreadMind AppRotateBytes 1048576
             nssm start BreadMind
             Write-Ok "BreadMind service started (NSSM)."
             $started = $true
