@@ -40,7 +40,9 @@ _SLACK_USER_RE = re.compile(r"<@([UW][A-Z0-9]{6,})>|\b([UW][A-Z0-9]{8,})\b")
 _P4_PATH_RE = re.compile(r"//[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)+")
 _URL_RE = re.compile(r"https?://[^\s<>\"']+")
 _SSN_RE = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
-_CC_RE = re.compile(r"\b(?:\d[ -]?){13,19}\b")
+# Atomic group prevents catastrophic backtracking on long digit runs
+# (timestamps, log IDs). Atomic groups available in Python 3.11+.
+_CC_RE = re.compile(r"\b(?>(?:\d[ -]?){13,19})\b")
 
 
 def _shannon_entropy(s: str) -> float:
@@ -87,6 +89,9 @@ class Redactor:
                 raise SecretDetected("credit card number (Luhn)")
         if _SSN_RE.search(text):
             raise SecretDetected("SSN pattern matched")
+        # Min length 24 ≈ shortest plausible API key/token.
+        # Entropy >= 4.5 bits/char ≈ base64-like density; below this most
+        # natural-language tokens of any length stay under threshold.
         for token in re.findall(r"\S{24,}", text):
             if _shannon_entropy(token) >= 4.5:
                 raise SecretDetected("high-entropy token")
