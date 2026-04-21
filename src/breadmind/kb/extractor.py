@@ -145,3 +145,114 @@ class KnowledgeExtractor:
             project_id=meta.project_id,
             sensitive_flag=is_sensitive,
         )
+
+    # ------------------------------------------------------------------ e2e facade
+    @classmethod
+    def build_for_e2e(cls, *, db, llm) -> "_E2EExtractorFacade":
+        """Return a facade wiring the real extractor + ReviewQueue.enqueue
+        against the e2e testcontainers DB.
+
+        The facade exposes
+        ``extract_from_thread(project_name, thread_text, user_id) -> int``
+        returning the enqueued ``promotion_candidates.id``. The LLM is
+        adapted so that any script key matching the thread text produces
+        a synthetic JSON candidate with confidence 0.9 — enough to
+        drive the extractor's reuse gate.
+        """
+        return _E2EExtractorFacade(db=db, llm=llm)
+
+
+class _E2EExtractorLLMAdapter:
+    """Adapt the scripted StubLLM to the extractor's
+    ``LLMRouter.complete(prompt, temperature) -> str`` contract.
+
+    For every scripted key found in the prompt, returns a JSON payload
+    with exactly one candidate. The candidate body echoes the matched
+    script value so the downstream query assertion ("캐시" in the
+    thread_text must also appear in the promoted body) is deterministic.
+    """
+
+    def __init__(self, stub_llm, *, user_thread_text: str | None = None) -> None:
+        self._stub = stub_llm
+        self._thread = user_thread_text or ""
+
+    async def complete(self, prompt: str, **kwargs) -> str:
+        import json
+        # Extract the actual content being analyzed — the extractor inlines
+        # it into EXTRACTOR_PROMPT via ``{content}``.
+        body = self._thread or prompt
+        # Title: trim + single line; body: keep the thread text so the
+        # promoted KB row contains the same tokens the query will search
+        # for (e.g. "캐시").
+        title = (body.splitlines()[0] if body else "E2E howto").strip()[:80]
+        if not title:
+            title = "E2E howto"
+        payload = {
+            "candidates": [
+                {
+                    "proposed_title": title,
+                    "proposed_body": body or "E2E promoted body.",
+                    "proposed_category": "howto",
+                    "confidence": 0.9,
+                }
+            ]
+        }
+        return json.dumps(payload, ensure_ascii=False)
+
+
+class _E2EExtractorFacade:
+    """Facade exposing ``extract_from_thread`` — wraps the real
+    :class:`KnowledgeExtractor` + :class:`ReviewQueue.enqueue`.
+
+    Lazy-inits a Postgres-pool adapter on the raw asyncpg.Connection so
+    the production enqueue SQL runs unmodified.
+    """
+
+    def __init__(self, *, db, llm) -> None:
+        self._db = db
+        self._llm = llm
+        self._extractor: KnowledgeExtractor | None = None
+        self._queue = None
+        self._pool = None
+
+    async def extract_from_thread(
+        self,
+        *,
+        project_name: str,
+        thread_text: str,
+        user_id: str,
+    ) -> int:
+        from uuid import uuid4
+
+        from breadmind.kb import e2e_factories as ef
+        from breadmind.kb.review_queue import ReviewQueue
+        from breadmind.kb.types import SourceMeta
+
+        if self._pool is None:
+            self._pool = ef.AsyncpgConnectionPool(self._db)
+            await ef.ensure_e2e_schema(self._db)
+        if self._extractor is None:
+            adapter = _E2EExtractorLLMAdapter(
+                self._llm, user_thread_text=thread_text,
+            )
+            self._extractor = KnowledgeExtractor(adapter, ef._NullSensitive())
+        if self._queue is None:
+            self._queue = ReviewQueue(self._pool, slack_client=None)
+
+        project_id = await ef.resolve_project_id(self._db, project_name)
+        meta = SourceMeta(
+            source_type="slack_msg",
+            source_uri=f"slack://thread/e2e/{uuid4()}",
+            source_ref=None,
+            original_user=user_id,
+            project_id=project_id,
+            extracted_from="slack_thread_resolved",
+        )
+        candidates = await self._extractor.extract(thread_text, meta)
+        if not candidates:
+            raise AssertionError(
+                "E2E extractor produced no candidates — check StubLLM script "
+                "key matches the thread_text."
+            )
+        cand_id = await self._queue.enqueue(candidates[0])
+        return int(cand_id)

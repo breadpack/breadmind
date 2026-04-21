@@ -385,6 +385,89 @@ class ReviewQueue:
             )
 
 
+    # ------------------------------------------------------------------ e2e facade
+    @classmethod
+    def build_for_e2e(cls, *, db, slack) -> "_E2EReviewQueueFacade":
+        """Return a facade wrapping the real :class:`ReviewQueue` with
+        ``notify_lead`` + ``approve(candidate_id, reviewer, source_channel)``
+        helpers expected by the E2E promotion flow test.
+
+        The facade wraps the raw ``asyncpg.Connection`` in a pool-shaped
+        adapter (production queue uses ``async with db.acquire()``) and
+        monkey-patches the module-level ``_embed_text`` stub to use the
+        deterministic 1024-d embedder from ``e2e_factories``.
+        """
+        return _E2EReviewQueueFacade(db=db, slack=slack)
+
+
+class _E2EReviewQueueFacade:
+    """Slack-facing review flow façade for E2E tests.
+
+    Exposes:
+
+    * ``notify_lead(cand_id)`` — posts a pending-review message to a
+      project-lead channel via the injected FakeSlackClient.
+    * ``approve(candidate_id, reviewer, source_channel) -> int`` — runs
+      the real :meth:`ReviewQueue.approve` and then stamps
+      ``org_knowledge.source_channel`` so the approved row is scoped to
+      the posting channel. Returns the new ``org_knowledge.id``.
+    """
+
+    _LEAD_CHANNEL: str = "C-ALPHA-LEAD-REVIEW"
+
+    def __init__(self, *, db, slack) -> None:
+        self._db = db
+        self._slack = slack
+        self._queue: ReviewQueue | None = None
+        self._patched = False
+
+    async def _ensure_queue(self) -> ReviewQueue:
+        if self._queue is not None:
+            return self._queue
+        from breadmind.kb import e2e_factories as ef
+        from breadmind.kb import review_queue as rq_mod
+
+        if not self._patched:
+            embedder = ef.StableEmbedder()
+
+            async def _embed(text: str):
+                return await embedder.encode(text)
+
+            rq_mod._embed_text = _embed  # type: ignore[assignment]
+            self._patched = True
+
+        pool = ef.AsyncpgConnectionPool(self._db)
+        await ef.ensure_e2e_schema(self._db)
+        self._queue = ReviewQueue(pool, slack_client=self._slack)
+        return self._queue
+
+    async def notify_lead(self, cand_id: int) -> None:
+        await self._ensure_queue()
+        await self._slack.chat_postMessage(
+            channel=self._LEAD_CHANNEL,
+            text=(
+                f":mag: 신규 KB 후보 검토 요청 (candidate_id={cand_id}). "
+                "'/kb review approve' 또는 버튼으로 승인해주세요."
+            ),
+        )
+
+    async def approve(
+        self,
+        *,
+        candidate_id: int,
+        reviewer: str,
+        source_channel: str | None = None,
+    ) -> int:
+        queue = await self._ensure_queue()
+        kid = await queue.approve(candidate_id=candidate_id, reviewer=reviewer)
+        if source_channel is not None:
+            await self._db.execute(
+                "UPDATE org_knowledge SET source_channel=$1 WHERE id=$2",
+                source_channel, kid,
+            )
+        return int(kid)
+
+
 class _InMemoryBacklogDB:
     """Minimal async-DB stub exposing only ``fetchrow`` for the
     :meth:`ReviewQueue.refresh_backlog_metric` path. Used by

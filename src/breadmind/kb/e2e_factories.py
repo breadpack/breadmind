@@ -131,21 +131,60 @@ class _StubChatRouter:
         # Flatten the message content so we can match the StubLLM.script keys.
         text = "\n".join((m.content or "") for m in messages)
         # Script match — StubLLM does a substring match against prompt.
+        payload: str | None = None
         for key, answer in self._stub.script.items():
             if key in text:
                 payload = answer
                 break
-        else:
-            payload = "근거 부족"
-        # Append citation tags so CitationEnforcer is satisfied.
-        if self._known_ids:
-            tags = " ".join(f"[#{kid}]" for kid in self._known_ids[:2])
+        # Fallback: echo a short snippet from the KB context block so the
+        # downstream assertion can find substrings that appear in the
+        # retrieved body (e.g. the promotion E2E test which queries for a
+        # term from the approved knowledge body, with no script match).
+        if payload is None:
+            snippet = _extract_kb_snippet(text)
+            payload = snippet or "근거 부족"
+        # Prefer citation IDs actually present in the prompt (they come
+        # straight from the retrieved hits for THIS call) over the seed
+        # IDs captured at construction time. If the second pass is a
+        # regeneration retry from CitationEnforcer, the retry prompt also
+        # carries the allowed IDs, so this path stays correct.
+        prompt_ids = _extract_kb_ids(text)
+        ids_to_cite = prompt_ids or self._known_ids
+        if ids_to_cite:
+            tags = " ".join(f"[#{kid}]" for kid in ids_to_cite[:2])
             payload = f"{payload} {tags}".strip()
         return LLMResponse(
             content=payload, tool_calls=[],
             usage=TokenUsage(input_tokens=50, output_tokens=25),
             stop_reason="end",
         )
+
+
+def _extract_kb_snippet(prompt_text: str) -> str | None:
+    """Pull the first non-empty KB body from a pipeline user-prompt.
+
+    The pipeline formats retrieved hits as ``[#<id>] <title>: <body>`` —
+    we grab the body of the first such line so the LLM stub can echo it.
+    Used only by ``_StubChatRouter`` when no script key matches.
+    """
+    import re
+    for line in prompt_text.splitlines():
+        m = re.match(r"^\[#\d+\]\s*[^:]+:\s*(.+)$", line)
+        if m:
+            return m.group(1).strip()
+    return None
+
+
+def _extract_kb_ids(prompt_text: str) -> list[int]:
+    """Return the ``[#id]`` integers in the order they appear in a prompt.
+
+    The pipeline inlines retrieved hits as ``[#<id>] <title>: <body>``
+    and the CitationEnforcer regen prompt re-lists them the same way;
+    either prompt shape yields the IDs the stub answer is allowed to
+    cite.
+    """
+    import re
+    return [int(m.group(1)) for m in re.finditer(r"\[#(\d+)\]", prompt_text)]
 
 
 # ─── Fixed SelfReviewer ───────────────────────────────────────────────────────
