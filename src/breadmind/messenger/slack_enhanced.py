@@ -66,3 +66,43 @@ class SlackEnhancedGateway(SlackGateway):
                     await self._on_feedback(kind, answer_id, user_id)
                 return
         logger.debug("ignoring non-KB action_id=%s", action_id)
+
+    def build_answer_blocks(
+        self,
+        body: str,
+        answer_id: str,
+        citations: list[tuple[str, str]],
+        confidence_badge: str,
+    ) -> list[dict[str, Any]]:
+        blocks: list[dict[str, Any]] = [
+            {"type": "section", "text": {"type": "mrkdwn", "text": body}},
+        ]
+        if citations:
+            cite_text = " ".join(f"<{uri}|{typ}>" for typ, uri in citations)
+            blocks.append({
+                "type": "context",
+                "elements": [
+                    {"type": "mrkdwn", "text": f"📎 {cite_text}"},
+                ],
+            })
+        blocks.append({
+            "type": "context",
+            "elements": [
+                {"type": "mrkdwn", "text": f"신뢰도: {confidence_badge}"},
+            ],
+        })
+        blocks.append({
+            "type": "actions",
+            "elements": [
+                {"type": "button",
+                 "text": {"type": "plain_text", "text": "👍"},
+                 "action_id": f"{self.UPVOTE_PREFIX}{answer_id}"},
+                {"type": "button",
+                 "text": {"type": "plain_text", "text": "👎"},
+                 "action_id": f"{self.DOWNVOTE_PREFIX}{answer_id}"},
+                {"type": "button",
+                 "text": {"type": "plain_text", "text": "🔖 조직 KB로 저장"},
+                 "action_id": f"{self.BOOKMARK_PREFIX}{answer_id}"},
+            ],
+        })
+        return blocks

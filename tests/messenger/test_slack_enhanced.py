@@ -80,3 +80,19 @@ async def test_feedback_router_ignores_unknown():
     )
     await gw._handle_feedback_action("approve_xyz", "u")
     called.assert_not_awaited()
+
+
+def test_build_answer_blocks_includes_three_action_ids():
+    gw = SlackEnhancedGateway(bot_token="x", bot_user_id="U_BOT", on_message=None)
+    blocks = gw.build_answer_blocks(
+        body="clear cache [#1]",
+        answer_id="ab12cd34",
+        citations=[("confluence", "https://wiki/x")],
+        confidence_badge="🟢",
+    )
+    flat = str(blocks)
+    assert "kb_upvote_ab12cd34" in flat
+    assert "kb_downvote_ab12cd34" in flat
+    assert "kb_bookmark_ab12cd34" in flat
+    assert "https://wiki/x" in flat
+    assert "🟢" in flat
