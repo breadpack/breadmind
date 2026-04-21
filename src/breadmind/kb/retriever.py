@@ -65,3 +65,17 @@ class KBRetriever:
                 query, project_id, limit,
             )
         return [(r["id"], float(r["rank"])) for r in rows]
+
+    @staticmethod
+    def _rrf_fuse(
+        vector_hits: list[tuple[int, float]],
+        fts_hits: list[tuple[int, float]],
+        k: int = _RRF_K,
+    ) -> list[tuple[int, float]]:
+        """Reciprocal Rank Fusion. Higher is better."""
+        scores: dict[int, float] = {}
+        for rank, (kid, _sim) in enumerate(vector_hits, start=1):
+            scores[kid] = scores.get(kid, 0.0) + 1.0 / (k + rank)
+        for rank, (kid, _sim) in enumerate(fts_hits, start=1):
+            scores[kid] = scores.get(kid, 0.0) + 1.0 / (k + rank)
+        return sorted(scores.items(), key=lambda x: x[1], reverse=True)
