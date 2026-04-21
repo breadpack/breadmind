@@ -47,3 +47,26 @@ class KBRetriever:
                 vec_literal, project_id, limit,
             )
         return [(r["id"], float(r["similarity"])) for r in rows]
+
+    async def _fts_search(
+        self, query: str, project_id: UUID, limit: int,
+    ) -> list[tuple[int, float]]:
+        # Join words with OR so that the 'simple' (non-stemming) dictionary can
+        # match tokens that share a common root with query terms (e.g. "payment"
+        # when the query contains "payments").  ts_rank still rewards rows that
+        # satisfy more terms, so truly relevant rows surface first.
+        fts_query = " OR ".join(query.split())
+        async with self._db.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT id, ts_rank(tsv, websearch_to_tsquery('simple', $1)) AS rank
+                FROM org_knowledge
+                WHERE project_id = $2
+                  AND superseded_by IS NULL
+                  AND tsv @@ websearch_to_tsquery('simple', $1)
+                ORDER BY rank DESC
+                LIMIT $3
+                """,
+                fts_query, project_id, limit,
+            )
+        return [(r["id"], float(r["rank"])) for r in rows]
