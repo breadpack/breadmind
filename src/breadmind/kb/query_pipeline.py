@@ -44,6 +44,19 @@ class QueryPipeline:
         self._project_resolver = project_resolver
 
     async def answer(self, incoming: IncomingMessage) -> OutgoingMessage:
+        category = self._sensitive.classify(incoming.text)
+        if category is not None:
+            logger.info("blocked sensitive category=%s user=%s", category,
+                        incoming.user_id)
+            return OutgoingMessage(
+                text=(
+                    "이 질의는 민감 카테고리(%s)로 분류되어 답변이 제한됩니다. "
+                    "담당자 채널로 문의해주세요." % category
+                ),
+                channel_id=incoming.channel_id,
+                platform=incoming.platform,
+            )
+
         project_id = await self._project_resolver(
             incoming.user_id, incoming.channel_id,
         ) if self._project_resolver else None

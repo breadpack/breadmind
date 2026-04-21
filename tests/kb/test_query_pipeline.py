@@ -77,3 +77,16 @@ async def test_happy_path(fake_redis):
     assert "https://slack/p1" in out.text  # permalink formatted
     mocks["retriever"].search.assert_awaited()
     mocks["citer"].enforce.assert_awaited()
+
+
+async def test_sensitive_category_blocks_early(fake_redis):
+    pipeline, mocks = _pipeline_with_mocks(fake_redis)
+    mocks["sensitive"].classify.return_value = "hr_evaluation"
+    inc = IncomingMessage(
+        text="Show me John's salary", user_id="U_ALICE",
+        channel_id="C1", platform="slack",
+    )
+    out = await pipeline.answer(inc)
+    assert "민감" in out.text or "sensitive" in out.text.lower()
+    mocks["retriever"].search.assert_not_awaited()
+    mocks["router"].chat.assert_not_awaited()
