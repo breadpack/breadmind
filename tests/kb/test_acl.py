@@ -92,3 +92,64 @@ async def test_can_read_channel_uses_cached_value(
     # Subsequent failure of Slack should still hit cache.
     slack.conversations_members.side_effect = RuntimeError("down")
     assert await r.can_read_channel("U1", "C777") is True
+
+
+async def test_filter_knowledge_excludes_non_member_projects(
+    test_db: Database, fake_redis
+) -> None:
+    slack = AsyncMock()
+    slack.conversations_members.return_value = {
+        "ok": True,
+        "members": ["U1"],
+    }
+    async with test_db.acquire() as conn:
+        p1 = await _seed_project(conn, "alpha")
+        p2 = await _seed_project(conn, "beta")
+        await conn.execute(
+            "INSERT INTO org_project_members(project_id, user_id, role) "
+            "VALUES($1, 'U1', 'member')",
+            p1,
+        )
+        k_allowed = await conn.fetchval(
+            "INSERT INTO org_knowledge(project_id, title, body, category, "
+            "source_channel) VALUES($1,'t','b','howto', NULL) RETURNING id",
+            p1,
+        )
+        k_channel_public = await conn.fetchval(
+            "INSERT INTO org_knowledge(project_id, title, body, category, "
+            "source_channel) VALUES($1,'t','b','howto','C1') RETURNING id",
+            p1,
+        )
+        k_channel_private = await conn.fetchval(
+            "INSERT INTO org_knowledge(project_id, title, body, category, "
+            "source_channel) VALUES($1,'t','b','howto','C-NOPE') "
+            "RETURNING id",
+            p1,
+        )
+        k_wrong_project = await conn.fetchval(
+            "INSERT INTO org_knowledge(project_id, title, body, category, "
+            "source_channel) VALUES($1,'t','b','howto', NULL) RETURNING id",
+            p2,
+        )
+    r = ACLResolver(db=test_db, slack_client=slack)
+    r._redis = fake_redis
+    ids = [k_allowed, k_channel_public, k_channel_private, k_wrong_project]
+    visible = await r.filter_knowledge("U1", ids)
+    async with test_db.acquire() as conn:
+        await conn.execute("DELETE FROM org_knowledge")
+        await conn.execute("DELETE FROM org_project_members")
+        await conn.execute(
+            "DELETE FROM org_projects WHERE id = ANY($1::uuid[])",
+            [p1, p2],
+        )
+    assert k_allowed in visible
+    assert k_channel_public in visible
+    assert k_channel_private not in visible
+    assert k_wrong_project not in visible
+
+
+async def test_filter_knowledge_empty_input(
+    test_db: Database,
+) -> None:
+    r = ACLResolver(db=test_db, slack_client=AsyncMock())
+    assert await r.filter_knowledge("U1", []) == set()
