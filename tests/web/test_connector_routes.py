@@ -141,3 +141,21 @@ def test_register_rejects_missing_credentials_ref(app_with_routes):
     })
     assert resp.status_code == 400
     assert "credentials_ref" in resp.json()["detail"]
+
+
+def test_register_rejects_non_https_base_url(app_with_routes):
+    """TLS is required for Confluence — plain ``http://`` must 400."""
+    app, _ = app_with_routes
+    client = TestClient(app)
+    resp = client.post("/api/connectors", json={
+        "connector": "confluence",
+        "project_id": "00000000-0000-4000-8000-000000000001",
+        "scope_key": "PILOT",
+        "settings": {
+            "base_url": "http://insecure.example.com/wiki",
+            "credentials_ref": "confluence:pilot",
+        },
+        "enabled": True,
+    })
+    assert resp.status_code == 400
+    assert "https" in resp.json()["detail"].lower()

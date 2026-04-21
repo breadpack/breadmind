@@ -44,8 +44,14 @@ def build_beat_schedule(configs: Iterable[Any]) -> dict:
 
 async def _build_confluence_connector(
     *, base_url: str, credentials_ref: str
-) -> Any:
-    """Factory that wires DB, vault, extractor, and review queue."""
+) -> tuple[Any, Any]:
+    """Factory that wires DB, vault, extractor, and review queue.
+
+    Returns ``(connector, db)`` so callers can close the DB when the
+    task body is done — previously the task leaked a pool per Celery
+    invocation. Call sites must invoke ``await db.disconnect()`` in
+    a ``finally`` block.
+    """
     from breadmind.storage.database import Database
     from breadmind.storage.credential_vault import CredentialVault
     from breadmind.kb.extractor import KnowledgeExtractor
@@ -59,7 +65,7 @@ async def _build_confluence_connector(
     extractor = KnowledgeExtractor(db)
     review_queue = ReviewQueue(db)
 
-    return ConfluenceConnector(
+    connector = ConfluenceConnector(
         db=db,
         base_url=base_url,
         credentials_ref=credentials_ref,
@@ -67,6 +73,7 @@ async def _build_confluence_connector(
         review_queue=review_queue,
         vault=vault,
     )
+    return connector, db
 
 
 async def run_confluence_sync(
@@ -76,18 +83,31 @@ async def run_confluence_sync(
     base_url: str,
     credentials_ref: str,
 ) -> dict:
-    conn = await _build_confluence_connector(
+    built = await _build_confluence_connector(
         base_url=base_url, credentials_ref=credentials_ref
     )
-    cursor = await conn.load_cursor(scope_key)
-    result: SyncResult = await conn.sync(
-        uuid.UUID(project_id), scope_key, cursor
-    )
-    return {
-        "processed": result.processed,
-        "errors": result.errors,
-        "new_cursor": result.new_cursor,
-    }
+    # Back-compat: tests monkeypatch ``_build_confluence_connector`` to return
+    # a bare connector. Accept either shape.
+    if isinstance(built, tuple):
+        conn, db = built
+    else:
+        conn, db = built, None
+    try:
+        cursor = await conn.load_cursor(scope_key)
+        result: SyncResult = await conn.sync(
+            uuid.UUID(project_id), scope_key, cursor
+        )
+        return {
+            "processed": result.processed,
+            "errors": result.errors,
+            "new_cursor": result.new_cursor,
+        }
+    finally:
+        if db is not None:
+            try:
+                await db.disconnect()
+            except Exception:  # pragma: no cover — teardown best-effort
+                logger.exception("db.disconnect() failed at sync teardown")
 
 
 @celery_app.task(name=CONFLUENCE_SYNC_TASK, bind=True, acks_late=True)

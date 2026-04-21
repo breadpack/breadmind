@@ -29,6 +29,19 @@ async def test_connector_name_is_confluence():
     assert ConfluenceConnector.connector_name == "confluence"
 
 
+async def test_connector_rejects_non_https_base_url(mem_db, fake_extractor,
+                                                    fake_review_queue):
+    """TLS enforcement at the boundary — ``__init__`` must raise on http://."""
+    vault = FakeVault({"confluence:x": "u:t"})
+    with pytest.raises(ValueError, match="https"):
+        ConfluenceConnector(
+            db=mem_db, base_url="http://insecure.example.com/wiki",
+            credentials_ref="confluence:x",
+            extractor=fake_extractor, review_queue=fake_review_queue,
+            vault=vault,
+        )
+
+
 async def test_basic_auth_header_uses_credential_vault(mem_db, fake_extractor,
                                                        fake_review_queue):
     vault = FakeVault({"confluence:pilot": "alice@example.com:TOKEN123"})

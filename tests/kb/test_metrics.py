@@ -136,3 +136,12 @@ async def test_review_queue_updates_backlog_gauge(monkeypatch):
     await q.refresh_backlog_metric()
     from breadmind.kb import metrics
     assert metrics.PROMOTION_BACKLOG._value.get() == 12.0
+
+
+@pytest.mark.asyncio
+async def test_confluence_sync_updates_kb_size_gauge(monkeypatch):
+    from breadmind.kb.connectors.confluence import ConfluenceConnector
+    c = await ConfluenceConnector.build_for_tests(project_id="proj-a", body_bytes=1024)
+    await c.refresh_size_metric()
+    from breadmind.kb import metrics
+    assert metrics.KB_SIZE_BYTES.labels(project="proj-a")._value.get() == 1024.0

@@ -69,6 +69,11 @@ def setup_connectors_routes(app, app_state) -> None:
                 raise HTTPException(
                     400, f"Missing required settings: {', '.join(missing)}"
                 )
+            base_url = str(settings.get("base_url") or "")
+            if not base_url.lower().startswith("https://"):
+                raise HTTPException(
+                    400, "base_url must use https://",
+                )
         store = _build_store(db)
         row = await store.register(
             connector=body.connector,

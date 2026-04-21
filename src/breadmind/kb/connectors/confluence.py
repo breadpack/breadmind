@@ -16,6 +16,7 @@ from typing import Any, ClassVar
 import aiohttp
 from markdownify import markdownify as md
 
+from breadmind.kb import metrics as kb_metrics
 from breadmind.kb.connectors.base import BaseConnector, SyncResult
 from breadmind.kb.connectors.rate_limit import (
     BudgetExceeded,
@@ -86,6 +87,8 @@ class ConfluenceConnector(BaseConnector):
         audit_log: Any | None = None,
     ) -> None:
         super().__init__(db)
+        if not base_url.lower().startswith("https://"):
+            raise ValueError("base_url must use https://")
         self._base_url = base_url.rstrip("/")
         self._credentials_ref = credentials_ref
         self._extractor = extractor
@@ -286,6 +289,13 @@ class ConfluenceConnector(BaseConnector):
         # is flagged stale and a retirement candidate is enqueued for review.
         await self._scan_retirements(project_id, scope_key)
 
+        # Publish breadmind_kb_size_bytes so ops dashboards see the post-sync
+        # KB volume without waiting for a separate scheduled refresh.
+        try:
+            await self.refresh_size_metric()
+        except Exception:  # pragma: no cover — metrics must never break prod
+            logger.exception("refresh_size_metric failed")
+
         logger.info(
             "confluence.sync.done",
             extra={"project_id": str(project_id), "scope_key": scope_key,
@@ -402,3 +412,74 @@ class ConfluenceConnector(BaseConnector):
             )
         except Exception:
             logger.exception("kb_audit_log write failed")
+
+    # ── Metrics ───────────────────────────────────────────────────────
+
+    async def refresh_size_metric(self) -> None:
+        """Aggregate ``org_knowledge`` body bytes per project and publish
+        to the ``breadmind_kb_size_bytes{project=...}`` Prometheus gauge.
+
+        Runs at the tail of every :meth:`_do_sync` pass so the gauge
+        stays fresh across connector iterations, and can also be called
+        standalone from the P5 build-for-tests harness.
+        """
+        rows = await self._db.fetch(
+            "SELECT project_id, COALESCE(SUM(OCTET_LENGTH(body)),0) AS b "
+            "FROM org_knowledge WHERE superseded_by IS NULL "
+            "GROUP BY project_id"
+        )
+        for r in rows:
+            try:
+                kb_metrics.set_kb_size_bytes(
+                    project=str(r["project_id"]),
+                    bytes_=int(r["b"]),
+                )
+            except Exception:  # pragma: no cover — metrics must never break prod
+                logger.exception("set_kb_size_bytes failed for %s", r)
+
+    @classmethod
+    async def build_for_tests(
+        cls,
+        *,
+        project_id: str = "proj-a",
+        body_bytes: int = 0,
+    ) -> "ConfluenceConnector":
+        """Factory for metric-path tests.
+
+        Returns a ConfluenceConnector whose DB stub emits a single
+        ``SELECT project_id, SUM(OCTET_LENGTH(body))`` row so a bare
+        :meth:`refresh_size_metric` call can drive the gauge without a
+        live postgres fixture or aiohttp session.
+        """
+        class _SizeDB:
+            async def fetch(self, sql: str, *_args: Any):
+                if "org_knowledge" in sql and "OCTET_LENGTH(body)" in sql:
+                    return [{"project_id": project_id, "b": body_bytes}]
+                return []
+
+            async def fetchrow(self, *_a: Any, **_kw: Any):
+                return None
+
+            async def execute(self, *_a: Any, **_kw: Any):
+                return None
+
+        class _NullVault:
+            async def retrieve(self, *_a, **_kw):
+                return None
+
+        class _NullExtractor:
+            async def extract(self, *_a, **_kw):
+                return []
+
+        class _NullReviewQueue:
+            async def enqueue(self, *_a, **_kw):
+                return 0
+
+        return cls(
+            db=_SizeDB(),
+            base_url="https://test.local",
+            credentials_ref="test:none",
+            extractor=_NullExtractor(),
+            review_queue=_NullReviewQueue(),
+            vault=_NullVault(),
+        )
