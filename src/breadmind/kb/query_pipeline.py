@@ -60,6 +60,14 @@ class QueryPipeline:
         project_id = await self._project_resolver(
             incoming.user_id, incoming.channel_id,
         ) if self._project_resolver else None
+        pid_str = str(project_id) if project_id is not None else ""
+
+        cached = await self._cache.get(incoming.text, incoming.user_id, pid_str)
+        if cached is not None:
+            return OutgoingMessage(
+                text=cached, channel_id=incoming.channel_id,
+                platform=incoming.platform,
+            )
 
         hits = await self._retriever.search(
             query=incoming.text,
@@ -91,6 +99,10 @@ class QueryPipeline:
 
         answer_id = uuid.uuid4().hex[:8]
         formatted = self._format(restored_text, enforced, confidence, answer_id)
+
+        await self._cache.set(
+            incoming.text, incoming.user_id, pid_str, formatted,
+        )
 
         return OutgoingMessage(
             text=formatted,

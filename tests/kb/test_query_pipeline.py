@@ -90,3 +90,23 @@ async def test_sensitive_category_blocks_early(fake_redis):
     assert "민감" in out.text or "sensitive" in out.text.lower()
     mocks["retriever"].search.assert_not_awaited()
     mocks["router"].chat.assert_not_awaited()
+
+
+async def test_cache_hit_short_circuits(fake_redis):
+    pipeline, mocks = _pipeline_with_mocks(fake_redis)
+    await mocks["cache"].set("q", "U_ALICE", "PROJ", "cached-body")
+    # pin project resolver to a known id so cache key matches
+    from uuid import UUID
+    pid = UUID("11111111-1111-1111-1111-111111111111")
+    pipeline._project_resolver = AsyncMock(return_value=pid)
+    # precompute cache under that project id
+    await mocks["cache"].set("how was the leak fixed?", "U_ALICE", str(pid),
+                             "cached-body")
+    inc = IncomingMessage(
+        text="how was the leak fixed?", user_id="U_ALICE",
+        channel_id="C1", platform="slack",
+    )
+    out = await pipeline.answer(inc)
+    assert "cached-body" in out.text
+    mocks["retriever"].search.assert_not_awaited()
+    mocks["router"].chat.assert_not_awaited()
