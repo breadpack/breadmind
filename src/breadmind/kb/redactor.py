@@ -15,12 +15,17 @@ Patterns (ordered):
 from __future__ import annotations
 
 import json
+import logging
 import math
 import re
 import secrets
 from collections import Counter
 
+from breadmind.kb import metrics as kb_metrics
+
 REDACT_TTL_SECONDS = 2 * 60 * 60
+
+logger = logging.getLogger(__name__)
 
 
 class SecretDetected(Exception):
@@ -43,6 +48,42 @@ _SSN_RE = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
 # Atomic group prevents catastrophic backtracking on long digit runs
 # (timestamps, log IDs). Atomic groups available in Python 3.11+.
 _CC_RE = re.compile(r"\b(?>(?:\d[ -]?){13,19})\b")
+
+
+# Named PII pattern registry — used by ``redact_prompt`` for metric
+# labelling. The keys appear verbatim as the ``pattern`` label on
+# ``breadmind_redaction_events_total``.
+_NAMED_PATTERNS: tuple[tuple[str, re.Pattern], ...] = (
+    ("email", _EMAIL_RE),
+    ("phone", _PHONE_RE),
+    ("slack_user", _SLACK_USER_RE),
+    ("p4_path", _P4_PATH_RE),
+    ("ssn", _SSN_RE),
+    ("url", _URL_RE),
+)
+_API_KEY_PATTERN_LABEL = "api_key"
+
+
+# Sensitive-category keyword table. Each category emits a single
+# ``breadmind_block_sensitive_total{category=...}`` counter bump when
+# any keyword matches (case-insensitive substring). Keys are stable
+# spec labels — do not rename without coordinating with dashboards.
+_SENSITIVE_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "hr_compensation": (
+        "연봉", "급여", "보너스", "인센티브", "스톡옵션",
+        "salary", "compensation", "bonus", "payroll",
+    ),
+    "hr_evaluation": (
+        "평가", "인사고과", "고과", "review score",
+        "performance review",
+    ),
+    "legal_litigation": (
+        "소송", "제소", "litigation", "lawsuit", "legal dispute",
+    ),
+    "security_credentials": (
+        "비밀번호", "password", "비밀키", "secret key",
+    ),
+}
 
 
 def _shannon_entropy(s: str) -> float:
@@ -166,3 +207,88 @@ class Redactor:
         for token, original in mapping.items():
             out = out.replace(token, original)
         return out
+
+    # ─── metric-emitting scan helpers ─────────────────────────────────
+    # These are synchronous scan-only methods intended for the P5 ops
+    # path that emits Prometheus counters. They do NOT persist a restore
+    # map (use :meth:`redact` for that). The async ``redact`` is still
+    # the production boundary guard at the LLM edge.
+
+    @classmethod
+    def default(cls) -> "Redactor":
+        """Return a Redactor with an in-memory redis stub + empty vocab.
+
+        Used by test harnesses and the ``redact_prompt`` / ``check_sensitive``
+        metric paths which do not need a real Redis map store.
+        """
+        return cls(redis=_NullRedis(), vocab=[])
+
+    def redact_prompt(self, text: str) -> str:
+        """Scan ``text`` for known PII/secret patterns, emitting a
+        ``breadmind_redaction_events_total{pattern=...}`` counter bump
+        for each matching pattern. Returns a best-effort masked string
+        (each matched substring replaced by ``<PATTERN>``) for callers
+        that want a redacted preview; callers persisting a restore map
+        should use :meth:`redact` instead.
+        """
+        out = text
+        # Secrets first: API key pattern family collapses to a single
+        # ``api_key`` label regardless of which concrete regex matched
+        # (label cardinality budget — the family is ~5 regexes).
+        for pat in _API_KEY_PATTERNS:
+            if pat.search(out):
+                try:
+                    kb_metrics.observe_redaction(
+                        pattern=_API_KEY_PATTERN_LABEL,
+                    )
+                except Exception:  # pragma: no cover — defensive
+                    logger.exception("observe_redaction(api_key) failed")
+                out = pat.sub(f"<{_API_KEY_PATTERN_LABEL.upper()}>", out)
+                break  # count the family once per call
+
+        for name, pat in _NAMED_PATTERNS:
+            if pat.search(out):
+                try:
+                    kb_metrics.observe_redaction(pattern=name)
+                except Exception:  # pragma: no cover
+                    logger.exception("observe_redaction(%s) failed", name)
+                out = pat.sub(f"<{name.upper()}>", out)
+        return out
+
+    def check_sensitive(self, text: str) -> str | None:
+        """Return the first matching sensitive category (by spec label),
+        or ``None`` if the text is clean. Emits a
+        ``breadmind_block_sensitive_total{category=...}`` counter bump on
+        match so ops dashboards can track sensitive-class blocks.
+        """
+        lower = text.lower()
+        for category, keywords in _SENSITIVE_KEYWORDS.items():
+            for kw in keywords:
+                if kw.lower() in lower:
+                    try:
+                        kb_metrics.observe_block_sensitive(category=category)
+                    except Exception:  # pragma: no cover
+                        logger.exception(
+                            "observe_block_sensitive(%s) failed", category,
+                        )
+                    return category
+        return None
+
+
+class _NullRedis:
+    """Minimal Redis stub used by :meth:`Redactor.default`.
+
+    ``redact_prompt`` / ``check_sensitive`` do not touch the redis store,
+    but the :class:`Redactor` constructor requires *some* async client.
+    Keeping this private avoids leaking an import from fakeredis into
+    production code paths that only need the scan-emitting subset.
+    """
+
+    async def set(self, *_args, **_kwargs) -> None:
+        return None
+
+    async def get(self, *_args, **_kwargs) -> None:
+        return None
+
+    async def delete(self, *_args, **_kwargs) -> None:
+        return None

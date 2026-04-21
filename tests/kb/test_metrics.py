@@ -80,6 +80,28 @@ def test_kb_metrics_endpoint_exposes_counter(monkeypatch):
     assert "breadmind_query_total" in r.text
 
 
+def test_redactor_emits_metric_per_pattern(monkeypatch):
+    from breadmind.kb.redactor import Redactor
+    r = Redactor.default()
+    r.redact_prompt("contact me at alice@example.com with key AKIA1234567890123456")
+    from breadmind.kb import metrics
+    out_samples = [
+        s for m_ in metrics.REDACTION_EVENTS.collect() for s in m_.samples
+    ]
+    patterns = {s.labels["pattern"] for s in out_samples if s.name.endswith("_total")}
+    assert {"email", "api_key"} <= patterns
+
+
+def test_sensitive_category_increments_block_counter():
+    from breadmind.kb.redactor import Redactor
+    r = Redactor.default()
+    r.check_sensitive("우리 팀 연봉 테이블 알려줘")
+    from breadmind.kb import metrics
+    samples = [s for m_ in metrics.BLOCK_SENSITIVE.collect() for s in m_.samples]
+    cats = {s.labels["category"] for s in samples if s.name.endswith("_total")}
+    assert "hr_compensation" in cats
+
+
 @pytest.mark.asyncio
 async def test_query_pipeline_emits_metrics(monkeypatch):
     from breadmind.kb.query_pipeline import QueryPipeline
