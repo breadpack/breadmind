@@ -1,0 +1,40 @@
+{
+  "title": "BreadMind KB — Governance",
+  "uid": "breadmind-kb-governance",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-24h", "to": "now" },
+  "tags": ["breadmind", "kb", "governance"],
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "Queries by project",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "sum by (project) (rate(breadmind_query_total[5m]))", "legendFormat": "{{project}}" }
+      ]
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "Sensitive blocks by category",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "sum by (category) (rate(breadmind_block_sensitive_total[5m]))", "legendFormat": "{{category}}" }
+      ]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Promotion backlog",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        { "refId": "A", "expr": "breadmind_promotion_backlog" }
+      ]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Audit activity (redactions + blocks)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        { "refId": "A", "expr": "sum by (pattern) (rate(breadmind_redaction_events_total[5m]))", "legendFormat": "redact:{{pattern}}" },
+        { "refId": "B", "expr": "sum by (category) (rate(breadmind_block_sensitive_total[5m]))", "legendFormat": "block:{{category}}" }
+      ]
+    }
+  ]
+}
