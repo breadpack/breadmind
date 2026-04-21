@@ -60,3 +60,108 @@ async def test_connector_raises_if_credential_missing(mem_db, fake_extractor,
     )
     with pytest.raises(RuntimeError, match="credential"):
         await conn._build_auth_header()
+
+
+class _FakeResponse:
+    def __init__(self, status: int, payload: dict, headers: dict | None = None):
+        self.status = status
+        self._payload = payload
+        self.headers = headers or {}
+
+    async def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+class _ScriptedSession:
+    def __init__(self, responses: list[_FakeResponse]):
+        self._responses = list(responses)
+        self.calls: list[tuple[str, dict]] = []
+        self.closed = False
+
+    def get(self, url: str, **kw):
+        self.calls.append((url, kw.get("params", {})))
+        return self._responses.pop(0)
+
+    async def close(self):
+        self.closed = True
+
+
+def _page_payload(results, next_path: str | None):
+    out = {"results": results, "_links": {}}
+    if next_path:
+        out["_links"]["next"] = next_path
+    return out
+
+
+async def test_fetch_pages_paginates_until_next_absent(mem_db, fake_extractor,
+                                                      fake_review_queue):
+    vault = FakeVault({"confluence:x": "u:t"})
+    session = _ScriptedSession([
+        _FakeResponse(200, _page_payload(
+            results=[{
+                "id": "1", "title": "Page 1",
+                "space": {"key": "SPACE"},
+                "_links": {"webui": "/pages/1"},
+                "body": {"storage": {"value": "<p>A</p>"}},
+                "version": {"when": "2026-04-20T00:00:00.000Z"},
+            }],
+            next_path="/rest/api/content?start=50",
+        )),
+        _FakeResponse(200, _page_payload(
+            results=[{
+                "id": "2", "title": "Page 2",
+                "space": {"key": "SPACE"},
+                "_links": {"webui": "/pages/2"},
+                "body": {"storage": {"value": "<p>B</p>"}},
+                "version": {"when": "2026-04-20T01:00:00.000Z"},
+            }],
+            next_path=None,
+        )),
+    ])
+    conn = ConfluenceConnector(
+        db=mem_db, base_url="https://example.atlassian.net/wiki",
+        credentials_ref="confluence:x",
+        extractor=fake_extractor, review_queue=fake_review_queue,
+        vault=vault, session=session,
+    )
+    pages = []
+    async for p in conn._fetch_pages("SPACE", cursor=None):
+        pages.append(p)
+
+    assert [p.id for p in pages] == ["1", "2"]
+    assert pages[0].storage_html == "<p>A</p>"
+    assert pages[1].web_url.endswith("/pages/2")
+    assert len(session.calls) == 2
+    # First call must include spaceKey and expand
+    first_url, first_params = session.calls[0]
+    assert "spaceKey" in first_params and first_params["spaceKey"] == "SPACE"
+    assert "body.storage,version" in first_params.get("expand", "")
+
+
+async def test_fetch_pages_includes_updated_since_when_cursor_set(
+    mem_db, fake_extractor, fake_review_queue
+):
+    vault = FakeVault({"confluence:x": "u:t"})
+    session = _ScriptedSession([
+        _FakeResponse(200, _page_payload(results=[], next_path=None))
+    ])
+    conn = ConfluenceConnector(
+        db=mem_db, base_url="https://example.atlassian.net/wiki",
+        credentials_ref="confluence:x",
+        extractor=fake_extractor, review_queue=fake_review_queue,
+        vault=vault, session=session,
+    )
+    async for _ in conn._fetch_pages("SPACE", cursor="2026-04-20T00:00:00Z"):
+        pass
+    _, params = session.calls[0]
+    # CQL-style filter — accept either "updated-since" param or CQL mode.
+    assert params.get("updated-since") == "2026-04-20T00:00:00Z"
