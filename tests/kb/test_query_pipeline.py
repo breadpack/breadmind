@@ -170,6 +170,25 @@ async def test_secret_in_query_aborts(fake_redis):
     mocks["router"].chat.assert_not_awaited()
 
 
+async def test_self_review_skipped_when_strong_signals(fake_redis):
+    pipeline, mocks = _pipeline_with_mocks(fake_redis)
+    # Strong signals: ≥3 hits AND top score ≥ 0.85.
+    strong_hits = [
+        KBHit(knowledge_id=i, title="t", body="b", score=0.95 - 0.01 * i,
+              sources=[Source(type="confluence", uri=f"https://wiki/{i}")])
+        for i in range(3)
+    ]
+    mocks["retriever"].search = AsyncMock(return_value=strong_hits)
+    mocks["citer"].enforce = AsyncMock(
+        return_value=EnforcedAnswer(text="ok [#0]", citations=[strong_hits[0].sources[0]])
+    )
+    inc = IncomingMessage(
+        text="q", user_id="U_ALICE", channel_id="C1", platform="slack",
+    )
+    await pipeline.answer(inc)
+    mocks["reviewer"].score.assert_not_awaited()
+
+
 async def test_query_emits_audit_log(fake_redis, monkeypatch):
     calls: list = []
 

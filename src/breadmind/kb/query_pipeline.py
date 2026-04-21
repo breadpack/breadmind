@@ -151,7 +151,10 @@ class QueryPipeline:
                 channel_id=incoming.channel_id,
                 platform=incoming.platform,
             )
-        confidence: Confidence = await self._reviewer.score(enforced.text, hits)
+        if self._has_strong_signals(hits):
+            confidence = Confidence.HIGH
+        else:
+            confidence = await self._reviewer.score(enforced.text, hits)
         restored_text = self._redactor.restore(enforced.text, restore_map)
 
         answer_id = uuid.uuid4().hex[:8]
@@ -182,6 +185,12 @@ class QueryPipeline:
             channel_id=incoming.channel_id,
             platform=incoming.platform,
         )
+
+    @staticmethod
+    def _has_strong_signals(hits) -> bool:
+        """Skip self-review when the retrieval signal is already strong:
+        ≥3 hits and the top hit scored ≥ 0.85 (RRF fused)."""
+        return len(hits) >= 3 and hits and hits[0].score >= 0.85
 
     @staticmethod
     def _confidence_badge(c: Confidence) -> str:
