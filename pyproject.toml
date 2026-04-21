@@ -37,6 +37,9 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0",
     "fakeredis>=2.23.0",
+    "testcontainers[postgresql]>=4.0.0",
+    "respx>=0.21.0",
+    "slack-bolt>=1.19.0",
 ]
 container = [
     "docker>=7.0",

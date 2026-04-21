@@ -1,0 +1,226 @@
+# src/breadmind/kb/query_pipeline.py
+from __future__ import annotations
+
+import logging
+import uuid
+from collections.abc import Awaitable, Callable
+from uuid import UUID
+
+from breadmind.kb.audit import audit_log as _real_audit_log
+from breadmind.kb.types import Confidence, EnforcedAnswer, InsufficientEvidence
+from breadmind.llm.base import LLMMessage
+from breadmind.llm.router import AllProvidersFailed
+from breadmind.messenger.router import IncomingMessage, OutgoingMessage
+
+logger = logging.getLogger(__name__)
+
+ProjectResolver = Callable[[str, str], Awaitable[UUID]]
+# (user_id, channel_id) -> project_id
+
+
+async def audit_log(**kwargs) -> None:
+    """Module-level shim over the real audit_log.
+
+    Tests monkeypatch ``breadmind.kb.query_pipeline.audit_log`` to capture
+    calls without a live DB. In production this shim is a no-op until a
+    db-bound version is injected (planned for P3 wiring phase). The real
+    ``_real_audit_log`` requires a ``db`` pool as its first positional
+    argument; that dependency will be satisfied during app startup.
+    """
+    # No-op by default — production wiring replaces this at startup.
+    _ = _real_audit_log  # keep import reachable for linters
+
+
+class QueryPipeline:
+    """Orchestrates: sensitive-check → cache → retriever → redactor → LLM
+    → citation → self-review → format → cache-store. Returns OutgoingMessage
+    suitable for any MessengerGateway.send()."""
+
+    def __init__(
+        self,
+        retriever,
+        redactor,
+        llm_router,
+        citer,
+        reviewer,
+        sensitive,
+        cache,
+        quota=None,
+        project_resolver: ProjectResolver | None = None,
+    ) -> None:
+        self._retriever = retriever
+        self._redactor = redactor
+        self._router = llm_router
+        self._citer = citer
+        self._reviewer = reviewer
+        self._sensitive = sensitive
+        self._cache = cache
+        self._quota = quota
+        self._project_resolver = project_resolver
+
+    async def answer(self, incoming: IncomingMessage) -> OutgoingMessage:
+        category = self._sensitive.classify(incoming.text)
+        if category is not None:
+            logger.info("blocked sensitive category=%s user=%s", category,
+                        incoming.user_id)
+            return OutgoingMessage(
+                text=(
+                    "이 질의는 민감 카테고리(%s)로 분류되어 답변이 제한됩니다. "
+                    "담당자 채널로 문의해주세요." % category
+                ),
+                channel_id=incoming.channel_id,
+                platform=incoming.platform,
+            )
+
+        project_id = await self._project_resolver(
+            incoming.user_id, incoming.channel_id,
+        ) if self._project_resolver else None
+        pid_str = str(project_id) if project_id is not None else ""
+
+        cached = await self._cache.get(incoming.text, incoming.user_id, pid_str)
+        if cached is not None:
+            return OutgoingMessage(
+                text=cached, channel_id=incoming.channel_id,
+                platform=incoming.platform,
+            )
+
+        hits = await self._retriever.search(
+            query=incoming.text,
+            user_id=incoming.user_id,
+            project_id=project_id,
+            top_k=5,
+        )
+
+        if self._quota is not None and await self._quota.is_exceeded(
+            incoming.user_id,
+        ):
+            logger.info("quota exceeded — search-only for user=%s",
+                        incoming.user_id)
+            return OutgoingMessage(
+                text=self._format_search_only(hits),
+                channel_id=incoming.channel_id,
+                platform=incoming.platform,
+            )
+
+        masked_query, restore_map = self._redactor.redact(incoming.text)
+        try:
+            self._redactor.abort_if_secrets(masked_query)
+        except Exception as exc:  # redactor raises SecretDetected
+            logger.info("redactor aborted (secret detected): %s", exc)
+            return OutgoingMessage(
+                text="질의에 비밀값이 포함되어 있습니다. 제거 후 재시도 해주세요.",
+                channel_id=incoming.channel_id,
+                platform=incoming.platform,
+            )
+
+        snippets = "\n".join(
+            f"[#{h.knowledge_id}] {h.title}: {h.body[:400]}" for h in hits
+        )
+        system = (
+            "Answer using ONLY the KB snippets below. Cite every factual "
+            "sentence with [#<id>] referencing only provided IDs."
+        )
+        user = f"KB:\n{snippets}\n\nQuestion: {masked_query}"
+        try:
+            resp = await self._router.chat([
+                LLMMessage(role="system", content=system),
+                LLMMessage(role="user", content=user),
+            ])
+            if self._quota is not None:
+                await self._quota.charge(
+                    incoming.user_id,
+                    resp.usage.input_tokens + resp.usage.output_tokens,
+                )
+        except AllProvidersFailed:
+            logger.warning("All LLM providers failed — search-only response")
+            return OutgoingMessage(
+                text="AI 답변 불가(모든 provider 실패), 검색만 모드:\n" +
+                     self._format_search_only(hits),
+                channel_id=incoming.channel_id,
+                platform=incoming.platform,
+            )
+        draft = resp.content or ""
+
+        try:
+            enforced: EnforcedAnswer = await self._citer.enforce(draft, hits)
+        except InsufficientEvidence:
+            logger.info("InsufficientEvidence → Top-3 fallback")
+            return OutgoingMessage(
+                text="확실한 답변 불가, 관련 근거 제시:\n" +
+                     self._format_search_only(hits),
+                channel_id=incoming.channel_id,
+                platform=incoming.platform,
+            )
+        if self._has_strong_signals(hits):
+            confidence = Confidence.HIGH
+        else:
+            confidence = await self._reviewer.score(enforced.text, hits)
+        restored_text = self._redactor.restore(enforced.text, restore_map)
+
+        answer_id = uuid.uuid4().hex[:8]
+        formatted = self._format(restored_text, enforced, confidence, answer_id)
+
+        await self._cache.set(
+            incoming.text, incoming.user_id, pid_str, formatted,
+        )
+
+        # NOTE: audit_log(db, ...) requires a real db pool in production; the
+        # db dependency will be injected in a later wiring phase (P3+).
+        # Tests monkeypatch qp.audit_log so db is not required there.
+        await audit_log(
+            actor=incoming.user_id,
+            action="query",
+            subject_type="org_knowledge",
+            subject_id=",".join(str(h.knowledge_id) for h in hits),
+            project_id=project_id,
+            metadata={
+                "confidence": confidence.value,
+                "answer_id": answer_id,
+                "tokens": resp.usage.input_tokens + resp.usage.output_tokens,
+            },
+        )
+
+        return OutgoingMessage(
+            text=formatted,
+            channel_id=incoming.channel_id,
+            platform=incoming.platform,
+        )
+
+    @staticmethod
+    def _has_strong_signals(hits) -> bool:
+        """Skip self-review when the retrieval signal is already strong:
+        ≥3 hits and the top hit scored ≥ 0.85 (RRF fused)."""
+        return len(hits) >= 3 and hits and hits[0].score >= 0.85
+
+    @staticmethod
+    def _confidence_badge(c: Confidence) -> str:
+        return {"high": "🟢", "medium": "🟡", "low": "🔴"}[c.value]
+
+    def _format(
+        self,
+        body: str,
+        enforced: EnforcedAnswer,
+        confidence: Confidence,
+        answer_id: str,
+    ) -> str:
+        lines = [body]
+        if enforced.citations:
+            cites = ", ".join(
+                f"<{c.uri}|{c.type}>" for c in enforced.citations
+            )
+            lines.append(f"📎 출처: {cites}")
+        lines.append(f"신뢰도: {self._confidence_badge(confidence)}")
+        if confidence is Confidence.LOW:
+            lines.append("⚠️ 담당자 확인 권장")
+        lines.append(f"answer_id={answer_id}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_search_only(hits) -> str:
+        if not hits:
+            return "검색만 모드: 관련 KB 없음."
+        lines = ["검색만 모드(일일 토큰 초과) — 관련 KB Top-3:"]
+        for h in hits[:3]:
+            uri = h.sources[0].uri if h.sources else ""
+            lines.append(f"• [#{h.knowledge_id}] {h.title} {uri}".rstrip())
+        return "\n".join(lines)

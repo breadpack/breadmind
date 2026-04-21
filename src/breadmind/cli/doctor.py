@@ -162,7 +162,7 @@ async def _run_fixes(
                 ok, message = await run_elevation_command(fix.elevation_command)
                 if ok:
                     applied += 1
-                    ui.success(f"    elevated command completed")
+                    ui.success("    elevated command completed")
                 else:
                     failed += 1
                     ui.error(f"    elevated command failed: {message}")

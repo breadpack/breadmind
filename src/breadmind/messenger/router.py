@@ -20,6 +20,8 @@ class IncomingMessage:
     is_approval: bool = False
     approval_action_id: str | None = None
     approved: bool | None = None
+    thread_ts: str | None = None
+    is_dm: bool = False
 
 @dataclass
 class OutgoingMessage:
