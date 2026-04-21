@@ -14,6 +14,11 @@ logger = logging.getLogger(__name__)
 _PERMALINK_RE = re.compile(r"https://[^/]+/archives/[A-Z0-9]+/p\d+")
 
 
+def _make_async_app(token: str):
+    from slack_bolt.async_app import AsyncApp
+    return AsyncApp(token=token)
+
+
 class SlackEnhancedGateway(SlackGateway):
     """Enhanced Slack gateway: mentions, DMs, threads, buttons, streaming,
     permalink-formatted citations. Extends the base P1 SlackGateway."""
@@ -145,3 +150,41 @@ class SlackEnhancedGateway(SlackGateway):
                 channel=channel_id, ts=ts, text=accumulated,
             )
         return ts
+
+    async def start(self) -> None:  # type: ignore[override]
+        self._app = _make_async_app(self._bot_token)
+
+        @self._app.event("app_mention")
+        async def _on_mention(event, say):
+            inc = self._build_incoming(event)
+            if self._on_message is not None:
+                resp = await self._on_message(inc)
+                if resp:
+                    await say(resp)
+
+        @self._app.event("message")
+        async def _on_message_event(event, say):
+            # Only DMs; channel messages come via app_mention
+            if event.get("channel_type") != "im":
+                return
+            inc = self._build_incoming(event)
+            if self._on_message is not None:
+                resp = await self._on_message(inc)
+                if resp:
+                    await say(resp)
+
+        @self._app.action(re.compile(r"^kb_(upvote|downvote|bookmark)_.+$"))
+        async def _on_kb_action(ack, body):
+            await ack()
+            action = (body.get("actions") or [{}])[0]
+            action_id = action.get("action_id", "")
+            user_id = (body.get("user") or {}).get("id", "")
+            await self._handle_feedback_action(action_id, user_id)
+
+        if self._app_token:
+            from slack_bolt.adapter.socket_mode.async_handler import (
+                AsyncSocketModeHandler,
+            )
+            handler = AsyncSocketModeHandler(self._app, self._app_token)
+            await handler.start_async()
+        logger.info("SlackEnhancedGateway started.")

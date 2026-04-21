@@ -134,3 +134,38 @@ async def test_stream_send_updates_message_incrementally():
     await gw.stream_send(channel_id="C1", chunks=chunks(), flush_every=1)
     assert len(posted) == 1
     assert updated[-1]["text"] == "Hello, world"
+
+
+async def test_start_registers_app_mention_and_action_handlers(monkeypatch):
+    registered_events: list[str] = []
+    registered_action_patterns: list = []
+
+    class FakeApp:
+        def __init__(self, token):
+            self.client = type("C", (), {})()
+
+        def event(self, name):
+            def deco(f):
+                registered_events.append(name)
+                return f
+            return deco
+
+        def action(self, pattern):
+            def deco(f):
+                registered_action_patterns.append(pattern)
+                return f
+            return deco
+
+    import breadmind.messenger.slack_enhanced as se_mod
+    monkeypatch.setattr(se_mod, "_make_async_app", lambda token: FakeApp(token))
+
+    gw = SlackEnhancedGateway(
+        bot_token="x", bot_user_id="U_BOT",
+        on_message=None, app_token=None,
+    )
+    # Skip socket mode start when app_token is missing (expected).
+    await gw.start()
+    assert "app_mention" in registered_events
+    assert "message" in registered_events
+    # Action handler registered with a matcher that covers all KB prefixes.
+    assert registered_action_patterns, "no action handler registered"
