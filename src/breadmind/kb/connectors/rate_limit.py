@@ -31,6 +31,17 @@ class HourlyPageBudget:
 
     The window is reset lazily when ``now() - window.start >= 3600`` on the
     next :meth:`consume` call for that project — there is no background timer.
+
+    .. warning::
+       **Single-process only.** State lives in a process-local ``dict``; it
+       is *not* shared across Celery worker processes, across gunicorn/uvicorn
+       workers, or across hosts. When deploying with multiple worker
+       processes each worker enforces an independent budget, so a project's
+       effective cap is ``limit * num_workers`` per hour.
+
+       For multi-worker deployments where strict global budget enforcement
+       matters, swap in a Redis-backed backend (out of scope for P5 —
+       tracked as a follow-up).
     """
 
     limit: int = 1000

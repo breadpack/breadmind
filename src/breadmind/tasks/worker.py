@@ -15,6 +15,11 @@ from celery.signals import worker_process_init
 
 from breadmind.tasks.celery_app import celery_app
 
+# Force task-module imports so every @celery_app.task decorator in
+# breadmind.kb.* has run by the time the worker handshakes with the
+# broker. These are import-for-side-effects only.
+import breadmind.kb.quality_eval  # noqa: E402,F401
+
 logger = logging.getLogger(__name__)
 
 # ── Worker-local singletons ─────────────────────────────────────────

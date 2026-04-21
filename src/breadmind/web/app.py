@@ -49,6 +49,8 @@ from breadmind.web.routes.webhook_automation import setup_webhook_automation_rou
 from breadmind.web.routes.pwa import setup_pwa_routes, send_push
 from breadmind.web.routes.review import router as review_router
 from breadmind.web.routes.ui import router as ui_router
+from breadmind.web.routes.kb_metrics import router as kb_metrics_router
+from breadmind.kb import tracing as kb_tracing
 
 logger = logging.getLogger(__name__)
 
@@ -429,6 +431,10 @@ class WebApp:
         # KB review UI — production ReviewQueue dependency is wired in a
         # later P5 task; until then the default dependency raises 500.
         app.include_router(review_router, prefix="/api/review")
+        # KB Prometheus metrics (/kb/metrics) — spec §8.4 metric family served
+        # from the prometheus_client default registry. The legacy /metrics
+        # endpoint below keeps serving the in-tree registry for back-compat.
+        app.include_router(kb_metrics_router)
         setup_export_routes(app, self)
         setup_backup_routes(app, self)
         setup_webhook_automation_routes(app, self)
@@ -494,6 +500,22 @@ class WebApp:
                 content=body,
                 media_type="text/plain; version=0.0.4; charset=utf-8",
             )
+
+        # --- OpenTelemetry tracing + auto-instrumentation (KB spec §8.4) ---
+        # Install tracer provider and FastAPI/asyncpg instrumentation at startup
+        # so spans emitted by breadmind.kb.tracing (kb.retrieve, kb.redact, ...)
+        # flow through the configured exporter (OTLP if OTEL_EXPORTER_OTLP_ENDPOINT
+        # is set, ConsoleSpanExporter otherwise). Guarded by idempotent install
+        # helpers so re-importing the app module in tests is safe.
+        @app.on_event("startup")
+        async def _install_kb_tracing():
+            try:
+                kb_tracing.install_default_provider()
+                kb_tracing.install_fastapi(app)
+                kb_tracing.install_asyncpg()
+                logger.info("KB tracing installed (FastAPI + asyncpg)")
+            except Exception as e:  # pragma: no cover - defensive
+                logger.warning("KB tracing install failed: %s", e)
 
         # --- API versioning (must come after all route registrations) ---
         setup_versioning(app)

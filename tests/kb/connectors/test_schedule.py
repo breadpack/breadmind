@@ -110,6 +110,73 @@ async def test_reload_beat_schedule_from_db_installs_schedule(monkeypatch):
         celery_app.conf.beat_schedule = original_schedule
 
 
+def test_beat_init_reload_handler_is_wired():
+    """The connector-schedule reload handler is registered on ``beat_init``.
+
+    Re-importing the celery_app module on every Beat start would be the
+    only guarantee Beat has a fresh schedule at boot; without a signal
+    handler, the schedule stays empty until the next ``/api/connectors``
+    write. The handler itself is best-effort (catches all exceptions and
+    logs), so the only contract we can lock in a unit test is that it is
+    actually attached to the ``beat_init`` signal.
+    """
+    from celery.signals import beat_init
+    # ``beat_init.receivers`` is a list of ``(lookup_key, ref)`` tuples.
+    import breadmind.tasks.celery_app  # noqa: F401 - ensure handler registered
+    assert beat_init.receivers, "beat_init has no receivers registered"
+    names = []
+    for _key, ref in beat_init.receivers:
+        target = ref() if callable(ref) else ref
+        if target is None:
+            continue
+        names.append(getattr(target, "__name__", repr(target)))
+    assert any("reload_connector_schedule" in n for n in names), (
+        f"no connector-schedule reload handler on beat_init; found {names}"
+    )
+
+
+def test_beat_init_handler_invokes_reload_and_skips_without_dsn(monkeypatch):
+    """The handler delegates to ``reload_beat_schedule_from_db`` when DSN is set,
+    and no-ops (without raising) when no DSN is configured."""
+    import breadmind.tasks.celery_app as celery_mod
+
+    # ── Path 1: no DSN → log + return, no reload. ───────────────────
+    monkeypatch.delenv("BREADMIND_DSN", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    called = {"n": 0}
+
+    def _boom(*a, **kw):  # pragma: no cover - must not be called
+        called["n"] += 1
+
+    # Patch the lazy imports so a stray call would blow up loudly.
+    import breadmind.kb.connectors.schedule as sched_mod
+    monkeypatch.setattr(sched_mod, "reload_beat_schedule_from_db", _boom)
+    celery_mod._reload_connector_schedule_on_beat_init(sender=None)
+    assert called["n"] == 0
+
+    # ── Path 2: DSN set → reload invoked exactly once. ──────────────
+    monkeypatch.setenv("BREADMIND_DSN", "postgresql://stub")
+
+    async def _fake_reload(db):
+        called["n"] += 1
+
+    class _FakeDB:
+        def __init__(self, dsn):
+            pass
+
+        async def connect(self):
+            return None
+
+        async def disconnect(self):
+            return None
+
+    monkeypatch.setattr(sched_mod, "reload_beat_schedule_from_db", _fake_reload)
+    import breadmind.storage.database as db_mod
+    monkeypatch.setattr(db_mod, "Database", _FakeDB)
+    celery_mod._reload_connector_schedule_on_beat_init(sender=None)
+    assert called["n"] == 1
+
+
 def test_confluence_sync_task_runs_async_body(monkeypatch):
     """The Celery task entrypoint dispatches to ``run_confluence_sync``."""
     from breadmind.kb.connectors import schedule as sched_mod

@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import json
 import logging
+from contextlib import asynccontextmanager
 from typing import Any
 from uuid import UUID
 
+from breadmind.kb import metrics as kb_metrics
 from breadmind.kb.types import ExtractedCandidate, PromotionCandidate
 
 logger = logging.getLogger(__name__)
@@ -40,9 +42,56 @@ def _vec(values: list[float]) -> str:
 
 
 class ReviewQueue:
-    def __init__(self, db, slack_client) -> None:
+    def __init__(self, db, slack_client=None) -> None:
         self._db = db
         self._slack = slack_client
+
+    @property
+    def db(self):
+        """Public alias for the underlying DB handle.
+
+        The metrics / ops-readiness helpers (:meth:`refresh_backlog_metric`,
+        :meth:`build_for_tests`) reach into the DB directly rather than via
+        :meth:`acquire`, so they stay usable with lightweight asyncpg-style
+        stubs that only implement ``fetchrow``/``fetch``/``execute``.
+        """
+        return self._db
+
+    @classmethod
+    async def build_for_tests(cls, *, pending: int = 0) -> "ReviewQueue":
+        """Return a ReviewQueue wired against a deterministic in-memory DB.
+
+        The ``pending`` argument controls what a subsequent
+        :meth:`refresh_backlog_metric` call sees — useful for exercising
+        the gauge publication path without a live postgres fixture.
+        """
+        return cls(db=_InMemoryBacklogDB(pending=pending), slack_client=None)
+
+    async def refresh_backlog_metric(self) -> int:
+        """Count pending ``promotion_candidates`` and publish to the
+        ``breadmind_promotion_backlog`` Prometheus gauge. Returns the
+        count so callers can log or act on it.
+
+        Works with either a raw asyncpg-style handle (``db.fetchrow``
+        exists directly — in-memory stubs and asyncpg Pools) or a
+        Database wrapper that exposes ``acquire()`` (the production
+        :class:`breadmind.storage.database.Database`).
+        """
+        sql = (
+            "SELECT COUNT(*) AS n FROM promotion_candidates "
+            "WHERE status='pending'"
+        )
+        if hasattr(self.db, "fetchrow"):
+            row = await self.db.fetchrow(sql)
+        else:
+            async with self.db.acquire() as conn:
+                row = await conn.fetchrow(sql)
+        n = int(row["n"]) if row else 0
+        try:
+            kb_metrics.set_promotion_backlog(n)
+        except Exception:  # pragma: no cover — metrics must never break prod
+            logger.exception("set_promotion_backlog failed")
+        return n
 
     async def enqueue(self, candidate: ExtractedCandidate) -> int:
         status = "needs_edit" if candidate.sensitive_flag else "pending"
@@ -334,6 +383,109 @@ class ReviewQueue:
                 project_id=row["project_id"],
                 metadata={"body_chars": len(new_body)},
             )
+
+
+    # ------------------------------------------------------------------ e2e facade
+    @classmethod
+    def build_for_e2e(cls, *, db, slack) -> "_E2EReviewQueueFacade":
+        """Return a facade wrapping the real :class:`ReviewQueue` with
+        ``notify_lead`` + ``approve(candidate_id, reviewer, source_channel)``
+        helpers expected by the E2E promotion flow test.
+
+        The facade wraps the raw ``asyncpg.Connection`` in a pool-shaped
+        adapter (production queue uses ``async with db.acquire()``) and
+        monkey-patches the module-level ``_embed_text`` stub to use the
+        deterministic 1024-d embedder from ``e2e_factories``.
+        """
+        return _E2EReviewQueueFacade(db=db, slack=slack)
+
+
+class _E2EReviewQueueFacade:
+    """Slack-facing review flow façade for E2E tests.
+
+    Exposes:
+
+    * ``notify_lead(cand_id)`` — posts a pending-review message to a
+      project-lead channel via the injected FakeSlackClient.
+    * ``approve(candidate_id, reviewer, source_channel) -> int`` — runs
+      the real :meth:`ReviewQueue.approve` and then stamps
+      ``org_knowledge.source_channel`` so the approved row is scoped to
+      the posting channel. Returns the new ``org_knowledge.id``.
+    """
+
+    _LEAD_CHANNEL: str = "C-ALPHA-LEAD-REVIEW"
+
+    def __init__(self, *, db, slack) -> None:
+        self._db = db
+        self._slack = slack
+        self._queue: ReviewQueue | None = None
+        self._patched = False
+
+    async def _ensure_queue(self) -> ReviewQueue:
+        if self._queue is not None:
+            return self._queue
+        from breadmind.kb import e2e_factories as ef
+        from breadmind.kb import review_queue as rq_mod
+
+        if not self._patched:
+            embedder = ef.StableEmbedder()
+
+            async def _embed(text: str):
+                return await embedder.encode(text)
+
+            rq_mod._embed_text = _embed  # type: ignore[assignment]
+            self._patched = True
+
+        pool = ef.AsyncpgConnectionPool(self._db)
+        await ef.ensure_e2e_schema(self._db)
+        self._queue = ReviewQueue(pool, slack_client=self._slack)
+        return self._queue
+
+    async def notify_lead(self, cand_id: int) -> None:
+        await self._ensure_queue()
+        await self._slack.chat_postMessage(
+            channel=self._LEAD_CHANNEL,
+            text=(
+                f":mag: 신규 KB 후보 검토 요청 (candidate_id={cand_id}). "
+                "'/kb review approve' 또는 버튼으로 승인해주세요."
+            ),
+        )
+
+    async def approve(
+        self,
+        *,
+        candidate_id: int,
+        reviewer: str,
+        source_channel: str | None = None,
+    ) -> int:
+        queue = await self._ensure_queue()
+        kid = await queue.approve(candidate_id=candidate_id, reviewer=reviewer)
+        if source_channel is not None:
+            await self._db.execute(
+                "UPDATE org_knowledge SET source_channel=$1 WHERE id=$2",
+                source_channel, kid,
+            )
+        return int(kid)
+
+
+class _InMemoryBacklogDB:
+    """Minimal async-DB stub exposing only ``fetchrow`` for the
+    :meth:`ReviewQueue.refresh_backlog_metric` path. Used by
+    :meth:`ReviewQueue.build_for_tests` so metric tests can run without
+    a postgres fixture.
+    """
+
+    def __init__(self, *, pending: int) -> None:
+        self._pending = pending
+
+    async def fetchrow(self, sql: str, *_args: Any) -> dict[str, int] | None:
+        if "FROM promotion_candidates" in sql:
+            return {"n": self._pending}
+        return None
+
+    @asynccontextmanager
+    async def acquire(self):  # pragma: no cover — not exercised in facade tests
+        yield self
 
 
 async def _audit(

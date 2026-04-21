@@ -1,0 +1,41 @@
+{
+  "title": "BreadMind KB — Operations",
+  "uid": "breadmind-kb-ops",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "timezone": "browser",
+  "tags": ["breadmind", "kb", "ops"],
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "LLM latency P50 / P95",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.5, sum by (le) (rate(breadmind_llm_latency_seconds_bucket[5m])))", "legendFormat": "p50" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum by (le) (rate(breadmind_llm_latency_seconds_bucket[5m])))", "legendFormat": "p95" }
+      ]
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "Query error rate",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(breadmind_query_total{status=\"error\"}[5m])) / clamp_min(sum(rate(breadmind_query_total[5m])),1)", "legendFormat": "error ratio" }
+      ]
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "Fallback rate (non-primary providers)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        { "refId": "A", "expr": "sum by (provider) (rate(breadmind_llm_latency_seconds_count{provider!=\"anthropic\"}[5m])) / clamp_min(sum(rate(breadmind_llm_latency_seconds_count[5m])),1)", "legendFormat": "{{provider}}" }
+      ]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Estimated cost / day (USD)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        { "refId": "A", "expr": "(sum(increase(breadmind_llm_tokens_total{provider=\"anthropic\",direction=\"input\"}[1d])) * 3 + sum(increase(breadmind_llm_tokens_total{provider=\"anthropic\",direction=\"output\"}[1d])) * 15 + sum(increase(breadmind_llm_tokens_total{provider=\"azure\",direction=\"input\"}[1d])) * 2.5 + sum(increase(breadmind_llm_tokens_total{provider=\"azure\",direction=\"output\"}[1d])) * 10) / 1000" }
+      ]
+    }
+  ]
+}

@@ -16,23 +16,13 @@ from typing import Any, ClassVar
 import aiohttp
 from markdownify import markdownify as md
 
+from breadmind.kb import metrics as kb_metrics
 from breadmind.kb.connectors.base import BaseConnector, SyncResult
 from breadmind.kb.connectors.rate_limit import (
     BudgetExceeded,
     HourlyPageBudget,
 )
-
-try:
-    from breadmind.kb.types import SourceMeta  # provided by P3
-except ImportError:  # pragma: no cover — defensive during parallel dev
-    @dataclass(frozen=True)
-    class SourceMeta:  # type: ignore[no-redef]
-        source_type: str
-        source_uri: str
-        source_ref: str | None
-        original_user: str | None
-        extracted_from: str
-        project_id: uuid.UUID
+from breadmind.kb.types import SourceMeta
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +76,8 @@ class ConfluenceConnector(BaseConnector):
         audit_log: Any | None = None,
     ) -> None:
         super().__init__(db)
+        if not base_url.lower().startswith("https://"):
+            raise ValueError("base_url must use https://")
         self._base_url = base_url.rstrip("/")
         self._credentials_ref = credentials_ref
         self._extractor = extractor
@@ -286,6 +278,13 @@ class ConfluenceConnector(BaseConnector):
         # is flagged stale and a retirement candidate is enqueued for review.
         await self._scan_retirements(project_id, scope_key)
 
+        # Publish breadmind_kb_size_bytes so ops dashboards see the post-sync
+        # KB volume without waiting for a separate scheduled refresh.
+        try:
+            await self.refresh_size_metric()
+        except Exception:  # pragma: no cover — metrics must never break prod
+            logger.exception("refresh_size_metric failed")
+
         logger.info(
             "confluence.sync.done",
             extra={"project_id": str(project_id), "scope_key": scope_key,
@@ -402,3 +401,197 @@ class ConfluenceConnector(BaseConnector):
             )
         except Exception:
             logger.exception("kb_audit_log write failed")
+
+    # ── Metrics ───────────────────────────────────────────────────────
+
+    async def refresh_size_metric(self) -> None:
+        """Aggregate ``org_knowledge`` body bytes per project and publish
+        to the ``breadmind_kb_size_bytes{project=...}`` Prometheus gauge.
+
+        Runs at the tail of every :meth:`_do_sync` pass so the gauge
+        stays fresh across connector iterations, and can also be called
+        standalone from the P5 build-for-tests harness.
+        """
+        rows = await self._db.fetch(
+            "SELECT project_id, COALESCE(SUM(OCTET_LENGTH(body)),0) AS b "
+            "FROM org_knowledge WHERE superseded_by IS NULL "
+            "GROUP BY project_id"
+        )
+        for r in rows:
+            try:
+                kb_metrics.set_kb_size_bytes(
+                    project=str(r["project_id"]),
+                    bytes_=int(r["b"]),
+                )
+            except Exception:  # pragma: no cover — metrics must never break prod
+                logger.exception("set_kb_size_bytes failed for %s", r)
+
+    @classmethod
+    def build_for_e2e(
+        cls,
+        *,
+        db,
+        fixtures_path: str,
+        project_name: str = "pilot-alpha",
+    ) -> "_E2EConfluenceFacade":
+        """Factory for the Task 21 E2E test — skips HTTP entirely.
+
+        Reads Confluence page fixtures from ``fixtures_path`` (the file
+        :mod:`scripts.seed_pilot_data` writes at sync time), converts each
+        page to an :class:`ExtractedCandidate`, and enqueues them through
+        a real :class:`ReviewQueue` against the testcontainers Postgres.
+
+        The returned facade exposes:
+
+        * ``sync_once()`` — processes the fixture and returns the
+          number of candidates enqueued.
+        * ``auto_approve_seed_candidates(reviewer)`` — approves every
+          pending candidate for the project via the real approve()
+          path (with a monkey-patched embedder).
+        """
+        return _E2EConfluenceFacade(
+            db=db, fixtures_path=fixtures_path, project_name=project_name,
+        )
+
+    @classmethod
+    async def build_for_tests(
+        cls,
+        *,
+        project_id: str = "proj-a",
+        body_bytes: int = 0,
+    ) -> "ConfluenceConnector":
+        """Factory for metric-path tests.
+
+        Returns a ConfluenceConnector whose DB stub emits a single
+        ``SELECT project_id, SUM(OCTET_LENGTH(body))`` row so a bare
+        :meth:`refresh_size_metric` call can drive the gauge without a
+        live postgres fixture or aiohttp session.
+        """
+        class _SizeDB:
+            async def fetch(self, sql: str, *_args: Any):
+                if "org_knowledge" in sql and "OCTET_LENGTH(body)" in sql:
+                    return [{"project_id": project_id, "b": body_bytes}]
+                return []
+
+            async def fetchrow(self, *_a: Any, **_kw: Any):
+                return None
+
+            async def execute(self, *_a: Any, **_kw: Any):
+                return None
+
+        class _NullVault:
+            async def retrieve(self, *_a, **_kw):
+                return None
+
+        class _NullExtractor:
+            async def extract(self, *_a, **_kw):
+                return []
+
+        class _NullReviewQueue:
+            async def enqueue(self, *_a, **_kw):
+                return 0
+
+        return cls(
+            db=_SizeDB(),
+            base_url="https://test.local",
+            credentials_ref="test:none",
+            extractor=_NullExtractor(),
+            review_queue=_NullReviewQueue(),
+            vault=_NullVault(),
+        )
+
+
+class _E2EConfluenceFacade:
+    """Fixture-driven Confluence connector facade for the E2E test.
+
+    Reads the JSON written by :mod:`scripts.seed_pilot_data` (which
+    contains ``{id, title, space, body}`` entries), synthesises an
+    :class:`ExtractedCandidate` per page, and enqueues each via a real
+    :class:`ReviewQueue`. Skips HTTP / auth / retry logic entirely —
+    those paths are covered by :mod:`tests/kb/connectors/` unit tests.
+    """
+
+    def __init__(
+        self, *, db, fixtures_path: str, project_name: str,
+    ) -> None:
+        self._db = db
+        self._fixtures_path = fixtures_path
+        self._project_name = project_name
+        self._queue = None
+        self._project_id = None
+
+    async def _ensure(self) -> None:
+        if self._queue is not None:
+            return
+        from breadmind.kb import e2e_factories as ef
+        from breadmind.kb import review_queue as rq_mod
+        from breadmind.kb.review_queue import ReviewQueue
+
+        await ef.ensure_e2e_schema(self._db)
+        pool = ef.AsyncpgConnectionPool(self._db)
+        self._project_id = await ef.resolve_project_id(
+            self._db, self._project_name,
+        )
+        # Monkey-patch the embedder shim (same pattern as
+        # ReviewQueue.build_for_e2e) so approve() can produce a pgvector.
+        embedder = ef.StableEmbedder()
+
+        async def _embed(text: str):
+            return await embedder.encode(text)
+
+        rq_mod._embed_text = _embed  # type: ignore[assignment]
+        self._queue = ReviewQueue(pool, slack_client=None)
+
+    async def sync_once(self) -> int:
+        """Read fixture pages and enqueue one candidate per page.
+
+        Returns the number of enqueued candidates.
+        """
+        from breadmind.kb import e2e_factories as ef
+        from breadmind.kb.types import ExtractedCandidate, Source
+
+        await self._ensure()
+        pages = ef.load_confluence_fixtures(self._fixtures_path)
+        enqueued = 0
+        for p in pages:
+            cand = ExtractedCandidate(
+                proposed_title=p.get("title", ""),
+                proposed_body=p.get("body", ""),
+                proposed_category="bug_fix"
+                if "leak" in (p.get("title", "") + p.get("body", "")).lower()
+                else "onboarding",
+                confidence=0.9,
+                sources=[Source(
+                    type="confluence",
+                    uri=f"https://wiki/{p.get('space', 'X')}/{p.get('id', '?')}",
+                    ref=p.get("id"),
+                )],
+                original_user=None,
+                project_id=self._project_id,
+                sensitive_flag=False,
+            )
+            await self._queue.enqueue(cand)
+            enqueued += 1
+        return enqueued
+
+    async def auto_approve_seed_candidates(self, *, reviewer: str) -> list[int]:
+        """Approve every pending candidate for the project.
+
+        Returns the list of new ``org_knowledge.id`` values so tests can
+        assert on specific rows if needed.
+        """
+        await self._ensure()
+        pending_ids = [
+            r["id"] for r in await self._db.fetch(
+                "SELECT id FROM promotion_candidates "
+                "WHERE project_id=$1 AND status='pending'",
+                self._project_id,
+            )
+        ]
+        kids: list[int] = []
+        for cid in pending_ids:
+            kid = await self._queue.approve(
+                candidate_id=int(cid), reviewer=reviewer,
+            )
+            kids.append(int(kid))
+        return kids
