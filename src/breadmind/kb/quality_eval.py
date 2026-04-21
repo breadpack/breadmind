@@ -197,8 +197,10 @@ def open_pr(report_path: Path) -> None:
 
 
 # ── Celery entrypoint ──────────────────────────────────────────────────
+# Imported at the bottom of the module so that the Gauge objects and
+# dataclasses are fully defined before the task decorator runs.
 
-from breadmind.tasks.celery_app import celery_app
+from breadmind.tasks.celery_app import celery_app  # noqa: E402
 
 
 @celery_app.task(name="breadmind.kb.quality_eval.weekly")
