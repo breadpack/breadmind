@@ -97,9 +97,22 @@ async def db(pg_container) -> Database:
                 promoted_at TIMESTAMPTZ,
                 revision INT NOT NULL DEFAULT 1,
                 superseded_by BIGINT REFERENCES org_knowledge(id),
+                rank_weight DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+                flag_count INTEGER NOT NULL DEFAULT 0,
                 created_at TIMESTAMPTZ DEFAULT now()
             );
         """)
+        # Defensive ALTERs: if a prior test run created the table without
+        # the P3 columns, ``CREATE TABLE IF NOT EXISTS`` is a no-op and
+        # the columns would be missing. Mirrors migration 005.
+        await conn.execute(
+            "ALTER TABLE org_knowledge "
+            "ADD COLUMN IF NOT EXISTS rank_weight DOUBLE PRECISION NOT NULL DEFAULT 0.0"
+        )
+        await conn.execute(
+            "ALTER TABLE org_knowledge "
+            "ADD COLUMN IF NOT EXISTS flag_count INTEGER NOT NULL DEFAULT 0"
+        )
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_org_kn_tsv ON org_knowledge USING gin(tsv);"
         )
@@ -162,6 +175,22 @@ async def db(pg_container) -> Database:
                 paused_at   TIMESTAMPTZ
             );
         """)
+        # kb_feedback — mirrors migration 005_kb_p3_feedback.
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS kb_feedback (
+                id              BIGSERIAL PRIMARY KEY,
+                knowledge_id    BIGINT REFERENCES org_knowledge(id) ON DELETE CASCADE,
+                user_id         TEXT NOT NULL,
+                kind            TEXT NOT NULL,
+                query_text      TEXT,
+                answer_text     TEXT,
+                created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+        """)
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_kb_feedback_knowledge "
+            "ON kb_feedback(knowledge_id, kind);"
+        )
 
     try:
         yield database
@@ -175,6 +204,7 @@ async def db(pg_container) -> Database:
         # Drop promotion_candidates before org_projects to avoid FK violation.
         await conn.execute("DROP TABLE IF EXISTS promotion_candidates CASCADE;")
         await conn.execute("DROP TABLE IF EXISTS kb_sources CASCADE;")
+        await conn.execute("DROP TABLE IF EXISTS kb_feedback CASCADE;")
         await conn.execute("DROP TABLE IF EXISTS org_knowledge CASCADE;")
         await conn.execute("DROP TABLE IF EXISTS org_channel_map CASCADE;")
         await conn.execute("DROP TABLE IF EXISTS kb_extraction_pause CASCADE;")
