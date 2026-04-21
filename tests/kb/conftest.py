@@ -129,6 +129,30 @@ async def db(pg_container) -> Database:
                 metadata JSONB
             );
         """)
+        # promotion_candidates — mirrors migration 004_org_kb, plus
+        # sensitive_flag column added in 005_kb_p3_feedback.
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS promotion_candidates (
+                id                  BIGSERIAL PRIMARY KEY,
+                project_id          UUID REFERENCES org_projects(id),
+                extracted_from      TEXT NOT NULL,
+                original_user       TEXT,
+                proposed_title      TEXT,
+                proposed_body       TEXT,
+                proposed_category   TEXT,
+                sources_json        JSONB,
+                confidence          REAL,
+                status              TEXT NOT NULL DEFAULT 'pending',
+                reviewer            TEXT,
+                reviewed_at         TIMESTAMPTZ,
+                created_at          TIMESTAMPTZ DEFAULT now(),
+                sensitive_flag      BOOLEAN NOT NULL DEFAULT FALSE
+            );
+        """)
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_promo_project_status "
+            "ON promotion_candidates(project_id, status);"
+        )
 
     try:
         yield database
@@ -139,6 +163,8 @@ async def db(pg_container) -> Database:
             os.environ["DATABASE_URL"] = _prev_db_url
 
     async with database.acquire() as conn:
+        # Drop promotion_candidates before org_projects to avoid FK violation.
+        await conn.execute("DROP TABLE IF EXISTS promotion_candidates CASCADE;")
         await conn.execute("DROP TABLE IF EXISTS kb_sources CASCADE;")
         await conn.execute("DROP TABLE IF EXISTS org_knowledge CASCADE;")
         await conn.execute("DROP TABLE IF EXISTS org_channel_map CASCADE;")
