@@ -16,6 +16,29 @@ _SIMILARITY_THRESHOLD = 0.88
 _BACKPRESSURE_LIMIT = 500
 
 
+async def _embed_text(text: str) -> list[float]:
+    """Default embedding helper.
+
+    Tests monkeypatch ``breadmind.kb.review_queue._embed_text`` to return a
+    deterministic stub vector without a real embedding backend. Production
+    wiring will replace this stub in a later task (P5 ops).
+    """
+    # TODO(P5 ops): wire to EmbeddingService.encode via the DI container.
+    raise NotImplementedError(
+        "_embed_text must be monkey-patched in tests or wired in production"
+    )
+
+
+def _vec(values: list[float]) -> str:
+    """Encode a list[float] as a pgvector literal string.
+
+    Mirrors the convention used by KBRetriever (`retriever.py`): pgvector
+    accepts ``'[f1,f2,...]'`` with 6-decimal precision when cast via
+    ``$1::vector`` in SQL.
+    """
+    return "[" + ",".join(f"{float(v):.6f}" for v in values) + "]"
+
+
 class ReviewQueue:
     def __init__(self, db, slack_client) -> None:
         self._db = db
@@ -110,6 +133,141 @@ class ReviewQueue:
             )
             for r in rows
         ]
+
+    async def approve(self, candidate_id: int, reviewer: str) -> int:
+        """Promote a candidate into ``org_knowledge`` and notify its author.
+
+        Transactional steps:
+          1. ``SELECT ... FOR UPDATE`` the candidate, validating status.
+          2. Generate an embedding via the module-level ``_embed_text``.
+          3. Insert into ``org_knowledge`` (with embedding + promoted_* fields).
+          4. Copy ``sources_json`` rows into ``kb_sources``.
+          5. Detect a near-duplicate (cosine > ``_SIMILARITY_THRESHOLD``) in
+             the same project and chain ``superseded_by`` on the older row.
+          6. Mark the candidate ``approved`` + set reviewer/reviewed_at.
+          7. Audit with action ``promote``.
+
+        Outside the transaction, best-effort DM to the original contributor.
+        Returns the new ``org_knowledge.id``.
+        """
+        async with self._db.acquire() as conn:
+            async with conn.transaction():
+                cand = await conn.fetchrow(
+                    "SELECT * FROM promotion_candidates WHERE id=$1 FOR UPDATE",
+                    candidate_id,
+                )
+                if not cand:
+                    raise ValueError(f"candidate {candidate_id} not found")
+                if cand["status"] not in ("pending", "needs_edit"):
+                    raise ValueError(
+                        f"candidate {candidate_id} status={cand['status']}"
+                    )
+
+                embedding = await _embed_text(
+                    f"{cand['proposed_title']}\n{cand['proposed_body']}"
+                )
+                vec_literal = _vec(embedding)
+
+                kid = await conn.fetchval(
+                    """
+                    INSERT INTO org_knowledge
+                        (project_id, title, body, category, promoted_from,
+                         promoted_by, promoted_at, embedding)
+                    VALUES ($1, $2, $3, $4, $5, $6, now(), $7::vector)
+                    RETURNING id
+                    """,
+                    cand["project_id"],
+                    cand["proposed_title"],
+                    cand["proposed_body"],
+                    cand["proposed_category"],
+                    cand["extracted_from"],
+                    reviewer,
+                    vec_literal,
+                )
+
+                # Copy sources (Task 6 writes column-name variant keys).
+                raw = cand["sources_json"] or []
+                if isinstance(raw, str):
+                    raw = json.loads(raw)
+                for s in raw:
+                    await conn.execute(
+                        """
+                        INSERT INTO kb_sources
+                            (knowledge_id, source_type, source_uri, source_ref)
+                        VALUES ($1, $2, $3, $4)
+                        """,
+                        kid,
+                        s.get("source_type"),
+                        s.get("source_uri"),
+                        s.get("source_ref"),
+                    )
+
+                # Detect near-duplicate existing knowledge → superseded_by chain
+                dup_id = await conn.fetchval(
+                    """
+                    SELECT id FROM org_knowledge
+                    WHERE project_id = $1
+                      AND id <> $2
+                      AND superseded_by IS NULL
+                      AND embedding IS NOT NULL
+                      AND 1 - (embedding <=> $3::vector) > $4
+                    ORDER BY embedding <=> $3::vector
+                    LIMIT 1
+                    """,
+                    cand["project_id"],
+                    kid,
+                    vec_literal,
+                    _SIMILARITY_THRESHOLD,
+                )
+                if dup_id:
+                    await conn.execute(
+                        "UPDATE org_knowledge SET superseded_by=$1 WHERE id=$2",
+                        kid,
+                        dup_id,
+                    )
+
+                await conn.execute(
+                    """
+                    UPDATE promotion_candidates
+                    SET status='approved', reviewer=$2, reviewed_at=now()
+                    WHERE id=$1
+                    """,
+                    candidate_id,
+                    reviewer,
+                )
+
+                await _audit(
+                    conn,
+                    actor=reviewer,
+                    action="promote",
+                    subject_type="org_knowledge",
+                    subject_id=str(kid),
+                    project_id=cand["project_id"],
+                    metadata={
+                        "candidate_id": candidate_id,
+                        "category": cand["proposed_category"],
+                        "superseded": dup_id,
+                    },
+                )
+
+        # DM original user (best effort, outside transaction).
+        if cand["original_user"]:
+            try:
+                opened = await self._slack.conversations_open(
+                    users=cand["original_user"]
+                )
+                dm_channel = opened["channel"]["id"]
+                await self._slack.chat_postMessage(
+                    channel=dm_channel,
+                    text=(
+                        ":tada: Your contribution was promoted to the team KB: "
+                        f"*{cand['proposed_title']}* (by <@{reviewer}>)."
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("DM contributor failed: %s", exc)
+
+        return int(kid)
 
 
 async def _audit(
