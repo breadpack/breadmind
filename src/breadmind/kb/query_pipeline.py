@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from uuid import UUID
 
-from breadmind.kb.types import Confidence, EnforcedAnswer
+from breadmind.kb.types import Confidence, EnforcedAnswer, InsufficientEvidence
 from breadmind.llm.base import LLMMessage
 from breadmind.messenger.router import IncomingMessage, OutgoingMessage
 
@@ -104,7 +104,16 @@ class QueryPipeline:
         ])
         draft = resp.content or ""
 
-        enforced: EnforcedAnswer = await self._citer.enforce(draft, hits)
+        try:
+            enforced: EnforcedAnswer = await self._citer.enforce(draft, hits)
+        except InsufficientEvidence:
+            logger.info("InsufficientEvidence → Top-3 fallback")
+            return OutgoingMessage(
+                text="확실한 답변 불가, 관련 근거 제시:\n" +
+                     self._format_search_only(hits),
+                channel_id=incoming.channel_id,
+                platform=incoming.platform,
+            )
         confidence: Confidence = await self._reviewer.score(enforced.text, hits)
         restored_text = self._redactor.restore(enforced.text, restore_map)
 

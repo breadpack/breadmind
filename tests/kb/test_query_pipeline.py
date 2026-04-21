@@ -125,3 +125,18 @@ async def test_cache_hit_short_circuits(fake_redis):
     assert "cached-body" in out.text
     mocks["retriever"].search.assert_not_awaited()
     mocks["router"].chat.assert_not_awaited()
+
+
+async def test_insufficient_evidence_falls_back_to_top3(fake_redis):
+    from breadmind.kb.types import InsufficientEvidence
+    pipeline, mocks = _pipeline_with_mocks(fake_redis)
+    mocks["citer"].enforce = AsyncMock(
+        side_effect=InsufficientEvidence("no support")
+    )
+    inc = IncomingMessage(
+        text="obscure question", user_id="U_ALICE",
+        channel_id="C1", platform="slack",
+    )
+    out = await pipeline.answer(inc)
+    assert "확실한 답변 불가" in out.text or "근거" in out.text
+    assert "https://slack/p1" in out.text
