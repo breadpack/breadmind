@@ -1,0 +1,39 @@
+{
+  "title": "BreadMind KB — Quality",
+  "uid": "breadmind-kb-quality",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-7d", "to": "now" },
+  "tags": ["breadmind", "kb", "quality"],
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "Confidence distribution",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "sum by (confidence) (rate(breadmind_query_total[5m]))", "legendFormat": "{{confidence}}" }
+      ]
+    },
+    {
+      "id": 2, "type": "stat", "title": "👍 / (👍+👎) ratio",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "breadmind_quality_user_satisfaction" }
+      ]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Citation failure rate (weekly)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        { "refId": "A", "expr": "1 - breadmind_quality_citation_accuracy" }
+      ]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Hallucination rate (weekly)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        { "refId": "A", "expr": "breadmind_quality_hallucination_rate" }
+      ]
+    }
+  ]
+}
