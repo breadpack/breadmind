@@ -259,6 +259,16 @@ _TSV_INDEX = (
     "ON org_knowledge USING gin(tsv);"
 )
 
+# ``ON CONFLICT (name) DO NOTHING`` on ``org_projects`` requires a unique
+# index on ``name``. Migration 004 doesn't declare one (see
+# ``scripts/seed_pilot_data.py::_upsert_project`` for the production
+# workaround); install it here so E2E tests using the idiomatic
+# ``ON CONFLICT (name)`` syntax work without touching migrations.
+_ORG_PROJECTS_NAME_UQ = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_org_projects_name "
+    "ON org_projects(name);"
+)
+
 
 # Rows intentionally keyed to the three test queries in
 # tests/e2e/test_query_full_path.py + the promotion + confluence tests.
@@ -289,6 +299,7 @@ async def ensure_e2e_schema(conn) -> None:
     """
     await conn.execute(_TSV_DDL)
     await conn.execute(_TSV_INDEX)
+    await conn.execute(_ORG_PROJECTS_NAME_UQ)
 
 
 async def seed_e2e_knowledge(

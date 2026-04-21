@@ -38,6 +38,27 @@ def _seed(pg_dsn, _apply_migrations):
     )
 
 
+@pytest.fixture(scope="session", autouse=True)
+async def _ensure_e2e_schema_once(pg_dsn, _seed):
+    """Install the E2E-only DDL bits that migrations skip.
+
+    ``QueryPipeline.build_for_e2e`` lazy-installs this on first use via
+    :func:`breadmind.kb.e2e_factories.ensure_e2e_schema`, but several
+    tests execute ``INSERT ... ON CONFLICT (name)`` style DDL on
+    ``org_projects`` *before* calling ``build_for_e2e``. Running the
+    augmentation once at session start avoids test-order dependencies.
+    """
+    import asyncpg
+
+    from breadmind.kb.e2e_factories import ensure_e2e_schema
+
+    conn = await asyncpg.connect(dsn=pg_dsn)
+    try:
+        await ensure_e2e_schema(conn)
+    finally:
+        await conn.close()
+
+
 @pytest.fixture
 async def db(pg_dsn):
     conn = await asyncpg.connect(dsn=pg_dsn)
