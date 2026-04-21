@@ -123,3 +123,58 @@ async def process_thread_resolved(
         await queue.enqueue(c)
         count += 1
     return {"candidates_enqueued": count}
+
+
+# ── Trigger B: nightly personal-KB sweep ──────────────────────────────
+async def run_personal_nightly() -> dict[str, Any]:
+    """Process personal episodic memory added in the last 24h."""
+    from breadmind.kb.extractor import KnowledgeExtractor
+    from breadmind.kb.review_dispatcher import is_extraction_paused
+    from breadmind.kb.review_queue import ReviewQueue
+    from breadmind.kb.types import SourceMeta
+
+    db = _build_db()
+    slack = _build_slack_client()
+    if db is None or slack is None:
+        return {"error": "db or slack unavailable", "processed": 0}
+
+    async with db.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, user_id, project_id, content
+            FROM v2_episodic_memory
+            WHERE created_at > now() - interval '24 hours'
+              AND project_id IS NOT NULL
+            ORDER BY created_at ASC
+            """
+        )
+
+    extractor = KnowledgeExtractor(_build_llm_router(), _build_sensitive())
+    queue = ReviewQueue(db, slack)
+    processed = 0
+    enqueued = 0
+
+    for r in rows:
+        pid = r["project_id"]
+        if await is_extraction_paused(db, pid):
+            continue
+        meta = SourceMeta(
+            source_type="personal_kb",
+            source_uri=f"episodic://{r['id']}",
+            source_ref=str(r["id"]),
+            original_user=r["user_id"],
+            project_id=pid,
+            extracted_from="personal_nightly",
+        )
+        try:
+            cands = await extractor.extract(r["content"], meta)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("personal nightly extraction failed for row %s: %s",
+                           r["id"], exc)
+            continue
+        for c in cands:
+            await queue.enqueue(c)
+            enqueued += 1
+        processed += 1
+
+    return {"processed": processed, "enqueued": enqueued}

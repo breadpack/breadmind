@@ -86,3 +86,55 @@ async def test_process_thread_resolved_inserts_candidate(
         project_id=str(seeded_project),
     )
     assert result["candidates_enqueued"] == 1
+
+
+async def test_personal_nightly_processes_last_24h(
+    db, seeded_project, fake_slack_client, fake_llm_router, fake_sensitive,
+    monkeypatch,
+):
+    # Seed v2_episodic_memory with one row within 24h and one older.
+    async with db.acquire() as conn:
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS v2_episodic_memory (
+                id BIGSERIAL PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                project_id UUID,
+                content TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+        await conn.execute(
+            "INSERT INTO v2_episodic_memory (user_id, project_id, content, created_at)"
+            " VALUES ('U-MEMBER', $1, 'recent insight', now() - interval '2 hours')",
+            seeded_project,
+        )
+        await conn.execute(
+            "INSERT INTO v2_episodic_memory (user_id, project_id, content, created_at)"
+            " VALUES ('U-MEMBER', $1, 'old insight', now() - interval '48 hours')",
+            seeded_project,
+        )
+
+    fake_llm_router.script = [_json.dumps({"candidates": [{
+        "proposed_title": "insight",
+        "proposed_body": "b",
+        "proposed_category": "howto",
+        "confidence": 0.9,
+    }]})] * 5
+
+    from breadmind.kb import extraction_triggers as trig
+    monkeypatch.setattr(trig, "_build_llm_router", lambda: fake_llm_router)
+    monkeypatch.setattr(trig, "_build_sensitive", lambda: fake_sensitive)
+    monkeypatch.setattr(trig, "_build_slack_client", lambda: fake_slack_client)
+    monkeypatch.setattr(trig, "_build_db", lambda: db)
+
+    result = await trig.run_personal_nightly()
+    # Only the recent row is processed → one LLM call
+    assert len(fake_llm_router.calls) == 1
+    assert result["processed"] == 1
+
+    # Cleanup the test-scoped table so other tests don't see it (not strictly
+    # necessary per-test DB, but tidy)
+    async with db.acquire() as conn:
+        await conn.execute("DROP TABLE IF EXISTS v2_episodic_memory CASCADE")
