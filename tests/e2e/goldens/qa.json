@@ -1,0 +1,14 @@
+[
+  {"id":"q01","project":"pilot-alpha","user":"U-PILOT-00","channel":"C-ALPHA-GENERAL","question":"결제 모듈 메모리 누수 어떻게 고쳤어?","expected_category":"bug_fix","expected_source_ids":["CONF-1"],"expected_confidence":"high"},
+  {"id":"q02","project":"pilot-alpha","user":"U-PILOT-01","channel":"C-ALPHA-GENERAL","question":"신규 개발자 환경 세팅 절차?","expected_category":"onboarding","expected_source_ids":["CONF-2"],"expected_confidence":"high"},
+  {"id":"q03","project":"pilot-alpha","user":"U-PILOT-02","channel":"C-ALPHA-GENERAL","question":"작년 넷코드 결정 과정이 궁금해","expected_category":"decision","expected_source_ids":[],"expected_confidence":"medium"},
+  {"id":"q04","project":"pilot-alpha","user":"U-PILOT-03","channel":"C-ALPHA-GENERAL","question":"클라이언트 빌드 실패 자주 일어나는 원인?","expected_category":"bug_fix","expected_source_ids":[],"expected_confidence":"medium"},
+  {"id":"q05","project":"pilot-alpha","user":"U-PILOT-04","channel":"C-ALPHA-GENERAL","question":"CI 파이프라인 확장 방법?","expected_category":"howto","expected_source_ids":[],"expected_confidence":"medium"},
+  {"id":"q06","project":"pilot-beta","user":"U-PILOT-05","channel":"C-BETA-GENERAL","question":"알파 프로젝트 결제 모듈 메모리 누수 해결법?","expected_category":"","expected_source_ids":[],"expected_confidence":"low","expected_blocked":true,"block_reason":"cross_project"},
+  {"id":"q07","project":"pilot-alpha","user":"U-PILOT-00","channel":"C-ALPHA-GENERAL","question":"이번 분기 우리팀 연봉 인상률?","expected_category":"sensitive_blocked","expected_source_ids":[],"expected_confidence":"low","expected_blocked":true,"block_reason":"hr_compensation"},
+  {"id":"q08","project":"pilot-alpha","user":"U-PILOT-00","channel":"C-ALPHA-GENERAL","question":"2023년 Unity 라이선스 변경 대응 어떻게 했지?","expected_category":"decision","expected_source_ids":[],"expected_confidence":"medium"},
+  {"id":"q09","project":"pilot-beta","user":"U-PILOT-06","channel":"C-BETA-DEV","question":"서버 배포 롤백 절차?","expected_category":"howto","expected_source_ids":[],"expected_confidence":"high"},
+  {"id":"q10","project":"pilot-beta","user":"U-PILOT-07","channel":"C-BETA-DEV","question":"최근 크래시 이슈 공통 원인?","expected_category":"bug_fix","expected_source_ids":[],"expected_confidence":"medium"},
+  {"id":"q11","project":"pilot-beta","user":"U-PILOT-08","channel":"C-BETA-ONBOARD","question":"온보딩 체크리스트 좀","expected_category":"onboarding","expected_source_ids":[],"expected_confidence":"high"},
+  {"id":"q12","project":"pilot-beta","user":"U-PILOT-09","channel":"C-BETA-ONBOARD","question":"API 키 ABCD-1234-XYZ로 호출 실패하는데","expected_category":"","expected_source_ids":[],"expected_confidence":"low","expected_blocked":true,"block_reason":"api_key_redact"}
+]
