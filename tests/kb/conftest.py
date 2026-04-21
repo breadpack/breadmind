@@ -159,6 +159,16 @@ async def seeded_project(db) -> UUID:
             "INSERT INTO org_project_members(project_id, user_id, role) VALUES ($1,$2,$3)",
             pid, "U_ALICE", "member",
         )
+        # Additional membership rows used by downstream P3 tests. U-LEAD / U-MEMBER
+        # are distinct from U_ALICE (note the hyphen vs underscore).
+        await conn.execute(
+            "INSERT INTO org_project_members(project_id, user_id, role) VALUES ($1,$2,$3)",
+            pid, "U-LEAD", "lead",
+        )
+        await conn.execute(
+            "INSERT INTO org_project_members(project_id, user_id, role) VALUES ($1,$2,$3)",
+            pid, "U-MEMBER", "member",
+        )
     return pid
 
 
@@ -258,3 +268,101 @@ def acl(seeded_project):
         allowed_channels=set(),  # Alice cannot read C_PRIV by default
         user_projects_map={"U_ALICE": [seeded_project]},
     )
+
+
+# ---------------------------------------------------------------------------
+# P3 fakes — LLM router, sensitive classifier, Slack web client
+# ---------------------------------------------------------------------------
+
+
+from dataclasses import dataclass, field  # noqa: E402
+from typing import Any  # noqa: E402
+
+
+@dataclass
+class FakeLLMRouter:
+    """Scripted async LLM for pipeline tests.
+
+    Each `complete` call records its args in `calls` and pops the next response
+    off `script` (FIFO). When `script` is empty, returns ``"{}"`` so callers
+    that expect JSON can still parse the result without raising.
+    """
+
+    script: list[str] = field(default_factory=list)
+    calls: list[dict] = field(default_factory=list)
+
+    async def complete(self, prompt: str, **kwargs: Any) -> str:
+        self.calls.append({"prompt": prompt, **kwargs})
+        if not self.script:
+            return "{}"
+        return self.script.pop(0)
+
+
+@pytest.fixture
+def fake_llm_router() -> FakeLLMRouter:
+    return FakeLLMRouter()
+
+
+@dataclass
+class FakeSensitiveClassifier:
+    """Substring-based sensitive-content classifier for deterministic tests."""
+
+    deny_substrings: list[str] = field(default_factory=list)
+
+    async def is_sensitive(self, text: str) -> bool:
+        return any(s in text for s in self.deny_substrings)
+
+
+@pytest.fixture
+def fake_sensitive() -> FakeSensitiveClassifier:
+    return FakeSensitiveClassifier()
+
+
+@dataclass
+class FakeSlackClient:
+    """Mimic of ``slack_sdk.web.async_client.AsyncWebClient`` for pipeline tests.
+
+    Records DM posts and opened views so tests can assert on side effects.
+    ``members_by_channel`` is pre-populated by individual tests to control the
+    return of ``conversations_members``.
+    """
+
+    dms: list[dict] = field(default_factory=list)
+    views_opened: list[dict] = field(default_factory=list)
+    members_by_channel: dict[str, list[str]] = field(default_factory=dict)
+    # Optional test-overridable hooks (downstream tasks may monkey-patch these).
+    conversations_replies_return: list = field(default_factory=list)
+
+    async def chat_postMessage(self, **kwargs: Any) -> dict:
+        self.dms.append(kwargs)
+        return {"ok": True, "ts": "1.0"}
+
+    async def conversations_open(self, users: str, **kwargs: Any) -> dict:
+        return {"ok": True, "channel": {"id": f"D-{users}"}}
+
+    async def views_open(self, trigger_id: str, view: dict) -> dict:
+        self.views_opened.append({"trigger_id": trigger_id, "view": view})
+        return {"ok": True}
+
+    async def conversations_members(self, channel: str, **kwargs: Any) -> dict:
+        return {"ok": True, "members": self.members_by_channel.get(channel, [])}
+
+
+@pytest.fixture
+def fake_slack_client() -> FakeSlackClient:
+    return FakeSlackClient()
+
+
+# ---------------------------------------------------------------------------
+# Aliases — pasted plan code may reference ``pg_db`` instead of ``db``.
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def pg_db(db):
+    """Alias for ``db`` so plan snippets using ``pg_db`` run as-is.
+
+    Mirrors the async-generator shape of the ``db`` fixture; yielding the same
+    Database instance means teardown remains owned by ``db``.
+    """
+    yield db
