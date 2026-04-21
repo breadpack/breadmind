@@ -276,11 +276,103 @@ class ConfluenceConnector(BaseConnector):
             if page.version_when and page.version_when > max_when:
                 max_when = page.version_when
 
+        # After the main page-iteration finishes, scan for retirements:
+        # any Confluence-backed kb_sources row that now 404s on the server
+        # is flagged stale and a retirement candidate is enqueued for review.
+        await self._scan_retirements(project_id, scope_key)
+
         return SyncResult(
             new_cursor=max_when or (cursor or ""),
             processed=processed,
             errors=errors,
         )
+
+    # ── Retirement scan ───────────────────────────────────────────────
+
+    async def _known_source_refs(
+        self, project_id: uuid.UUID
+    ) -> list[tuple[int, int, str]]:
+        """Return ``(source_id, knowledge_id, source_ref)`` for live confluence
+        sources under ``project_id`` (excluding superseded knowledge rows)."""
+        rows = await self._db.fetch(
+            """
+            SELECT s.id, s.knowledge_id, s.source_ref
+              FROM kb_sources s
+              JOIN org_knowledge k ON k.id = s.knowledge_id
+             WHERE s.source_type = 'confluence'
+               AND k.project_id = $1
+               AND k.superseded_by IS NULL
+            """,
+            project_id,
+        )
+        return [
+            (row["id"], row["knowledge_id"], row["source_ref"])
+            for row in rows
+        ]
+
+    async def _page_exists(
+        self,
+        session: aiohttp.ClientSession,
+        auth: str,
+        page_id: str,
+    ) -> bool:
+        """Probe ``GET /rest/api/content/{page_id}``.
+
+        404 → False; any other non-2xx raises; 2xx → True. Intentionally
+        does not use :meth:`_get_with_retry` — a gone page must not trigger
+        the standard 429/5xx backoff loop for each missing reference.
+        """
+        url = f"{self._base_url}/rest/api/content/{page_id}"
+        async with session.get(url, headers={"Authorization": auth}) as resp:
+            if resp.status == 404:
+                return False
+            resp.raise_for_status()
+            return True
+
+    async def _scan_retirements(
+        self,
+        project_id: uuid.UUID,
+        scope_key: str,
+    ) -> None:
+        """Flag kb_sources whose Confluence page is gone as stale and enqueue
+        a retirement review candidate for each."""
+        refs = await self._known_source_refs(project_id)
+        if not refs:
+            return
+        auth = await self._build_auth_header()
+        session = self._acquire_session()
+        try:
+            for source_id, knowledge_id, source_ref in refs:
+                if await self._page_exists(session, auth, source_ref):
+                    continue
+                # Mark the source row stale (captured_at = now()).
+                await self._db.execute(
+                    "UPDATE kb_sources SET captured_at = now() WHERE id = $1",
+                    source_id,
+                )
+                await self._review_queue.enqueue({
+                    "project_id": project_id,
+                    "proposed_title": (
+                        f"Retire knowledge for gone page {source_ref}"
+                    ),
+                    "proposed_body": (
+                        "Confluence page no longer exists. "
+                        "Review and retire via superseded_by."
+                    ),
+                    "proposed_category": "retirement",
+                    "status": "needs_edit",
+                    "confidence": 0.5,
+                    "sources_json": [{
+                        "source_type": "confluence",
+                        "source_uri": f"{self._base_url}/pages/{source_ref}",
+                        "source_ref": source_ref,
+                    }],
+                    "extracted_from": "confluence_retirement",
+                    "original_user": None,
+                    "knowledge_id": knowledge_id,
+                })
+        finally:
+            await self._release_session(session)
 
     async def _audit(
         self,

@@ -297,3 +297,47 @@ async def test_sync_processes_pages_and_advances_cursor(
 
     # Each extracted candidate was enqueued
     assert len(fake_review_queue.enqueued) == 2
+
+
+async def test_deleted_page_marks_kb_sources_stale_and_emits_needs_edit(
+    mem_db, fake_extractor, fake_review_queue, project_id
+):
+    """A known Confluence source that 404s on the server is flagged stale
+    and a retirement candidate is enqueued for human review."""
+    vault = FakeVault({"confluence:x": "u:t"})
+
+    # Script two responses:
+    #   1) initial `_fetch_pages` call → empty results, no next page
+    #   2) retirement probe GET /rest/api/content/99 → 404
+    session = _ScriptedSession([
+        _FakeResponse(200, _page_payload(results=[], next_path=None)),
+        _FakeResponse(404, {"statusCode": 404}),
+    ])
+
+    async def fetch_refs(sql: str, *args):
+        if "kb_sources" in sql:
+            return [{"id": 501, "knowledge_id": 701, "source_ref": "99"}]
+        return []
+
+    mem_db.fetch = fetch_refs
+
+    conn = ConfluenceConnector(
+        db=mem_db, base_url="https://example.atlassian.net/wiki",
+        credentials_ref="confluence:x",
+        extractor=fake_extractor, review_queue=fake_review_queue,
+        vault=vault, session=session,
+    )
+
+    result = await conn.sync(project_id, "SPACE", cursor="2026-04-20T00:00:00Z")
+
+    assert result.errors == 0
+    # The kb_sources row for id=501 was marked stale (captured_at updated).
+    assert 501 in mem_db.kb_sources_stale
+    # At least one retirement candidate was enqueued with needs_edit status.
+    retirements = [
+        c for c in fake_review_queue.enqueued
+        if c.get("proposed_category") == "retirement"
+        or c.get("status") == "needs_edit"
+    ]
+    assert retirements, "expected a retirement candidate to be enqueued"
+    assert retirements[0].get("knowledge_id") == 701
