@@ -112,3 +112,36 @@ class SlackEnhancedGateway(SlackGateway):
         if _PERMALINK_RE.match(uri):
             return f"<{uri}|Slack 스레드>"
         return f"<{uri}|{source_type}>"
+
+    async def stream_send(
+        self,
+        channel_id: str,
+        chunks,  # AsyncIterator[str]
+        flush_every: int = 3,
+    ) -> str:
+        """Post an initial message and update it as chunks arrive. Returns ts."""
+        if self._app is None:
+            return ""
+        accumulated = ""
+        ts = ""
+        received = 0
+        async for chunk in chunks:
+            accumulated += chunk
+            if not ts:
+                resp = await self._app.client.chat_postMessage(
+                    channel=channel_id, text=accumulated or " ",
+                )
+                ts = resp["ts"]
+                received = 0
+                continue
+            received += 1
+            if received >= flush_every:
+                await self._app.client.chat_update(
+                    channel=channel_id, ts=ts, text=accumulated,
+                )
+                received = 0
+        if ts and received > 0:
+            await self._app.client.chat_update(
+                channel=channel_id, ts=ts, text=accumulated,
+            )
+        return ts

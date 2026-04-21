@@ -108,3 +108,29 @@ def test_format_permalink_non_slack_passthrough():
     gw = SlackEnhancedGateway(bot_token="x", bot_user_id="U_BOT", on_message=None)
     uri = "https://wiki.acme.com/page/123"
     assert gw.format_citation_link("confluence", uri) == f"<{uri}|confluence>"
+
+
+async def test_stream_send_updates_message_incrementally():
+    gw = SlackEnhancedGateway(bot_token="x", bot_user_id="U_BOT", on_message=None)
+    posted: list = []
+    updated: list = []
+
+    class FakeClient:
+        async def chat_postMessage(self, **kw):
+            posted.append(kw)
+            return {"ts": "1.0", "channel": kw["channel"]}
+
+        async def chat_update(self, **kw):
+            updated.append(kw)
+            return {}
+
+    fake_app = type("App", (), {"client": FakeClient()})()
+    gw._app = fake_app  # type: ignore[attr-defined]
+
+    async def chunks():
+        for c in ["Hel", "lo, ", "world"]:
+            yield c
+
+    await gw.stream_send(channel_id="C1", chunks=chunks(), flush_every=1)
+    assert len(posted) == 1
+    assert updated[-1]["text"] == "Hello, world"
