@@ -22,18 +22,7 @@ from breadmind.kb.connectors.rate_limit import (
     BudgetExceeded,
     HourlyPageBudget,
 )
-
-try:
-    from breadmind.kb.types import SourceMeta  # provided by P3
-except ImportError:  # pragma: no cover — defensive during parallel dev
-    @dataclass(frozen=True)
-    class SourceMeta:  # type: ignore[no-redef]
-        source_type: str
-        source_uri: str
-        source_ref: str | None
-        original_user: str | None
-        extracted_from: str
-        project_id: uuid.UUID
+from breadmind.kb.types import SourceMeta
 
 logger = logging.getLogger(__name__)
 
