@@ -92,6 +92,21 @@ async def test_sensitive_category_blocks_early(fake_redis):
     mocks["router"].chat.assert_not_awaited()
 
 
+async def test_quota_exceeded_downgrades_to_search_only(fake_redis):
+    pipeline, mocks = _pipeline_with_mocks(fake_redis)
+    await mocks["quota"].charge("U_ALICE", 10_000_000)
+    inc = IncomingMessage(
+        text="how was the leak fixed?", user_id="U_ALICE",
+        channel_id="C1", platform="slack",
+    )
+    out = await pipeline.answer(inc)
+    assert "검색만" in out.text or "search-only" in out.text.lower()
+    # retriever runs (we still show KB links), LLM does NOT
+    mocks["retriever"].search.assert_awaited()
+    mocks["router"].chat.assert_not_awaited()
+    assert "https://slack/p1" in out.text
+
+
 async def test_cache_hit_short_circuits(fake_redis):
     pipeline, mocks = _pipeline_with_mocks(fake_redis)
     await mocks["cache"].set("q", "U_ALICE", "PROJ", "cached-body")

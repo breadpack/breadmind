@@ -76,6 +76,17 @@ class QueryPipeline:
             top_k=5,
         )
 
+        if self._quota is not None and await self._quota.is_exceeded(
+            incoming.user_id,
+        ):
+            logger.info("quota exceeded — search-only for user=%s",
+                        incoming.user_id)
+            return OutgoingMessage(
+                text=self._format_search_only(hits),
+                channel_id=incoming.channel_id,
+                platform=incoming.platform,
+            )
+
         masked_query, restore_map = self._redactor.redact(incoming.text)
         self._redactor.abort_if_secrets(masked_query)
 
@@ -131,4 +142,14 @@ class QueryPipeline:
         if confidence is Confidence.LOW:
             lines.append("⚠️ 담당자 확인 권장")
         lines.append(f"answer_id={answer_id}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_search_only(hits) -> str:
+        if not hits:
+            return "검색만 모드: 관련 KB 없음."
+        lines = ["검색만 모드(일일 토큰 초과) — 관련 KB Top-3:"]
+        for h in hits[:3]:
+            uri = h.sources[0].uri if h.sources else ""
+            lines.append(f"• [#{h.knowledge_id}] {h.title} {uri}".rstrip())
         return "\n".join(lines)
