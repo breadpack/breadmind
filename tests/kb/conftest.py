@@ -153,6 +153,15 @@ async def db(pg_container) -> Database:
             "CREATE INDEX IF NOT EXISTS idx_promo_project_status "
             "ON promotion_candidates(project_id, status);"
         )
+        # kb_extraction_pause — mirrors migration 005_kb_p3_feedback.
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS kb_extraction_pause (
+                project_id  UUID PRIMARY KEY,
+                paused      BOOLEAN NOT NULL DEFAULT FALSE,
+                reason      TEXT,
+                paused_at   TIMESTAMPTZ
+            );
+        """)
 
     try:
         yield database
@@ -168,6 +177,7 @@ async def db(pg_container) -> Database:
         await conn.execute("DROP TABLE IF EXISTS kb_sources CASCADE;")
         await conn.execute("DROP TABLE IF EXISTS org_knowledge CASCADE;")
         await conn.execute("DROP TABLE IF EXISTS org_channel_map CASCADE;")
+        await conn.execute("DROP TABLE IF EXISTS kb_extraction_pause CASCADE;")
         await conn.execute("DROP TABLE IF EXISTS org_project_members CASCADE;")
         await conn.execute("DROP TABLE IF EXISTS org_projects CASCADE;")
         await conn.execute("DROP TABLE IF EXISTS kb_audit_log CASCADE;")
