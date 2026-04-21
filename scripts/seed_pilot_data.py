@@ -44,10 +44,23 @@ CONFLUENCE_PAGE_FIXTURES = [
 
 
 async def _upsert_project(c: asyncpg.Connection, name: str, team: str) -> uuid.UUID:
+    # Migration 004 does not declare a unique constraint on
+    # ``org_projects.name``, so ON CONFLICT (name) fails with
+    # InvalidColumnReferenceError. Emulate upsert with a SELECT-then-INSERT
+    # pattern — safe inside the seed script (single run, no concurrent
+    # writers) and keeps the migrations untouched.
+    existing = await c.fetchrow(
+        "SELECT id FROM org_projects WHERE name=$1", name,
+    )
+    if existing is not None:
+        await c.execute(
+            "UPDATE org_projects SET slack_team_id=$1 WHERE id=$2",
+            team, existing["id"],
+        )
+        return existing["id"]
     row = await c.fetchrow(
-        "INSERT INTO org_projects (name, slack_team_id) VALUES ($1,$2) "
-        "ON CONFLICT (name) DO UPDATE SET slack_team_id = EXCLUDED.slack_team_id "
-        "RETURNING id",
+        "INSERT INTO org_projects (name, slack_team_id) "
+        "VALUES ($1, $2) RETURNING id",
         name, team,
     )
     return row["id"]
