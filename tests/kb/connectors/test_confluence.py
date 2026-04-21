@@ -1,6 +1,13 @@
 """ConfluenceConnector tests (unit + vcr-backed integration)."""
 from __future__ import annotations
 
+# To record the Confluence cassette (one-time, human operator):
+#   1. Set CONFLUENCE_BASE_URL and CONFLUENCE_TOKEN env vars to a sandbox.
+#   2. Update vcr_config fixture record_mode="new_episodes".
+#   3. Run: python -m pytest tests/kb/connectors/test_confluence.py \
+#          -k cassette_replay
+#   4. Revert record_mode to "none" before committing cassette + test.
+
 
 import pytest
 
@@ -396,3 +403,32 @@ async def test_connector_error_records_audit_log(
     assert result.processed == 0
     assert any(r["action"] == "connector_error" for r in audit.records)
     assert audit.records[0]["metadata"]["page_id"] == "42"
+
+
+async def test_confluence_cassette_replay_yields_pages(
+    mem_db, fake_extractor, fake_review_queue, project_id, vcr_config,
+    tmp_path,
+):
+    """Uses pre-recorded cassette at cassettes/confluence_space_pilot.yaml.
+    Skips if cassette is missing (local dev without recording)."""
+    from tests.kb.connectors.conftest import CASSETTE_DIR
+    cassette = CASSETTE_DIR / "confluence_space_pilot.yaml"
+    if not cassette.exists():
+        pytest.skip("Cassette not recorded; run with VCR_RECORD_MODE=new_episodes")
+
+    # FakeVault is already defined earlier in this test file
+    vault = FakeVault({"confluence:pilot": "user@example.com:TOKEN"})
+    conn = ConfluenceConnector(
+        db=mem_db,
+        base_url="https://example.atlassian.net/wiki",
+        credentials_ref="confluence:pilot",
+        extractor=fake_extractor,
+        review_queue=fake_review_queue,
+        vault=vault,
+    )
+    with vcr_config.use_cassette("confluence_space_pilot.yaml"):
+        result = await conn.sync(project_id, "PILOT", cursor=None)
+
+    assert result.processed > 0
+    assert result.errors == 0
+    assert fake_extractor.calls, "extractor should be invoked for each page"
