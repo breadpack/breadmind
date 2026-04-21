@@ -89,7 +89,15 @@ class QueryPipeline:
             )
 
         masked_query, restore_map = self._redactor.redact(incoming.text)
-        self._redactor.abort_if_secrets(masked_query)
+        try:
+            self._redactor.abort_if_secrets(masked_query)
+        except Exception as exc:  # redactor raises SecretDetected
+            logger.info("redactor aborted (secret detected): %s", exc)
+            return OutgoingMessage(
+                text="질의에 비밀값이 포함되어 있습니다. 제거 후 재시도 해주세요.",
+                channel_id=incoming.channel_id,
+                platform=incoming.platform,
+            )
 
         snippets = "\n".join(
             f"[#{h.knowledge_id}] {h.title}: {h.body[:400]}" for h in hits

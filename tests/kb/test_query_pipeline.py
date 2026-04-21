@@ -152,3 +152,19 @@ async def test_all_providers_fail_returns_search_only(fake_redis):
     out = await pipeline.answer(inc)
     assert "검색만" in out.text or "AI 답변 불가" in out.text
     assert "https://slack/p1" in out.text
+
+
+class _SecretDetected(Exception):
+    pass
+
+
+async def test_secret_in_query_aborts(fake_redis):
+    pipeline, mocks = _pipeline_with_mocks(fake_redis)
+    mocks["redactor"].abort_if_secrets.side_effect = _SecretDetected("api key")
+    inc = IncomingMessage(
+        text="my key is sk-ABCDEF", user_id="U_ALICE",
+        channel_id="C1", platform="slack",
+    )
+    out = await pipeline.answer(inc)
+    assert "비밀값" in out.text or "secret" in out.text.lower()
+    mocks["router"].chat.assert_not_awaited()
