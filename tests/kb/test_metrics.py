@@ -127,3 +127,12 @@ async def test_query_pipeline_emits_metrics(monkeypatch):
         dict(k).get("project") == "p1" and dict(k).get("status") == "ok"
         for k in samples
     )
+
+
+@pytest.mark.asyncio
+async def test_review_queue_updates_backlog_gauge(monkeypatch):
+    from breadmind.kb.review_queue import ReviewQueue
+    q = await ReviewQueue.build_for_tests(pending=12)  # factory added by P3
+    await q.refresh_backlog_metric()
+    from breadmind.kb import metrics
+    assert metrics.PROMOTION_BACKLOG._value.get() == 12.0

@@ -63,6 +63,16 @@ async def run_daily_digest(
                 await _dm_lead_backpressure(slack_client, uid, project_id=pid, n_pending=n)
             backpressure.append(str(pid))
 
+    # Publish the backlog gauge for ops dashboards (spec §8.4). This runs on
+    # every daily digest pass so the metric stays reasonably fresh even if
+    # nothing triggers DM/backpressure.
+    try:
+        from breadmind.kb.review_queue import ReviewQueue
+        queue = ReviewQueue(db, slack_client)
+        await queue.refresh_backlog_metric()
+    except Exception:  # pragma: no cover — metrics must never break prod
+        logger.exception("refresh_backlog_metric failed")
+
     return {"projects_dm": projects_dm, "backpressure_projects": backpressure}
 
 
