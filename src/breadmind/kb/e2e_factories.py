@@ -31,7 +31,6 @@ from typing import Any
 from uuid import UUID
 
 from breadmind.llm.base import LLMResponse, TokenUsage
-from breadmind.messenger.router import IncomingMessage
 
 
 _EMBED_DIM = 1024
