@@ -341,3 +341,58 @@ async def test_deleted_page_marks_kb_sources_stale_and_emits_needs_edit(
     ]
     assert retirements, "expected a retirement candidate to be enqueued"
     assert retirements[0].get("knowledge_id") == 701
+
+
+class FakeAuditLog:
+    """Records ``(actor, action, project_id, metadata)`` tuples as dicts."""
+
+    def __init__(self) -> None:
+        self.records: list[dict] = []
+
+    async def record(self, *, actor, action, project_id, metadata) -> None:
+        self.records.append({
+            "actor": actor,
+            "action": action,
+            "project_id": project_id,
+            "metadata": metadata,
+        })
+
+
+class BoomExtractor:
+    """Extractor stub that always raises, to exercise the connector's
+    per-page error isolation + audit hook."""
+
+    async def extract(self, text, meta):
+        raise RuntimeError("pgvector down")
+
+
+async def test_connector_error_records_audit_log(
+    mem_db, fake_review_queue, project_id
+):
+    vault = FakeVault({"confluence:x": "u:t"})
+    session = _ScriptedSession([
+        _FakeResponse(200, _page_payload(
+            results=[{
+                "id": "42", "title": "Doomed",
+                "space": {"key": "SPACE"},
+                "_links": {"webui": "/pages/42"},
+                "body": {"storage": {"value": "<p>whatever</p>"}},
+                "version": {"when": "2026-04-20T00:00:00.000Z"},
+            }],
+            next_path=None,
+        )),
+    ])
+    audit = FakeAuditLog()
+    conn = ConfluenceConnector(
+        db=mem_db, base_url="https://example.atlassian.net/wiki",
+        credentials_ref="confluence:x",
+        extractor=BoomExtractor(), review_queue=fake_review_queue,
+        vault=vault, session=session, audit_log=audit,
+    )
+
+    result = await conn.sync(project_id, "SPACE", cursor=None)
+
+    assert result.errors == 1
+    assert result.processed == 0
+    assert any(r["action"] == "connector_error" for r in audit.records)
+    assert audit.records[0]["metadata"]["page_id"] == "42"
