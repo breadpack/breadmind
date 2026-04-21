@@ -6,6 +6,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from uuid import UUID
 
+from breadmind.kb.audit import audit_log as _real_audit_log
 from breadmind.kb.types import Confidence, EnforcedAnswer, InsufficientEvidence
 from breadmind.llm.base import LLMMessage
 from breadmind.llm.router import AllProvidersFailed
@@ -15,6 +16,19 @@ logger = logging.getLogger(__name__)
 
 ProjectResolver = Callable[[str, str], Awaitable[UUID]]
 # (user_id, channel_id) -> project_id
+
+
+async def audit_log(**kwargs) -> None:
+    """Module-level shim over the real audit_log.
+
+    Tests monkeypatch ``breadmind.kb.query_pipeline.audit_log`` to capture
+    calls without a live DB. In production this shim is a no-op until a
+    db-bound version is injected (planned for P3 wiring phase). The real
+    ``_real_audit_log`` requires a ``db`` pool as its first positional
+    argument; that dependency will be satisfied during app startup.
+    """
+    # No-op by default — production wiring replaces this at startup.
+    _ = _real_audit_log  # keep import reachable for linters
 
 
 class QueryPipeline:
@@ -145,6 +159,22 @@ class QueryPipeline:
 
         await self._cache.set(
             incoming.text, incoming.user_id, pid_str, formatted,
+        )
+
+        # NOTE: audit_log(db, ...) requires a real db pool in production; the
+        # db dependency will be injected in a later wiring phase (P3+).
+        # Tests monkeypatch qp.audit_log so db is not required there.
+        await audit_log(
+            actor=incoming.user_id,
+            action="query",
+            subject_type="org_knowledge",
+            subject_id=",".join(str(h.knowledge_id) for h in hits),
+            project_id=project_id,
+            metadata={
+                "confidence": confidence.value,
+                "answer_id": answer_id,
+                "tokens": resp.usage.input_tokens + resp.usage.output_tokens,
+            },
         )
 
         return OutgoingMessage(

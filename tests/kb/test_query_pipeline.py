@@ -168,3 +168,21 @@ async def test_secret_in_query_aborts(fake_redis):
     out = await pipeline.answer(inc)
     assert "비밀값" in out.text or "secret" in out.text.lower()
     mocks["router"].chat.assert_not_awaited()
+
+
+async def test_query_emits_audit_log(fake_redis, monkeypatch):
+    calls: list = []
+
+    async def fake_audit(**kwargs):
+        calls.append(kwargs)
+
+    import breadmind.kb.query_pipeline as qp
+    monkeypatch.setattr(qp, "audit_log", fake_audit)
+
+    pipeline, _ = _pipeline_with_mocks(fake_redis)
+    inc = IncomingMessage(
+        text="q", user_id="U_ALICE", channel_id="C1", platform="slack",
+    )
+    await pipeline.answer(inc)
+    assert any(c["action"] == "query" for c in calls)
+    assert any(c["actor"] == "U_ALICE" for c in calls)
