@@ -438,6 +438,33 @@ class ConfluenceConnector(BaseConnector):
                 logger.exception("set_kb_size_bytes failed for %s", r)
 
     @classmethod
+    def build_for_e2e(
+        cls,
+        *,
+        db,
+        fixtures_path: str,
+        project_name: str = "pilot-alpha",
+    ) -> "_E2EConfluenceFacade":
+        """Factory for the Task 21 E2E test — skips HTTP entirely.
+
+        Reads Confluence page fixtures from ``fixtures_path`` (the file
+        :mod:`scripts.seed_pilot_data` writes at sync time), converts each
+        page to an :class:`ExtractedCandidate`, and enqueues them through
+        a real :class:`ReviewQueue` against the testcontainers Postgres.
+
+        The returned facade exposes:
+
+        * ``sync_once()`` — processes the fixture and returns the
+          number of candidates enqueued.
+        * ``auto_approve_seed_candidates(reviewer)`` — approves every
+          pending candidate for the project via the real approve()
+          path (with a monkey-patched embedder).
+        """
+        return _E2EConfluenceFacade(
+            db=db, fixtures_path=fixtures_path, project_name=project_name,
+        )
+
+    @classmethod
     async def build_for_tests(
         cls,
         *,
@@ -483,3 +510,99 @@ class ConfluenceConnector(BaseConnector):
             review_queue=_NullReviewQueue(),
             vault=_NullVault(),
         )
+
+
+class _E2EConfluenceFacade:
+    """Fixture-driven Confluence connector facade for the E2E test.
+
+    Reads the JSON written by :mod:`scripts.seed_pilot_data` (which
+    contains ``{id, title, space, body}`` entries), synthesises an
+    :class:`ExtractedCandidate` per page, and enqueues each via a real
+    :class:`ReviewQueue`. Skips HTTP / auth / retry logic entirely —
+    those paths are covered by :mod:`tests/kb/connectors/` unit tests.
+    """
+
+    def __init__(
+        self, *, db, fixtures_path: str, project_name: str,
+    ) -> None:
+        self._db = db
+        self._fixtures_path = fixtures_path
+        self._project_name = project_name
+        self._queue = None
+        self._project_id = None
+
+    async def _ensure(self) -> None:
+        if self._queue is not None:
+            return
+        from breadmind.kb import e2e_factories as ef
+        from breadmind.kb import review_queue as rq_mod
+        from breadmind.kb.review_queue import ReviewQueue
+
+        await ef.ensure_e2e_schema(self._db)
+        pool = ef.AsyncpgConnectionPool(self._db)
+        self._project_id = await ef.resolve_project_id(
+            self._db, self._project_name,
+        )
+        # Monkey-patch the embedder shim (same pattern as
+        # ReviewQueue.build_for_e2e) so approve() can produce a pgvector.
+        embedder = ef.StableEmbedder()
+
+        async def _embed(text: str):
+            return await embedder.encode(text)
+
+        rq_mod._embed_text = _embed  # type: ignore[assignment]
+        self._queue = ReviewQueue(pool, slack_client=None)
+
+    async def sync_once(self) -> int:
+        """Read fixture pages and enqueue one candidate per page.
+
+        Returns the number of enqueued candidates.
+        """
+        from breadmind.kb import e2e_factories as ef
+        from breadmind.kb.types import ExtractedCandidate, Source
+
+        await self._ensure()
+        pages = ef.load_confluence_fixtures(self._fixtures_path)
+        enqueued = 0
+        for p in pages:
+            cand = ExtractedCandidate(
+                proposed_title=p.get("title", ""),
+                proposed_body=p.get("body", ""),
+                proposed_category="bug_fix"
+                if "leak" in (p.get("title", "") + p.get("body", "")).lower()
+                else "onboarding",
+                confidence=0.9,
+                sources=[Source(
+                    type="confluence",
+                    uri=f"https://wiki/{p.get('space', 'X')}/{p.get('id', '?')}",
+                    ref=p.get("id"),
+                )],
+                original_user=None,
+                project_id=self._project_id,
+                sensitive_flag=False,
+            )
+            await self._queue.enqueue(cand)
+            enqueued += 1
+        return enqueued
+
+    async def auto_approve_seed_candidates(self, *, reviewer: str) -> list[int]:
+        """Approve every pending candidate for the project.
+
+        Returns the list of new ``org_knowledge.id`` values so tests can
+        assert on specific rows if needed.
+        """
+        await self._ensure()
+        pending_ids = [
+            r["id"] for r in await self._db.fetch(
+                "SELECT id FROM promotion_candidates "
+                "WHERE project_id=$1 AND status='pending'",
+                self._project_id,
+            )
+        ]
+        kids: list[int] = []
+        for cid in pending_ids:
+            kid = await self._queue.approve(
+                candidate_id=int(cid), reviewer=reviewer,
+            )
+            kids.append(int(kid))
+        return kids
