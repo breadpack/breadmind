@@ -19,6 +19,25 @@ async def test_handler_invokes_pipeline_and_returns_text():
     pipeline.answer.assert_awaited_once_with(inc)
 
 
+async def test_feedback_handler_writes_audit(monkeypatch):
+    calls: list = []
+
+    async def fake_audit(**kwargs):
+        calls.append(kwargs)
+
+    import breadmind.kb.slack_binding as sb
+    monkeypatch.setattr(sb, "audit_log", fake_audit)
+
+    handler = sb.build_slack_feedback_handler()
+    await handler("upvote", "answer123", "U_ALICE")
+    await handler("downvote", "answer123", "U_BOB")
+    await handler("bookmark", "answer123", "U_CAROL")
+    kinds = [c["action"] for c in calls]
+    assert "feedback_upvote" in kinds
+    assert "feedback_downvote" in kinds
+    assert "feedback_bookmark" in kinds
+
+
 async def test_handler_skips_approval_messages():
     pipeline = MagicMock()
     pipeline.answer = AsyncMock()
