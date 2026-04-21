@@ -48,6 +48,7 @@ async def db(pg_container) -> Database:
     raw_url = pg_container.get_connection_url()
     # testcontainers returns a SQLAlchemy-style URL; asyncpg needs plain postgresql://
     dsn = raw_url.replace("postgresql+psycopg2://", "postgresql://")
+    _prev_db_url = os.environ.get("DATABASE_URL")
     os.environ["DATABASE_URL"] = dsn
 
     database = Database(dsn)
@@ -127,7 +128,13 @@ async def db(pg_container) -> Database:
             );
         """)
 
-    yield database
+    try:
+        yield database
+    finally:
+        if _prev_db_url is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = _prev_db_url
 
     async with database.acquire() as conn:
         await conn.execute("DROP TABLE IF EXISTS kb_sources CASCADE;")
@@ -236,9 +243,9 @@ class FakeACL:
         project_id: UUID,
         candidate_ids: list[int],
     ) -> list[int]:
-        # In the default fake, drop rows whose source_channel is private
-        # and user is not a member of that channel. The retriever already
-        # SQL-filtered the rest, so this fake just passes them through.
+        # Pass-through: returns all candidate IDs unchanged. The real ACL would
+        # filter by channel membership; retriever SQL handles the bulk ACL
+        # pre-filter, and this defensive second pass is a no-op in tests.
         return candidate_ids
 
     async def can_read_channel(self, user_id: str, channel_id: str) -> bool:
