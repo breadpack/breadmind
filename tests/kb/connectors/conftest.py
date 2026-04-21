@@ -70,7 +70,7 @@ def fake_review_queue() -> FakeReviewQueue:
 
 @pytest.fixture
 def project_id() -> uuid.UUID:
-    return uuid.UUID("11111111-1111-1111-1111-111111111111")
+    return uuid.UUID("00000000-0000-4000-8000-000000000001")
 
 
 class InMemoryDB:
