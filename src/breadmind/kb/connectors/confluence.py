@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import datetime as dt
 import logging
 import uuid
 from dataclasses import dataclass
@@ -19,11 +18,27 @@ from markdownify import markdownify as md
 
 from breadmind.kb.connectors.base import BaseConnector, SyncResult
 from breadmind.kb.connectors.rate_limit import (
-    BudgetExceeded,
     HourlyPageBudget,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def html_to_markdown(html: str) -> str:
+    """Convert Confluence storage-format HTML to Markdown.
+
+    Uses markdownify with ATX headings and fenced code blocks. Keeps
+    tables in GitHub-style pipe syntax for downstream LLM readability.
+    """
+    return md(
+        html or "",
+        heading_style="ATX",
+        code_language_callback=lambda el: (
+            el.get("class", [""])[0].removeprefix("language-")
+            if el.get("class") else ""
+        ),
+        bullets="-",
+    ).strip()
 
 
 @dataclass(frozen=True)

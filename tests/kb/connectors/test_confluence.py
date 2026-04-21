@@ -1,19 +1,13 @@
 """ConfluenceConnector tests (unit + vcr-backed integration)."""
 from __future__ import annotations
 
-import json
-import uuid
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from aiohttp import ClientSession
 
 from breadmind.kb.connectors.confluence import (
     ConfluenceConnector,
-    ConfluencePage,
+    html_to_markdown,
 )
-from breadmind.kb.connectors.rate_limit import HourlyPageBudget
 
 
 class FakeVault:
@@ -223,3 +217,30 @@ async def test_429_without_retry_after_uses_exponential_defaults(
         pass
     # First three 429s use the built-in schedule 60, 300, 1800
     assert slept == [60, 300, 1800]
+
+
+def test_markdownify_converts_code_blocks():
+    html = '<pre><code class="language-python">print("hi")</code></pre>'
+    out = html_to_markdown(html)
+    assert "```" in out
+    assert 'print("hi")' in out
+
+
+def test_markdownify_converts_tables_to_markdown():
+    html = (
+        "<table>"
+        "<thead><tr><th>Col1</th><th>Col2</th></tr></thead>"
+        "<tbody><tr><td>a</td><td>b</td></tr></tbody>"
+        "</table>"
+    )
+    out = html_to_markdown(html)
+    # Pipe-delimited table representation
+    assert "|" in out
+    assert "Col1" in out and "Col2" in out
+    assert "a" in out and "b" in out
+
+
+def test_markdownify_preserves_links():
+    html = '<p>see <a href="https://example.com/x">here</a></p>'
+    out = html_to_markdown(html)
+    assert "[here](https://example.com/x)" in out
