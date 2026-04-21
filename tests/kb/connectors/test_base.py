@@ -3,23 +3,10 @@ from __future__ import annotations
 
 import uuid
 from typing import ClassVar
-from unittest.mock import AsyncMock
 
 import pytest
 
 from breadmind.kb.connectors.base import BaseConnector, SyncResult
-
-
-def test_sync_result_is_dataclass_with_expected_fields():
-    r = SyncResult(new_cursor="2026-04-20T01:00:00Z", processed=5, errors=1)
-    assert r.new_cursor == "2026-04-20T01:00:00Z"
-    assert r.processed == 5
-    assert r.errors == 1
-
-
-def test_base_connector_is_abstract():
-    with pytest.raises(TypeError):
-        BaseConnector()  # type: ignore[abstract]
 
 
 class _FakeDB:
@@ -42,6 +29,19 @@ class _FakeDB:
             "last_status": args[5],
             "last_error": args[6],
         }
+
+
+def test_sync_result_is_dataclass_with_expected_fields():
+    r = SyncResult(new_cursor="2026-04-20T01:00:00Z", processed=5, errors=1)
+    assert r.new_cursor == "2026-04-20T01:00:00Z"
+    assert r.processed == 5
+    assert r.errors == 1
+
+
+def test_base_connector_is_abstract():
+    db = _FakeDB()
+    with pytest.raises(TypeError):
+        BaseConnector(db)  # type: ignore[abstract]
 
 
 class _StubConnector(BaseConnector):
