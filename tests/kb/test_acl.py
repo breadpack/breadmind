@@ -4,7 +4,6 @@ from __future__ import annotations
 import uuid
 from unittest.mock import AsyncMock
 
-import pytest
 
 from breadmind.kb.acl import ACLResolver
 from breadmind.storage.database import Database
