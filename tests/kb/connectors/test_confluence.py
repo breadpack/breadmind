@@ -244,3 +244,56 @@ def test_markdownify_preserves_links():
     html = '<p>see <a href="https://example.com/x">here</a></p>'
     out = html_to_markdown(html)
     assert "[here](https://example.com/x)" in out
+
+
+async def test_sync_processes_pages_and_advances_cursor(
+    mem_db, fake_extractor, fake_review_queue, project_id
+):
+    vault = FakeVault({"confluence:x": "u:t"})
+    session = _ScriptedSession([
+        _FakeResponse(200, _page_payload(
+            results=[
+                {
+                    "id": "10", "title": "Runbook A",
+                    "space": {"key": "SPACE"},
+                    "_links": {"webui": "/pages/10"},
+                    "body": {"storage": {"value": "<h1>A</h1><p>Steps</p>"}},
+                    "version": {"when": "2026-04-20T05:00:00.000Z"},
+                },
+                {
+                    "id": "11", "title": "Runbook B",
+                    "space": {"key": "SPACE"},
+                    "_links": {"webui": "/pages/11"},
+                    "body": {"storage": {"value": "<p>B</p>"}},
+                    "version": {"when": "2026-04-20T06:30:00.000Z"},
+                },
+            ],
+            next_path=None,
+        )),
+    ])
+    conn = ConfluenceConnector(
+        db=mem_db, base_url="https://example.atlassian.net/wiki",
+        credentials_ref="confluence:x",
+        extractor=fake_extractor, review_queue=fake_review_queue,
+        vault=vault, session=session,
+    )
+
+    result = await conn.sync(project_id, "SPACE", cursor=None)
+
+    assert result.processed == 2
+    assert result.errors == 0
+    # Cursor advances to max(version.when)
+    assert result.new_cursor == "2026-04-20T06:30:00.000Z"
+
+    # Extractor received two calls, with source_meta populated per spec §6.3
+    assert len(fake_extractor.calls) == 2
+    meta0 = fake_extractor.calls[0].source_meta
+    assert meta0.source_type == "confluence"
+    assert meta0.source_ref == "10"
+    assert meta0.extracted_from == "confluence_sync"
+    assert meta0.original_user is None
+    assert meta0.project_id == project_id
+    assert meta0.source_uri.endswith("/pages/10")
+
+    # Each extracted candidate was enqueued
+    assert len(fake_review_queue.enqueued) == 2

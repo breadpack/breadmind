@@ -18,8 +18,21 @@ from markdownify import markdownify as md
 
 from breadmind.kb.connectors.base import BaseConnector, SyncResult
 from breadmind.kb.connectors.rate_limit import (
+    BudgetExceeded,
     HourlyPageBudget,
 )
+
+try:
+    from breadmind.kb.types import SourceMeta  # provided by P3
+except ImportError:  # pragma: no cover — defensive during parallel dev
+    @dataclass(frozen=True)
+    class SourceMeta:  # type: ignore[no-redef]
+        source_type: str
+        source_uri: str
+        source_ref: str | None
+        original_user: str | None
+        extracted_from: str
+        project_id: uuid.UUID
 
 logger = logging.getLogger(__name__)
 
@@ -181,7 +194,43 @@ class ConfluenceConnector(BaseConnector):
             version_when=(raw.get("version") or {}).get("when", ""),
         )
 
-    # ── To be implemented in later tasks ──────────────────────────────
+    # ── Chunking / source meta ────────────────────────────────────────
+
+    _CHUNK_CHAR_BUDGET: ClassVar[int] = 4000  # ~1k tokens @ 4 chars/token
+
+    @staticmethod
+    def _chunk_markdown(text: str, budget: int) -> list[str]:
+        """Split markdown by paragraph boundaries, respecting ``budget``."""
+        if not text:
+            return []
+        paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+        chunks: list[str] = []
+        buf: list[str] = []
+        size = 0
+        for p in paragraphs:
+            if size + len(p) > budget and buf:
+                chunks.append("\n\n".join(buf))
+                buf, size = [], 0
+            buf.append(p)
+            size += len(p) + 2
+        if buf:
+            chunks.append("\n\n".join(buf))
+        return chunks
+
+    def _build_source_meta(
+        self, page: ConfluencePage, project_id: uuid.UUID
+    ) -> SourceMeta:
+        return SourceMeta(
+            source_type="confluence",
+            source_uri=f"{self._base_url}{page.web_url}"
+            if page.web_url.startswith("/") else page.web_url,
+            source_ref=page.id,
+            original_user=None,
+            extracted_from="confluence_sync",
+            project_id=project_id,
+        )
+
+    # ── Sync ──────────────────────────────────────────────────────────
 
     async def _do_sync(
         self,
@@ -189,4 +238,64 @@ class ConfluenceConnector(BaseConnector):
         scope_key: str,
         cursor: str | None,
     ) -> SyncResult:
-        raise NotImplementedError("Implemented in a later task")
+        processed = 0
+        errors = 0
+        max_when = cursor or ""
+
+        async for page in self._fetch_pages(scope_key, cursor):
+            try:
+                await self._budget.consume(project_id, count=1)
+            except BudgetExceeded as exc:
+                logger.warning("Page budget hit: %s", exc)
+                await self._audit("connector_error", project_id, {
+                    "connector": self.connector_name,
+                    "scope_key": scope_key,
+                    "reason": "budget_exceeded",
+                    "detail": str(exc),
+                })
+                break
+
+            try:
+                markdown = html_to_markdown(page.storage_html)
+                meta = self._build_source_meta(page, project_id)
+                for chunk in self._chunk_markdown(markdown, self._CHUNK_CHAR_BUDGET):
+                    candidates = await self._extractor.extract(chunk, meta)
+                    for cand in candidates or []:
+                        await self._review_queue.enqueue(cand)
+                processed += 1
+            except Exception as exc:  # noqa: BLE001 — per-page isolation
+                errors += 1
+                logger.exception("Confluence page %s failed", page.id)
+                await self._audit("connector_error", project_id, {
+                    "connector": self.connector_name,
+                    "scope_key": scope_key,
+                    "page_id": page.id,
+                    "detail": str(exc),
+                })
+
+            if page.version_when and page.version_when > max_when:
+                max_when = page.version_when
+
+        return SyncResult(
+            new_cursor=max_when or (cursor or ""),
+            processed=processed,
+            errors=errors,
+        )
+
+    async def _audit(
+        self,
+        action: str,
+        project_id: uuid.UUID,
+        metadata: dict,
+    ) -> None:
+        if self._audit_log is None:
+            return
+        try:
+            await self._audit_log.record(
+                actor=f"connector:{self.connector_name}",
+                action=action,
+                project_id=project_id,
+                metadata=metadata,
+            )
+        except Exception:
+            logger.exception("kb_audit_log write failed")
