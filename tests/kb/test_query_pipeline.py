@@ -140,3 +140,15 @@ async def test_insufficient_evidence_falls_back_to_top3(fake_redis):
     out = await pipeline.answer(inc)
     assert "확실한 답변 불가" in out.text or "근거" in out.text
     assert "https://slack/p1" in out.text
+
+
+async def test_all_providers_fail_returns_search_only(fake_redis):
+    from breadmind.llm.router import AllProvidersFailed
+    pipeline, mocks = _pipeline_with_mocks(fake_redis)
+    mocks["router"].chat = AsyncMock(side_effect=AllProvidersFailed("dead"))
+    inc = IncomingMessage(
+        text="q", user_id="U_ALICE", channel_id="C1", platform="slack",
+    )
+    out = await pipeline.answer(inc)
+    assert "검색만" in out.text or "AI 답변 불가" in out.text
+    assert "https://slack/p1" in out.text

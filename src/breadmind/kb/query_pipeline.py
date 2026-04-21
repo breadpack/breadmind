@@ -8,6 +8,7 @@ from uuid import UUID
 
 from breadmind.kb.types import Confidence, EnforcedAnswer, InsufficientEvidence
 from breadmind.llm.base import LLMMessage
+from breadmind.llm.router import AllProvidersFailed
 from breadmind.messenger.router import IncomingMessage, OutgoingMessage
 
 logger = logging.getLogger(__name__)
@@ -98,10 +99,24 @@ class QueryPipeline:
             "sentence with [#<id>] referencing only provided IDs."
         )
         user = f"KB:\n{snippets}\n\nQuestion: {masked_query}"
-        resp = await self._router.chat([
-            LLMMessage(role="system", content=system),
-            LLMMessage(role="user", content=user),
-        ])
+        try:
+            resp = await self._router.chat([
+                LLMMessage(role="system", content=system),
+                LLMMessage(role="user", content=user),
+            ])
+            if self._quota is not None:
+                await self._quota.charge(
+                    incoming.user_id,
+                    resp.usage.input_tokens + resp.usage.output_tokens,
+                )
+        except AllProvidersFailed:
+            logger.warning("All LLM providers failed — search-only response")
+            return OutgoingMessage(
+                text="AI 답변 불가(모든 provider 실패), 검색만 모드:\n" +
+                     self._format_search_only(hits),
+                channel_id=incoming.channel_id,
+                platform=incoming.platform,
+            )
         draft = resp.content or ""
 
         try:
