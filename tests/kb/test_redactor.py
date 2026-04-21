@@ -47,7 +47,7 @@ async def test_redact_vocab_client_name(fake_redis, sample_vocab):
     assert "<CLIENT_1>" in masked
 
 
-async def test_redact_internal_url_keeps_path_only(fake_redis, sample_vocab):
+async def test_redact_internal_url_replaces_full_url(fake_redis, sample_vocab):
     r = Redactor(
         redis=fake_redis,
         vocab=sample_vocab,

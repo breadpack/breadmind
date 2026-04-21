@@ -155,3 +155,20 @@ async def test_filter_knowledge_empty_input(
 ) -> None:
     r = ACLResolver(db=test_db, slack_client=AsyncMock())
     assert await r.filter_knowledge("U1", []) == set()
+
+
+async def test_can_read_channel_tolerates_redis_error(
+    test_db: Database,
+) -> None:
+    slack = AsyncMock()
+    slack.conversations_members.return_value = {
+        "ok": True,
+        "members": ["U1"],
+    }
+    broken_redis = AsyncMock()
+    broken_redis.get.side_effect = ConnectionError("redis down")
+    broken_redis.set.side_effect = ConnectionError("redis down")
+    r = ACLResolver(db=test_db, slack_client=slack)
+    r._redis = broken_redis
+    # Cache fails → falls through to Slack → succeeds
+    assert await r.can_read_channel("U1", "C123") is True
