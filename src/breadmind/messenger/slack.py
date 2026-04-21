@@ -4,11 +4,24 @@ from breadmind.messenger.router import MessengerGateway
 logger = logging.getLogger(__name__)
 
 class SlackGateway(MessengerGateway):
-    def __init__(self, bot_token: str, app_token: str | None = None, on_message=None):
+    def __init__(
+        self,
+        bot_token: str,
+        app_token: str | None = None,
+        on_message=None,
+        *,
+        kb_db=None,
+    ):
         super().__init__(platform="slack", on_message=on_message)
         self._bot_token = bot_token
         self._app_token = app_token
         self._app = None
+        # Optional KB database handle. When present, ``start()`` wires the
+        # review + feedback interactive handlers onto the AsyncApp so that
+        # approve/reject/needs-edit/feedback button clicks from Slack reach
+        # the KB pipeline. ``None`` keeps the gateway usable in the old
+        # (non-KB) P1 deployment.
+        self._kb_db = kb_db
 
     async def start(self):
         try:
@@ -29,12 +42,38 @@ class SlackGateway(MessengerGateway):
                     if response:
                         await say(response)
 
+            self._register_kb_handlers()
+
             if self._app_token:
                 handler = AsyncSocketModeHandler(self._app, self._app_token)
                 await handler.start_async()
             logger.info("Slack gateway started.")
         except ImportError:
             logger.error("slack-bolt not installed. Run: pip install slack-bolt[async]")
+
+    def _register_kb_handlers(self) -> None:
+        """Wire KB review + feedback handlers onto ``self._app`` if ``kb_db``
+        was supplied at construction. Safe no-op when ``kb_db is None`` or the
+        KB package is unavailable."""
+        if self._kb_db is None or self._app is None:
+            return
+        try:
+            from breadmind.kb.feedback import (
+                FeedbackHandler,
+                register_feedback_handlers,
+            )
+            from breadmind.kb.review_queue import ReviewQueue
+            from breadmind.kb.slack_review_handlers import register_review_handlers
+
+            queue = ReviewQueue(self._kb_db, self._app.client)
+            register_review_handlers(self._app, queue=queue)
+            register_feedback_handlers(
+                self._app,
+                handler=FeedbackHandler(self._kb_db, self._app.client),
+            )
+            logger.info("KB review + feedback handlers registered on Slack gateway.")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("KB Slack handlers not registered: %s", exc)
 
     async def stop(self):
         logger.info("Slack gateway stopped.")
