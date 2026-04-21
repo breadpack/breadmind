@@ -28,6 +28,7 @@ celery_app.conf.update(
     imports=[
         "breadmind.tasks.worker",
         "breadmind.tasks.kb_tasks",
+        "breadmind.kb.connectors.schedule",
     ],
     beat_schedule={
         "kb-review-daily-digest": {
