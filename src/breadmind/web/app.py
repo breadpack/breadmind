@@ -46,6 +46,7 @@ from breadmind.web.routes.export import setup_export_routes
 from breadmind.web.routes.backup import setup_backup_routes
 from breadmind.web.routes.webhook_automation import setup_webhook_automation_routes
 from breadmind.web.routes.pwa import setup_pwa_routes, send_push
+from breadmind.web.routes.review import router as review_router
 from breadmind.web.routes.ui import router as ui_router
 
 logger = logging.getLogger(__name__)
@@ -423,6 +424,9 @@ class WebApp:
         app.include_router(hooks_router)
         app.include_router(skills_bundle_router)
         app.include_router(upload_router)
+        # KB review UI — production ReviewQueue dependency is wired in a
+        # later P5 task; until then the default dependency raises 500.
+        app.include_router(review_router, prefix="/api/review")
         setup_export_routes(app, self)
         setup_backup_routes(app, self)
         setup_webhook_automation_routes(app, self)

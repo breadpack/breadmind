@@ -1,9 +1,17 @@
+"""P1/P2/P3 dataclass tests."""
+from __future__ import annotations
+
+from uuid import uuid4
+
 from breadmind.kb.types import (
     Confidence,
     EnforcedAnswer,
+    ExtractedCandidate,
     InsufficientEvidence,
     KBHit,
+    PromotionCandidate,
     Source,
+    SourceMeta,
 )
 
 
@@ -36,3 +44,57 @@ def test_confidence_values():
 
 def test_insufficient_evidence_is_exception():
     assert issubclass(InsufficientEvidence, Exception)
+
+
+# ── P3 dataclass tests ──────────────────────────────────────────────────
+
+
+def test_source_meta_slots():
+    m = SourceMeta(
+        source_type="slack_msg",
+        source_uri="https://slack.com/x",
+        source_ref="ts:1.0",
+        original_user="U1",
+        project_id=uuid4(),
+        extracted_from="slack_thread_resolved",
+    )
+    assert m.source_type == "slack_msg"
+
+
+def test_extracted_candidate_defaults_sensitive_false():
+    c = ExtractedCandidate(
+        proposed_title="t",
+        proposed_body="b",
+        proposed_category="howto",
+        confidence=0.9,
+        sources=[],
+        original_user=None,
+        project_id=uuid4(),
+    )
+    assert c.sensitive_flag is False
+
+
+def test_promotion_candidate_minimal():
+    p = PromotionCandidate(
+        id=1,
+        project_id=uuid4(),
+        extracted_from="x",
+        original_user=None,
+        proposed_title="t",
+        proposed_body="b",
+        proposed_category="howto",
+        sources_json=[],
+        confidence=0.8,
+        status="pending",
+    )
+    assert p.status == "pending"
+    assert p.sensitive_flag is False
+
+
+def test_public_import_from_kb_package():
+    """Ensure the three new types are re-exported from breadmind.kb."""
+    from breadmind.kb import (  # noqa: F401
+        ExtractedCandidate,
+        PromotionCandidate,
+        SourceMeta,
+    )

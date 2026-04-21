@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass, field
+from typing import Any
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -95,9 +97,22 @@ async def db(pg_container) -> Database:
                 promoted_at TIMESTAMPTZ,
                 revision INT NOT NULL DEFAULT 1,
                 superseded_by BIGINT REFERENCES org_knowledge(id),
+                rank_weight DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+                flag_count INTEGER NOT NULL DEFAULT 0,
                 created_at TIMESTAMPTZ DEFAULT now()
             );
         """)
+        # Defensive ALTERs: if a prior test run created the table without
+        # the P3 columns, ``CREATE TABLE IF NOT EXISTS`` is a no-op and
+        # the columns would be missing. Mirrors migration 005.
+        await conn.execute(
+            "ALTER TABLE org_knowledge "
+            "ADD COLUMN IF NOT EXISTS rank_weight DOUBLE PRECISION NOT NULL DEFAULT 0.0"
+        )
+        await conn.execute(
+            "ALTER TABLE org_knowledge "
+            "ADD COLUMN IF NOT EXISTS flag_count INTEGER NOT NULL DEFAULT 0"
+        )
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_org_kn_tsv ON org_knowledge USING gin(tsv);"
         )
@@ -127,6 +142,55 @@ async def db(pg_container) -> Database:
                 metadata JSONB
             );
         """)
+        # promotion_candidates — mirrors migration 004_org_kb, plus
+        # sensitive_flag column added in 005_kb_p3_feedback.
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS promotion_candidates (
+                id                  BIGSERIAL PRIMARY KEY,
+                project_id          UUID REFERENCES org_projects(id),
+                extracted_from      TEXT NOT NULL,
+                original_user       TEXT,
+                proposed_title      TEXT,
+                proposed_body       TEXT,
+                proposed_category   TEXT,
+                sources_json        JSONB,
+                confidence          REAL,
+                status              TEXT NOT NULL DEFAULT 'pending',
+                reviewer            TEXT,
+                reviewed_at         TIMESTAMPTZ,
+                created_at          TIMESTAMPTZ DEFAULT now(),
+                sensitive_flag      BOOLEAN NOT NULL DEFAULT FALSE
+            );
+        """)
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_promo_project_status "
+            "ON promotion_candidates(project_id, status);"
+        )
+        # kb_extraction_pause — mirrors migration 005_kb_p3_feedback.
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS kb_extraction_pause (
+                project_id  UUID PRIMARY KEY,
+                paused      BOOLEAN NOT NULL DEFAULT FALSE,
+                reason      TEXT,
+                paused_at   TIMESTAMPTZ
+            );
+        """)
+        # kb_feedback — mirrors migration 005_kb_p3_feedback.
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS kb_feedback (
+                id              BIGSERIAL PRIMARY KEY,
+                knowledge_id    BIGINT REFERENCES org_knowledge(id) ON DELETE CASCADE,
+                user_id         TEXT NOT NULL,
+                kind            TEXT NOT NULL,
+                query_text      TEXT,
+                answer_text     TEXT,
+                created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+        """)
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_kb_feedback_knowledge "
+            "ON kb_feedback(knowledge_id, kind);"
+        )
 
     try:
         yield database
@@ -137,9 +201,13 @@ async def db(pg_container) -> Database:
             os.environ["DATABASE_URL"] = _prev_db_url
 
     async with database.acquire() as conn:
+        # Drop promotion_candidates before org_projects to avoid FK violation.
+        await conn.execute("DROP TABLE IF EXISTS promotion_candidates CASCADE;")
         await conn.execute("DROP TABLE IF EXISTS kb_sources CASCADE;")
+        await conn.execute("DROP TABLE IF EXISTS kb_feedback CASCADE;")
         await conn.execute("DROP TABLE IF EXISTS org_knowledge CASCADE;")
         await conn.execute("DROP TABLE IF EXISTS org_channel_map CASCADE;")
+        await conn.execute("DROP TABLE IF EXISTS kb_extraction_pause CASCADE;")
         await conn.execute("DROP TABLE IF EXISTS org_project_members CASCADE;")
         await conn.execute("DROP TABLE IF EXISTS org_projects CASCADE;")
         await conn.execute("DROP TABLE IF EXISTS kb_audit_log CASCADE;")
@@ -158,6 +226,16 @@ async def seeded_project(db) -> UUID:
         await conn.execute(
             "INSERT INTO org_project_members(project_id, user_id, role) VALUES ($1,$2,$3)",
             pid, "U_ALICE", "member",
+        )
+        # Additional membership rows used by downstream P3 tests. U-LEAD / U-MEMBER
+        # are distinct from U_ALICE (note the hyphen vs underscore).
+        await conn.execute(
+            "INSERT INTO org_project_members(project_id, user_id, role) VALUES ($1,$2,$3)",
+            pid, "U-LEAD", "lead",
+        )
+        await conn.execute(
+            "INSERT INTO org_project_members(project_id, user_id, role) VALUES ($1,$2,$3)",
+            pid, "U-MEMBER", "member",
         )
     return pid
 
@@ -258,3 +336,104 @@ def acl(seeded_project):
         allowed_channels=set(),  # Alice cannot read C_PRIV by default
         user_projects_map={"U_ALICE": [seeded_project]},
     )
+
+
+# ---------------------------------------------------------------------------
+# P3 fakes — LLM router, sensitive classifier, Slack web client
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class FakeLLMRouter:
+    """Scripted LLM: ``script`` is a list of responses returned in order.
+
+    Exhausting the script without seeding more raises AssertionError so tests
+    that forgot to seed a response fail loudly rather than passing on a
+    coincidentally-parseable ``"{}"`` fallback.
+    """
+
+    script: list[str] = field(default_factory=list)
+    calls: list[dict] = field(default_factory=list)
+
+    async def complete(self, prompt: str, **kwargs: Any) -> str:
+        """Record the call and return the next scripted response.
+
+        Raises AssertionError if the script is exhausted.
+        """
+        self.calls.append({"prompt": prompt, **kwargs})
+        if not self.script:
+            raise AssertionError(
+                "FakeLLMRouter.script exhausted; test did not seed a response. "
+                "Seed expected responses via `fake_llm_router.script = [...]`."
+            )
+        return self.script.pop(0)
+
+
+@pytest.fixture
+def fake_llm_router() -> FakeLLMRouter:
+    return FakeLLMRouter()
+
+
+@dataclass
+class FakeSensitiveClassifier:
+    """Substring-based sensitive-content classifier for deterministic tests."""
+
+    deny_substrings: list[str] = field(default_factory=list)
+
+    async def is_sensitive(self, text: str) -> bool:
+        return any(s in text for s in self.deny_substrings)
+
+
+@pytest.fixture
+def fake_sensitive() -> FakeSensitiveClassifier:
+    return FakeSensitiveClassifier()
+
+
+@dataclass
+class FakeSlackClient:
+    """Mimic of ``slack_sdk.web.async_client.AsyncWebClient`` for pipeline tests.
+
+    Records DM posts and opened views so tests can assert on side effects.
+    ``members_by_channel`` is pre-populated by individual tests to control the
+    return of ``conversations_members``.
+    """
+
+    dms: list[dict] = field(default_factory=list)
+    views_opened: list[dict] = field(default_factory=list)
+    members_by_channel: dict[str, list[str]] = field(default_factory=dict)
+    # Optional test-overridable hooks (downstream tasks may monkey-patch these).
+    conversations_replies_return: list = field(default_factory=list)
+
+    async def chat_postMessage(self, **kwargs: Any) -> dict:
+        self.dms.append(kwargs)
+        return {"ok": True, "ts": "1.0"}
+
+    async def conversations_open(self, users: str, **kwargs: Any) -> dict:
+        return {"ok": True, "channel": {"id": f"D-{users}"}}
+
+    async def views_open(self, trigger_id: str, view: dict) -> dict:
+        self.views_opened.append({"trigger_id": trigger_id, "view": view})
+        return {"ok": True}
+
+    async def conversations_members(self, channel: str, **kwargs: Any) -> dict:
+        return {"ok": True, "members": self.members_by_channel.get(channel, [])}
+
+
+@pytest.fixture
+def fake_slack_client() -> FakeSlackClient:
+    return FakeSlackClient()
+
+
+# ---------------------------------------------------------------------------
+# Aliases — pasted plan code may reference ``pg_db`` instead of ``db``.
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def pg_db(db):
+    """Alias for ``db`` so plan snippets using ``pg_db`` run as-is.
+
+    Mirrors the async-generator shape of the ``db`` fixture; yielding the same
+    Database instance means teardown remains owned by ``db``.
+    """
+    yield db

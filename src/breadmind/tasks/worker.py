@@ -24,12 +24,13 @@ _store = None
 _registry = None
 _guard = None
 _redis_client = None
+_slack_client = None
 
 
 @worker_process_init.connect
 def _worker_bootstrap(**kwargs):
     """Initialize BreadMind components in the worker process."""
-    global _db, _store, _registry, _guard, _redis_client
+    global _db, _store, _registry, _guard, _redis_client, _slack_client
     logger.info("Worker bootstrap starting...")
 
     loop = asyncio.new_event_loop()
@@ -64,6 +65,19 @@ def _worker_bootstrap(**kwargs):
     except Exception:
         logger.warning("Redis not available for Pub/Sub")
         _redis_client = None
+
+    # ── Slack AsyncWebClient for KB digests / DMs ────────────────────
+    # Allows KB cron jobs (review digest, personal extraction, etc.) to
+    # post into Slack from the worker process. ``SLACK_BOT_TOKEN`` is the
+    # canonical env var used by slack_bolt and slack_sdk.
+    _slack_client = None
+    try:
+        slack_token = os.environ.get("SLACK_BOT_TOKEN", "")
+        if slack_token:
+            from slack_sdk.web.async_client import AsyncWebClient
+            _slack_client = AsyncWebClient(token=slack_token)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Slack client init failed: %s", exc)
 
     logger.info("Worker bootstrap complete. Tools: %d", len(_registry.list_tools()))
 

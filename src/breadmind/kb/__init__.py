@@ -1,4 +1,4 @@
-"""Company knowledge base (KB) — P1 Foundation + P2 Query Path.
+"""Company knowledge base (KB) — P1 Foundation + P2 Query Path + P3 Knowledge Pipeline.
 
 Public API (locked across P1-P5 plans):
 
@@ -16,6 +16,11 @@ P2:
 - ``QuotaTracker`` — per-user daily token quota
 - ``SelfReviewer`` — LLM self-review for confidence scoring
 
+P3:
+- ``SourceMeta`` — source provenance for extracted knowledge
+- ``ExtractedCandidate`` — LLM-extracted knowledge candidate pre-promotion
+- ``PromotionCandidate`` — persisted promotion-queue row awaiting review
+
 Shared types:
 - ``Confidence``, ``EnforcedAnswer``, ``InsufficientEvidence``, ``KBHit``,
   ``Source``
@@ -32,16 +37,27 @@ from .redactor import Redactor, SecretDetected
 from .retriever import KBRetriever
 from .self_review import SelfReviewer
 from .sensitive import SensitiveCategory, SensitiveClassifier
-from .types import Confidence, EnforcedAnswer, InsufficientEvidence, KBHit, Source
+from .types import (
+    Confidence,
+    EnforcedAnswer,
+    ExtractedCandidate,
+    InsufficientEvidence,
+    KBHit,
+    PromotionCandidate,
+    Source,
+    SourceMeta,
+)
 
 __all__ = [
     "ACLResolver",
     "CitationEnforcer",
     "Confidence",
     "EnforcedAnswer",
+    "ExtractedCandidate",
     "InsufficientEvidence",
     "KBHit",
     "KBRetriever",
+    "PromotionCandidate",
     "QueryCache",
     "QueryPipeline",
     "QuotaTracker",
@@ -51,5 +67,6 @@ __all__ = [
     "SensitiveCategory",
     "SensitiveClassifier",
     "Source",
+    "SourceMeta",
     "audit_log",
 ]

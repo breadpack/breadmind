@@ -34,8 +34,15 @@ class SlackEnhancedGateway(SlackGateway):
         app_token: str | None = None,
         on_message: Callable | None = None,
         on_feedback: Callable | None = None,
+        *,
+        kb_db: Any | None = None,
     ) -> None:
-        super().__init__(bot_token=bot_token, app_token=app_token, on_message=on_message)
+        super().__init__(
+            bot_token=bot_token,
+            app_token=app_token,
+            on_message=on_message,
+            kb_db=kb_db,
+        )
         self._bot_user_id = bot_user_id
         self._on_feedback = on_feedback
 
@@ -180,6 +187,9 @@ class SlackEnhancedGateway(SlackGateway):
             action_id = action.get("action_id", "")
             user_id = (body.get("user") or {}).get("id", "")
             await self._handle_feedback_action(action_id, user_id)
+
+        # Wire KB review + feedback handlers if a kb_db was supplied.
+        self._register_kb_handlers()
 
         if self._app_token:
             from slack_bolt.adapter.socket_mode.async_handler import (
