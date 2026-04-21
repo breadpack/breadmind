@@ -65,3 +65,16 @@ def test_time_llm_context_manager_records_latency():
     child = m.LLM_LATENCY.labels(provider="ollama", model="llama3")
     c = sum(b.get() for b in child._buckets)
     assert c == 1
+
+
+def test_kb_metrics_endpoint_exposes_counter(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from breadmind.web.routes.kb_metrics import router
+
+    app = FastAPI()
+    app.include_router(router)
+    m.observe_query(project="p", status="ok", confidence="high")
+    r = TestClient(app).get("/kb/metrics")
+    assert r.status_code == 200
+    assert "breadmind_query_total" in r.text
