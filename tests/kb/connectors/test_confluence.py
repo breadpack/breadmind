@@ -165,3 +165,61 @@ async def test_fetch_pages_includes_updated_since_when_cursor_set(
     _, params = session.calls[0]
     # CQL-style filter — accept either "updated-since" param or CQL mode.
     assert params.get("updated-since") == "2026-04-20T00:00:00Z"
+
+
+async def test_429_honors_retry_after_header(mem_db, fake_extractor,
+                                              fake_review_queue, monkeypatch):
+    """First response 429 with Retry-After=2, then success."""
+    vault = FakeVault({"confluence:x": "u:t"})
+    session = _ScriptedSession([
+        _FakeResponse(429, {}, headers={"Retry-After": "2"}),
+        _FakeResponse(200, _page_payload(results=[], next_path=None)),
+    ])
+    conn = ConfluenceConnector(
+        db=mem_db, base_url="https://example.atlassian.net/wiki",
+        credentials_ref="confluence:x",
+        extractor=fake_extractor, review_queue=fake_review_queue,
+        vault=vault, session=session,
+    )
+
+    slept: list[float] = []
+
+    async def fake_sleep(s):
+        slept.append(s)
+
+    monkeypatch.setattr("breadmind.kb.connectors.confluence.asyncio.sleep",
+                        fake_sleep)
+    async for _ in conn._fetch_pages("S", cursor=None):
+        pass
+
+    assert slept == [2]
+    assert len(session.calls) == 2
+
+
+async def test_429_without_retry_after_uses_exponential_defaults(
+    mem_db, fake_extractor, fake_review_queue, monkeypatch
+):
+    vault = FakeVault({"confluence:x": "u:t"})
+    session = _ScriptedSession([
+        _FakeResponse(429, {}, headers={}),
+        _FakeResponse(429, {}, headers={}),
+        _FakeResponse(429, {}, headers={}),
+        _FakeResponse(200, _page_payload(results=[], next_path=None)),
+    ])
+    conn = ConfluenceConnector(
+        db=mem_db, base_url="https://example.atlassian.net/wiki",
+        credentials_ref="confluence:x",
+        extractor=fake_extractor, review_queue=fake_review_queue,
+        vault=vault, session=session,
+    )
+    slept: list[float] = []
+
+    async def fake_sleep(s):
+        slept.append(s)
+
+    monkeypatch.setattr("breadmind.kb.connectors.confluence.asyncio.sleep",
+                        fake_sleep)
+    async for _ in conn._fetch_pages("S", cursor=None):
+        pass
+    # First three 429s use the built-in schedule 60, 300, 1800
+    assert slept == [60, 300, 1800]
