@@ -238,6 +238,11 @@ class ConfluenceConnector(BaseConnector):
         scope_key: str,
         cursor: str | None,
     ) -> SyncResult:
+        logger.info(
+            "confluence.sync.start",
+            extra={"project_id": str(project_id), "scope_key": scope_key,
+                   "cursor": cursor},
+        )
         processed = 0
         errors = 0
         max_when = cursor or ""
@@ -281,6 +286,12 @@ class ConfluenceConnector(BaseConnector):
         # is flagged stale and a retirement candidate is enqueued for review.
         await self._scan_retirements(project_id, scope_key)
 
+        logger.info(
+            "confluence.sync.done",
+            extra={"project_id": str(project_id), "scope_key": scope_key,
+                   "processed": processed, "errors": errors,
+                   "new_cursor": max_when or (cursor or "")},
+        )
         return SyncResult(
             new_cursor=max_when or (cursor or ""),
             processed=processed,
