@@ -1,6 +1,7 @@
 """Shared fixtures for KB connector tests (fake extractor/review, in-memory DB, VCR)."""
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,6 +12,51 @@ import vcr
 
 CASSETTE_DIR = Path(__file__).parent / "cassettes"
 
+# Defense-in-depth secret scrubbers applied to cassette response bodies
+# when operators record new cassettes (``record_mode="new_episodes"`` /
+# ``"once"`` / ``"all"``). ``record_mode="none"`` never writes, so these
+# are effectively no-ops for replay-only runs, but they belong in the
+# shared config so a future re-record cannot accidentally commit secrets.
+_SECRET_BODY_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    # Email addresses (RFC 5322-ish; good enough for cassette scrubbing).
+    (re.compile(rb"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+"),
+     b"scrubbed@example.com"),
+    # Atlassian API tokens (ATATT prefix).
+    (re.compile(rb"ATATT[A-Za-z0-9+/=_-]{20,}"), b"ATATT_REDACTED"),
+    # Bearer tokens in JSON bodies.
+    (re.compile(rb'"(access_token|refresh_token|api_token|apikey|api_key|secret)"\s*:\s*"[^"]+"'),
+     b'"\\1": "REDACTED"'),
+    # AWS-style keys (20-char uppercase) and long hex secrets.
+    (re.compile(rb"AKIA[0-9A-Z]{16}"), b"AKIA_REDACTED"),
+    # Slack tokens (xoxb-/xoxp-/xapp-/xoxa-).
+    (re.compile(rb"xox[baprs]-[A-Za-z0-9-]{10,}"), b"xoxb-REDACTED"),
+)
+
+
+def _scrub_response_body(response: dict) -> dict:
+    """VCR ``before_record_response`` hook: scrub secrets from response bodies.
+
+    Runs ONLY when VCR is in a record mode; replay mode reads cassettes
+    as-is and does not invoke this hook. Safe to call on any response
+    shape — unknown body encodings pass through untouched.
+    """
+    try:
+        body = response.get("body", {})
+        raw = body.get("string")
+        if not raw:
+            return response
+        as_bytes = raw if isinstance(raw, bytes) else raw.encode("utf-8")
+        scrubbed = as_bytes
+        for pattern, repl in _SECRET_BODY_PATTERNS:
+            scrubbed = pattern.sub(repl, scrubbed)
+        if scrubbed != as_bytes:
+            body["string"] = scrubbed if isinstance(raw, bytes) else scrubbed.decode(
+                "utf-8", errors="replace",
+            )
+    except Exception:  # pragma: no cover — scrubber must never break recording
+        pass
+    return response
+
 
 @pytest.fixture
 def vcr_config() -> vcr.VCR:
@@ -20,7 +66,14 @@ def vcr_config() -> vcr.VCR:
         record_mode="none",
         match_on=["method", "scheme", "host", "port", "path", "query"],
         filter_headers=["authorization"],
+        before_record_response=_scrub_response_body,
     )
+
+
+@pytest.fixture
+def scrub_response_body():
+    """Expose the scrubber to tests for direct assertion."""
+    return _scrub_response_body
 
 
 @dataclass
