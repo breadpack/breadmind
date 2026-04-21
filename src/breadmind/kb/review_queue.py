@@ -269,6 +269,72 @@ class ReviewQueue:
 
         return int(kid)
 
+    async def reject(
+        self,
+        candidate_id: int,
+        reviewer: str,
+        reason: str,
+    ) -> None:
+        async with self._db.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT project_id FROM promotion_candidates WHERE id=$1",
+                candidate_id,
+            )
+            if not row:
+                raise ValueError(f"candidate {candidate_id} not found")
+            await conn.execute(
+                """
+                UPDATE promotion_candidates
+                SET status='rejected', reviewer=$2, reviewed_at=now()
+                WHERE id=$1
+                """,
+                candidate_id,
+                reviewer,
+            )
+            await _audit(
+                conn,
+                actor=reviewer,
+                action="reject",
+                subject_type="promotion_candidate",
+                subject_id=str(candidate_id),
+                project_id=row["project_id"],
+                metadata={"reason": reason},
+            )
+
+    async def needs_edit(
+        self,
+        candidate_id: int,
+        reviewer: str,
+        new_body: str,
+    ) -> None:
+        async with self._db.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT project_id FROM promotion_candidates WHERE id=$1",
+                candidate_id,
+            )
+            if not row:
+                raise ValueError(f"candidate {candidate_id} not found")
+            await conn.execute(
+                """
+                UPDATE promotion_candidates
+                SET status='needs_edit', reviewer=$2, reviewed_at=now(),
+                    proposed_body=$3
+                WHERE id=$1
+                """,
+                candidate_id,
+                reviewer,
+                new_body,
+            )
+            await _audit(
+                conn,
+                actor=reviewer,
+                action="needs_edit",
+                subject_type="promotion_candidate",
+                subject_id=str(candidate_id),
+                project_id=row["project_id"],
+                metadata={"body_chars": len(new_body)},
+            )
+
 
 async def _audit(
     conn,

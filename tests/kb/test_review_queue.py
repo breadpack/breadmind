@@ -162,3 +162,44 @@ async def test_approve_superseded_by_chain(
             "SELECT superseded_by FROM org_knowledge WHERE id=$1", kid1
         )
     assert superseded == kid2
+
+
+# ---------------------------------------------------------------------------
+# Task 9 — reject() / needs_edit()
+# ---------------------------------------------------------------------------
+
+
+async def test_reject_updates_status_and_audits(
+    db, seeded_project, fake_slack_client
+):
+    rq = ReviewQueue(db, fake_slack_client)
+    cid = await rq.enqueue(_candidate(seeded_project))
+    await rq.reject(cid, reviewer="U-LEAD", reason="duplicate")
+
+    async with db.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT status, reviewer FROM promotion_candidates WHERE id=$1", cid
+        )
+        actions = [r["action"] for r in await conn.fetch(
+            "SELECT action FROM kb_audit_log WHERE subject_id=$1",
+            str(cid),
+        )]
+    assert row["status"] == "rejected"
+    assert row["reviewer"] == "U-LEAD"
+    assert "reject" in actions
+
+
+async def test_needs_edit_updates_body_and_status(
+    db, seeded_project, fake_slack_client
+):
+    rq = ReviewQueue(db, fake_slack_client)
+    cid = await rq.enqueue(_candidate(seeded_project))
+    await rq.needs_edit(cid, reviewer="U-LEAD", new_body="edited body")
+
+    async with db.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT status, proposed_body FROM promotion_candidates WHERE id=$1",
+            cid,
+        )
+    assert row["status"] == "needs_edit"
+    assert row["proposed_body"] == "edited body"
