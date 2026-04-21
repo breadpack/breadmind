@@ -50,3 +50,19 @@ class SlackEnhancedGateway(SlackGateway):
             thread_ts=event.get("thread_ts"),
             is_dm=event.get("channel_type") == "im",
         )
+
+    async def _handle_feedback_action(
+        self, action_id: str, user_id: str,
+    ) -> None:
+        kind_map = {
+            self.UPVOTE_PREFIX: "upvote",
+            self.DOWNVOTE_PREFIX: "downvote",
+            self.BOOKMARK_PREFIX: "bookmark",
+        }
+        for prefix, kind in kind_map.items():
+            if action_id.startswith(prefix):
+                answer_id = action_id[len(prefix):]
+                if self._on_feedback is not None:
+                    await self._on_feedback(kind, answer_id, user_id)
+                return
+        logger.debug("ignoring non-KB action_id=%s", action_id)

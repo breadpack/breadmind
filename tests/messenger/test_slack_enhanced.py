@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock
+
 from breadmind.messenger.slack_enhanced import SlackEnhancedGateway
 
 
@@ -39,3 +41,42 @@ def test_build_incoming_dm_flag():
     inc = gw._build_incoming(evt)
     assert inc.is_dm is True
     assert inc.thread_ts is None
+
+
+async def test_feedback_router_dispatches_upvote():
+    captured: list = []
+
+    async def handler(kind: str, answer_id: str, user_id: str):
+        captured.append((kind, answer_id, user_id))
+
+    gw = SlackEnhancedGateway(
+        bot_token="x", bot_user_id="U_BOT", on_message=None, on_feedback=handler,
+    )
+    await gw._handle_feedback_action(
+        action_id="kb_upvote_ab12cd34", user_id="U_ALICE",
+    )
+    assert captured == [("upvote", "ab12cd34", "U_ALICE")]
+
+
+async def test_feedback_router_recognizes_all_kinds():
+    kinds = []
+
+    async def handler(kind: str, answer_id: str, user_id: str):
+        kinds.append(kind)
+
+    gw = SlackEnhancedGateway(
+        bot_token="x", bot_user_id="U_BOT", on_message=None, on_feedback=handler,
+    )
+    await gw._handle_feedback_action("kb_upvote_a", "u")
+    await gw._handle_feedback_action("kb_downvote_b", "u")
+    await gw._handle_feedback_action("kb_bookmark_c", "u")
+    assert kinds == ["upvote", "downvote", "bookmark"]
+
+
+async def test_feedback_router_ignores_unknown():
+    called = AsyncMock()
+    gw = SlackEnhancedGateway(
+        bot_token="x", bot_user_id="U_BOT", on_message=None, on_feedback=called,
+    )
+    await gw._handle_feedback_action("approve_xyz", "u")
+    called.assert_not_awaited()
