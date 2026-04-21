@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from .chat import setup_chat_routes
 from .config import setup_config_routes
+from .connectors import setup_connectors_routes
 from .containers import setup_container_routes
 from .tools import setup_tools_routes
 from .mcp import setup_mcp_routes
@@ -17,6 +18,7 @@ __all__ = [
     "setup_browser_routes",
     "setup_chat_routes",
     "setup_config_routes",
+    "setup_connectors_routes",
     "setup_container_routes",
     "setup_tools_routes",
     "setup_mcp_routes",

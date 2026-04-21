@@ -18,6 +18,7 @@ from breadmind.web.routes import (
     setup_browser_routes,
     setup_chat_routes,
     setup_config_routes,
+    setup_connectors_routes,
     setup_container_routes,
     setup_tools_routes,
     setup_mcp_routes,
@@ -409,6 +410,7 @@ class WebApp:
         setup_subagent_routes(app, self)
         setup_container_routes(app, self)
         setup_settings_routes(app, self)
+        setup_connectors_routes(app, self)
         setup_messenger_routes(app, self)
         setup_worker_routes(app, self)
         setup_companion_routes(app, self)
