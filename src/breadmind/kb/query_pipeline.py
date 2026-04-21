@@ -426,17 +426,13 @@ class _TestPipeFacade:
 
 
 # ─── E2E facade ─────────────────────────────────────────────────────────────
+# Split into ``breadmind.kb.e2e_facades`` in P5 (Task 22+) — the facade
+# carries enough test-only logic (real ACL, sensitive-category blocking,
+# fallback routing) that inlining it obscures the production orchestrator.
 
 
 def _add_e2e_pipeline_builder() -> None:
-    """Attach :meth:`QueryPipeline.build_for_e2e` at import time.
-
-    The real E2E wiring lives here (instead of inline on the class) so
-    the e2e_factories helper module can be imported lazily — keeping
-    production imports lean. ``build_for_e2e`` is **sync** (matches the
-    call shape in tests/e2e/test_query_full_path.py); the async DB schema
-    + seed setup runs lazily on the first ``handle_slack_mention`` call.
-    """
+    """Attach :meth:`QueryPipeline.build_for_e2e` at import time."""
 
     @classmethod  # type: ignore[misc]
     def build_for_e2e(  # noqa: ANN101
@@ -448,26 +444,13 @@ def _add_e2e_pipeline_builder() -> None:
         llm,
         force_confidence: str | None = None,
         project_name: str = "pilot-alpha",
-    ) -> "_E2EPipelineFacade":
+    ):
         """Wire a :class:`QueryPipeline` against the E2E harness stubs.
 
-        * ``db`` is a raw ``asyncpg.Connection`` yielded by the e2e
-          conftest — we wrap it in
-          :class:`breadmind.kb.e2e_factories.AsyncpgConnectionPool` so
-          the real retriever's ``async with db.acquire():`` calls work.
-        * ``redis`` backs the real :class:`QueryCache`.
-        * ``llm`` is the scripted ``StubLLM``; we adapt it to ``.chat()``.
-        * ``slack`` is ``FakeSlackClient`` and receives the final post.
-        * ``force_confidence`` skips the real self-review LLM and pins
-          the confidence label so the ``low`` / ``medium`` branches of
-          the full-path test stay deterministic.
-
-        The returned facade exposes
-        ``handle_slack_mention(user_id, channel_id, text)``. It drives
-        the real pipeline and posts the OutgoingMessage.text to
-        ``slack.chat_postMessage`` — the surface every e2e assertion
-        checks.
+        Returns :class:`breadmind.kb.e2e_facades._E2EPipelineFacade`;
+        see that module for the contract of ``handle_slack_mention``.
         """
+        from breadmind.kb.e2e_facades import _E2EPipelineFacade
         return _E2EPipelineFacade(
             cls=cls,
             db=db,
@@ -479,142 +462,6 @@ def _add_e2e_pipeline_builder() -> None:
         )
 
     QueryPipeline.build_for_e2e = build_for_e2e  # type: ignore[attr-defined]
-
-
-class _RedactorSyncAdapter:
-    """Sync shim mirroring the 3 calls :meth:`QueryPipeline.answer` makes
-    on its redactor collaborator:
-
-    * ``redact(text) -> (masked, restore_map)``
-    * ``abort_if_secrets(masked) -> None`` (raises on hard-block)
-    * ``restore(text, restore_map) -> str``
-
-    The production :class:`Redactor` exposes the first two as async +
-    takes a ``session_id``. Rather than adapt around that, the E2E path
-    uses a synchronous pass-through: scan for hard secrets, mask obvious
-    PII patterns (email / phone / etc.) with the same scan helper, and
-    return the masked text paired with an empty restore map. The E2E
-    queries contain no PII we care to un-mask, so the round-trip is a
-    no-op on the way out.
-    """
-
-    def __init__(self, _unused=None) -> None:
-        pass
-
-    def redact(self, text: str):
-        from breadmind.kb.redactor import Redactor
-        masked = Redactor.default().redact_prompt(text)
-        return masked, ""
-
-    def abort_if_secrets(self, text: str) -> None:
-        import re as _re
-        from breadmind.kb.redactor import (
-            _API_KEY_PATTERNS, _CC_RE, _SSN_RE,
-            SecretDetected, _luhn_ok, _shannon_entropy,
-        )
-        for pat in _API_KEY_PATTERNS:
-            if pat.search(text):
-                raise SecretDetected("api key / token pattern matched")
-        for match in _CC_RE.findall(text):
-            if _luhn_ok(match):
-                raise SecretDetected("credit card number (Luhn)")
-        if _SSN_RE.search(text):
-            raise SecretDetected("SSN pattern matched")
-        for token in _re.findall(r"\S{24,}", text):
-            if _shannon_entropy(token) >= 4.5:
-                raise SecretDetected("high-entropy token")
-
-    def restore(self, text: str, _restore_map) -> str:
-        return text
-
-
-class _E2EPipelineFacade:
-    """Slack-messenger façade over :class:`QueryPipeline`.
-
-    Lazy-init: ``build_for_e2e`` returns this facade synchronously, and
-    the first ``handle_slack_mention`` call runs the async schema
-    augmentation + KB seeding before wiring the real pipeline.
-    """
-
-    def __init__(
-        self,
-        *,
-        cls: type[QueryPipeline],
-        db,
-        redis,
-        slack,
-        llm,
-        force_confidence: str | None,
-        project_name: str,
-    ) -> None:
-        self._cls = cls
-        self._db = db
-        self._redis = redis
-        self._slack = slack
-        self._llm = llm
-        self._force_confidence = force_confidence
-        self._project_name = project_name
-        self._pipeline: QueryPipeline | None = None
-
-    async def _ensure_pipeline(self) -> QueryPipeline:
-        if self._pipeline is not None:
-            return self._pipeline
-        from breadmind.kb import e2e_factories as ef
-        from breadmind.kb.citation import CitationEnforcer
-        from breadmind.kb.query_cache import QueryCache
-        from breadmind.kb.retriever import KBRetriever
-
-        pool = ef.AsyncpgConnectionPool(self._db)
-        await ef.ensure_e2e_schema(self._db)
-        known_ids = await ef.seed_e2e_knowledge(
-            self._db, project_name=self._project_name,
-        )
-        project_id = await ef.resolve_project_id(self._db, self._project_name)
-
-        embedder = ef.StableEmbedder()
-        acl = ef._PassThroughACL()
-        retriever = KBRetriever(pool, embedder, acl)
-
-        router = ef._StubChatRouter(self._llm, known_ids=known_ids)
-        citer = CitationEnforcer(router)
-        reviewer = ef._ForcedReviewer(self._force_confidence)
-        sensitive = ef._NullSensitive()
-        cache = QueryCache(self._redis)
-        redactor = _RedactorSyncAdapter(None)
-
-        async def _resolver(_uid: str, _cid: str):
-            return project_id
-
-        self._pipeline = self._cls(
-            retriever=retriever,
-            redactor=redactor,
-            llm_router=router,
-            citer=citer,
-            reviewer=reviewer,
-            sensitive=sensitive,
-            cache=cache,
-            quota=None,
-            project_resolver=_resolver,
-        )
-        return self._pipeline
-
-    async def handle_slack_mention(
-        self, *, user_id: str, channel_id: str, text: str,
-    ) -> OutgoingMessage:
-        """Drive the full pipeline and post the OutgoingMessage to Slack.
-
-        Returns the OutgoingMessage for call-site assertions; the posted
-        message is also recorded on ``slack.posted`` as the fake client
-        appends every send.
-        """
-        pipeline = await self._ensure_pipeline()
-        incoming = IncomingMessage(
-            text=text, user_id=user_id, channel_id=channel_id,
-            platform="slack",
-        )
-        out = await pipeline.answer(incoming)
-        await self._slack.chat_postMessage(channel=out.channel_id, text=out.text)
-        return out
 
 
 _add_e2e_pipeline_builder()
