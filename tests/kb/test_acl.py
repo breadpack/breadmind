@@ -98,10 +98,13 @@ async def test_filter_knowledge_excludes_non_member_projects(
     test_db: Database, fake_redis
 ) -> None:
     slack = AsyncMock()
-    slack.conversations_members.return_value = {
-        "ok": True,
-        "members": ["U1"],
-    }
+
+    async def _members(*, channel, limit=1000):
+        if channel == "C-NOPE":
+            return {"ok": True, "members": []}
+        return {"ok": True, "members": ["U1"]}
+
+    slack.conversations_members.side_effect = _members
     async with test_db.acquire() as conn:
         p1 = await _seed_project(conn, "alpha")
         p2 = await _seed_project(conn, "beta")
