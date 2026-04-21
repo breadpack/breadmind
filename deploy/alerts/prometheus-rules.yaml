@@ -1,0 +1,62 @@
+# deploy/alerts/prometheus-rules.yaml
+# Loaded by the on-prem Prometheus via rule_files. Uses constants from
+# src/breadmind/kb/cost.py; alert thresholds are duplicated intentionally so
+# ops can tune without code change.
+groups:
+  - name: breadmind-kb-critical
+    interval: 30s
+    rules:
+      - alert: AllLLMProvidersDown
+        expr: |
+          sum(rate(breadmind_llm_latency_seconds_count[5m])) == 0
+          and sum(rate(breadmind_query_total[5m])) > 0
+        for: 5m
+        labels: { severity: critical, service: breadmind-kb }
+        annotations:
+          summary: "All LLM providers silent for 5m while queries are arriving"
+          runbook: "docs/pilot/rollout-checklist.md#llm-outage"
+
+      - alert: DatabaseUnhealthy
+        expr: up{job="postgres"} == 0
+        for: 2m
+        labels: { severity: critical, service: breadmind-kb }
+        annotations:
+          summary: "Postgres scrape down"
+
+      - alert: RedisUnhealthy
+        expr: up{job="redis"} == 0
+        for: 2m
+        labels: { severity: critical, service: breadmind-kb }
+        annotations:
+          summary: "Redis scrape down"
+
+      - alert: SensitiveBlockSpike
+        expr: |
+          sum(rate(breadmind_block_sensitive_total[5m]))
+          > 5 * sum(rate(breadmind_block_sensitive_total[1h] offset 1h))
+        for: 10m
+        labels: { severity: warning, service: breadmind-kb, category: security }
+        annotations:
+          summary: "Sensitive-block rate > 5x baseline (possible jailbreak attempt)"
+
+      - alert: HighTokenCost
+        # Budget = 50 USD/day (see DAILY_BUDGET_USD); trip at 120%.
+        expr: |
+          (
+            sum(increase(breadmind_llm_tokens_total{provider="anthropic",direction="input"}[1d])) * 3
+          + sum(increase(breadmind_llm_tokens_total{provider="anthropic",direction="output"}[1d])) * 15
+          + sum(increase(breadmind_llm_tokens_total{provider="azure",direction="input"}[1d])) * 2.5
+          + sum(increase(breadmind_llm_tokens_total{provider="azure",direction="output"}[1d])) * 10
+          ) / 1000 > 60
+        for: 15m
+        labels: { severity: warning, service: breadmind-kb, category: cost }
+        annotations:
+          summary: "Daily token cost > 120% budget (60 USD)"
+
+      - alert: RedactorAbortSpike
+        expr: |
+          sum by (pattern) (rate(breadmind_redaction_events_total{pattern=~"api_key|credit_card|ssn"}[5m])) > 0.1
+        for: 5m
+        labels: { severity: critical, service: breadmind-kb, category: security }
+        annotations:
+          summary: "Redactor hard-abort pattern detected in live traffic"
