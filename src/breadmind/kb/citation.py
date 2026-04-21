@@ -5,6 +5,7 @@ import logging
 import re
 
 from breadmind.kb.types import EnforcedAnswer, InsufficientEvidence, KBHit, Source
+from breadmind.llm.base import LLMMessage
 
 logger = logging.getLogger(__name__)
 
@@ -27,12 +28,42 @@ class CitationEnforcer:
         allowed_ids = {h.knowledge_id for h in kb_hits}
         source_by_id = {h.knowledge_id: h.sources for h in kb_hits}
 
-        if self._is_supported(draft, allowed_ids):
-            return EnforcedAnswer(
-                text=draft,
-                citations=self._collect_sources(draft, source_by_id),
-            )
-        raise InsufficientEvidence("not yet implemented")
+        current = draft
+        attempts = 0
+        while True:
+            if self._is_supported(current, allowed_ids):
+                return EnforcedAnswer(
+                    text=current,
+                    citations=self._collect_sources(current, source_by_id),
+                )
+            if attempts >= _MAX_RETRIES:
+                logger.info("CitationEnforcer giving up after %d retries", attempts)
+                raise InsufficientEvidence(
+                    "Draft not supported by provided KB hits after retry"
+                )
+            attempts += 1
+            current = await self._regenerate(current, kb_hits)
+
+    async def _regenerate(self, draft: str, hits: list[KBHit]) -> str:
+        snippets = "\n".join(
+            f"[#{h.knowledge_id}] {h.title}: {h.body[:400]}" for h in hits
+        )
+        system = (
+            "You MUST cite every factual claim with [#<id>] referencing "
+            "only the IDs listed below. Do NOT invent IDs. If a claim "
+            "cannot be supported by any listed snippet, drop the claim."
+        )
+        user = (
+            f"KB snippets:\n{snippets}\n\n"
+            f"Original draft (missing citations):\n{draft}\n\n"
+            f"Rewrite the answer with [#<id>] citations on every factual sentence."
+        )
+        messages = [
+            LLMMessage(role="system", content=system),
+            LLMMessage(role="user", content=user),
+        ]
+        resp = await self._router.chat(messages)
+        return resp.content or ""
 
     @staticmethod
     def _cited_ids(text: str) -> set[int]:
