@@ -96,3 +96,15 @@ def test_build_answer_blocks_includes_three_action_ids():
     assert "kb_bookmark_ab12cd34" in flat
     assert "https://wiki/x" in flat
     assert "🟢" in flat
+
+
+def test_format_permalink_detects_slack_archive_uri():
+    gw = SlackEnhancedGateway(bot_token="x", bot_user_id="U_BOT", on_message=None)
+    uri = "https://acme.slack.com/archives/C0001/p1700000001000000"
+    assert gw.format_citation_link("slack_msg", uri).startswith("<" + uri)
+
+
+def test_format_permalink_non_slack_passthrough():
+    gw = SlackEnhancedGateway(bot_token="x", bot_user_id="U_BOT", on_message=None)
+    uri = "https://wiki.acme.com/page/123"
+    assert gw.format_citation_link("confluence", uri) == f"<{uri}|confluence>"

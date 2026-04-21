@@ -106,3 +106,9 @@ class SlackEnhancedGateway(SlackGateway):
             ],
         })
         return blocks
+
+    @classmethod
+    def format_citation_link(cls, source_type: str, uri: str) -> str:
+        if _PERMALINK_RE.match(uri):
+            return f"<{uri}|Slack 스레드>"
+        return f"<{uri}|{source_type}>"
