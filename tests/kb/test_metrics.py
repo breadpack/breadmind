@@ -78,3 +78,30 @@ def test_kb_metrics_endpoint_exposes_counter(monkeypatch):
     r = TestClient(app).get("/kb/metrics")
     assert r.status_code == 200
     assert "breadmind_query_total" in r.text
+
+
+@pytest.mark.asyncio
+async def test_query_pipeline_emits_metrics(monkeypatch):
+    from breadmind.kb.query_pipeline import QueryPipeline
+    pipe = QueryPipeline.build_for_tests()  # factory added by P2
+
+    result = await pipe.answer(
+        user_id="u1", project_id="p1", channel_id="C1", text="hello?"
+    )
+    assert result.confidence in {"high", "medium", "low"}
+
+    from breadmind.kb import metrics
+    # Spec filter uses ``breadmind_query_total_total`` but prometheus_client
+    # 0.25 leaves counter sample names intact when the metric name already
+    # ends with ``_total`` (no double-suffix). Accept either sample name so
+    # the assertion is forward-compatible with future client versions.
+    samples = {
+        tuple(sorted(s.labels.items())): s.value
+        for metric in metrics.QUERY_TOTAL.collect()
+        for s in metric.samples
+        if s.name in {"breadmind_query_total", "breadmind_query_total_total"}
+    }
+    assert any(
+        dict(k).get("project") == "p1" and dict(k).get("status") == "ok"
+        for k in samples
+    )
