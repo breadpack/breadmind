@@ -6,7 +6,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from breadmind.kb.types import ExtractedCandidate, PromotionCandidate  # noqa: F401
+from breadmind.kb.types import ExtractedCandidate, PromotionCandidate
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +66,50 @@ class ReviewQueue:
                 },
             )
         return int(cid)
+
+    async def list_pending(
+        self,
+        project_id: UUID,
+        limit: int = 20,
+    ) -> list[PromotionCandidate]:
+        async with self._db.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT id, project_id, extracted_from, original_user,
+                       proposed_title, proposed_body, proposed_category,
+                       sources_json, confidence, status, sensitive_flag,
+                       reviewer, reviewed_at, created_at
+                FROM promotion_candidates
+                WHERE project_id = $1 AND status IN ('pending', 'needs_edit')
+                ORDER BY created_at ASC
+                LIMIT $2
+                """,
+                project_id,
+                limit,
+            )
+        return [
+            PromotionCandidate(
+                id=r["id"],
+                project_id=r["project_id"],
+                extracted_from=r["extracted_from"],
+                original_user=r["original_user"],
+                proposed_title=r["proposed_title"],
+                proposed_body=r["proposed_body"],
+                proposed_category=r["proposed_category"],
+                sources_json=(
+                    json.loads(r["sources_json"])
+                    if isinstance(r["sources_json"], str)
+                    else (r["sources_json"] or [])
+                ),
+                confidence=float(r["confidence"]),
+                status=r["status"],
+                reviewer=r["reviewer"],
+                reviewed_at=r["reviewed_at"].isoformat() if r["reviewed_at"] else None,
+                created_at=r["created_at"].isoformat() if r["created_at"] else None,
+                sensitive_flag=r["sensitive_flag"],
+            )
+            for r in rows
+        ]
 
 
 async def _audit(

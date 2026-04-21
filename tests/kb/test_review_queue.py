@@ -56,3 +56,27 @@ async def test_enqueue_writes_audit(db, seeded_project, fake_slack_client):
             )
         ]
     assert "enqueue_candidate" in actions
+
+
+async def test_list_pending_returns_pending_only(db, seeded_project, fake_slack_client):
+    rq = ReviewQueue(db, fake_slack_client)
+    await rq.enqueue(_candidate(seeded_project, title="p1"))
+    p2 = await rq.enqueue(_candidate(seeded_project, title="p2"))
+    # Mark p2 as rejected directly
+    async with db.acquire() as conn:
+        await conn.execute(
+            "UPDATE promotion_candidates SET status='rejected' WHERE id=$1",
+            p2,
+        )
+    out = await rq.list_pending(seeded_project)
+    titles = [c.proposed_title for c in out]
+    assert "p1" in titles
+    assert "p2" not in titles
+
+
+async def test_list_pending_limit(db, seeded_project, fake_slack_client):
+    rq = ReviewQueue(db, fake_slack_client)
+    for i in range(5):
+        await rq.enqueue(_candidate(seeded_project, title=f"p{i}"))
+    out = await rq.list_pending(seeded_project, limit=3)
+    assert len(out) == 3
