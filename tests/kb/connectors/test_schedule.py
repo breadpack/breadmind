@@ -74,3 +74,61 @@ async def test_run_confluence_sync_invokes_connector_sync(monkeypatch):
         credentials_ref="confluence:a",
     )
     assert result == {"processed": 1, "errors": 0, "new_cursor": "C"}
+
+
+async def test_reload_beat_schedule_from_db_installs_schedule(monkeypatch):
+    """``reload_beat_schedule_from_db`` reads configs and installs on celery."""
+    from breadmind.kb.connectors import schedule as sched_mod
+    from breadmind.tasks.celery_app import celery_app
+
+    cfg = MagicMock(
+        id=uuid.UUID("00000000-0000-4000-8000-000000000001"),
+        connector="confluence",
+        scope_key="SPACE_A",
+        project_id=uuid.UUID("00000000-0000-4000-8000-000000000aaa"),
+        settings={"base_url": "https://x", "credentials_ref": "confluence:a"},
+        enabled=True,
+    )
+
+    class StubStore:
+        def __init__(self, db):
+            self._db = db
+
+        async def list(self, *, connector, enabled_only):
+            assert connector == "confluence"
+            assert enabled_only is True
+            return [cfg]
+
+    import breadmind.kb.connectors.configs_store as cs_mod
+    monkeypatch.setattr(cs_mod, "ConnectorConfigsStore", StubStore)
+
+    original_schedule = celery_app.conf.beat_schedule
+    try:
+        await sched_mod.reload_beat_schedule_from_db(db=MagicMock())
+        assert "confluence:SPACE_A" in celery_app.conf.beat_schedule
+    finally:
+        celery_app.conf.beat_schedule = original_schedule
+
+
+def test_confluence_sync_task_runs_async_body(monkeypatch):
+    """The Celery task entrypoint dispatches to ``run_confluence_sync``."""
+    from breadmind.kb.connectors import schedule as sched_mod
+
+    captured: dict = {}
+
+    async def fake_run(**kwargs):
+        captured.update(kwargs)
+        return {"processed": 2, "errors": 0, "new_cursor": "X"}
+
+    monkeypatch.setattr(sched_mod, "run_confluence_sync", fake_run)
+
+    # Invoke via the undecorated callable the task wraps.
+    task = sched_mod.confluence_sync_task
+    result = task.run(
+        project_id="00000000-0000-4000-8000-000000000aaa",
+        scope_key="SPACE_A",
+        base_url="https://x",
+        credentials_ref="confluence:a",
+    )
+    assert result == {"processed": 2, "errors": 0, "new_cursor": "X"}
+    assert captured["scope_key"] == "SPACE_A"
