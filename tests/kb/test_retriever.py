@@ -16,7 +16,7 @@ async def test_vector_only_returns_closest(db, seeded_kb, seeded_project, embedd
 async def test_fts_search_matches_keyword(db, seeded_kb, seeded_project, embedder, acl):
     retriever = KBRetriever(db=db, embedder=embedder, acl=acl)
     hits = await retriever._fts_search(
-        query="memory leak payments",
+        query="memory leak payment",
         project_id=seeded_project,
         limit=20,
     )
