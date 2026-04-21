@@ -50,3 +50,45 @@ async def test_user_projects_empty_when_no_membership(
 ) -> None:
     r = ACLResolver(db=test_db, slack_client=AsyncMock())
     assert await r.user_projects("never-seen") == []
+
+
+async def test_can_read_channel_hits_slack_and_caches(
+    test_db: Database, fake_redis
+) -> None:
+    slack = AsyncMock()
+    slack.conversations_members.return_value = {
+        "ok": True,
+        "members": ["U1", "U2"],
+    }
+    r = ACLResolver(db=test_db, slack_client=slack)
+    r._redis = fake_redis
+    assert await r.can_read_channel("U1", "C123") is True
+    assert await r.can_read_channel("U2", "C123") is True
+    assert await r.can_read_channel("U9", "C123") is False
+    assert slack.conversations_members.await_count == 1
+
+
+async def test_can_read_channel_fail_closed_on_slack_error(
+    test_db: Database, fake_redis
+) -> None:
+    slack = AsyncMock()
+    slack.conversations_members.side_effect = RuntimeError("slack down")
+    r = ACLResolver(db=test_db, slack_client=slack)
+    r._redis = fake_redis
+    assert await r.can_read_channel("U1", "C404") is False
+
+
+async def test_can_read_channel_uses_cached_value(
+    test_db: Database, fake_redis
+) -> None:
+    slack = AsyncMock()
+    slack.conversations_members.return_value = {
+        "ok": True,
+        "members": ["U1"],
+    }
+    r = ACLResolver(db=test_db, slack_client=slack)
+    r._redis = fake_redis
+    await r.can_read_channel("U1", "C777")
+    # Subsequent failure of Slack should still hit cache.
+    slack.conversations_members.side_effect = RuntimeError("down")
+    assert await r.can_read_channel("U1", "C777") is True
