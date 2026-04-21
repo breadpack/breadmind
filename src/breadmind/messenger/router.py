@@ -22,8 +22,6 @@ class IncomingMessage:
     approved: bool | None = None
     thread_ts: str | None = None
     is_dm: bool = False
-    thread_ts: str | None = None
-    is_dm: bool = False
 
 @dataclass
 class OutgoingMessage:
