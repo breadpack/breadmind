@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass, field
+from typing import Any
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -275,26 +277,29 @@ def acl(seeded_project):
 # ---------------------------------------------------------------------------
 
 
-from dataclasses import dataclass, field  # noqa: E402
-from typing import Any  # noqa: E402
-
-
 @dataclass
 class FakeLLMRouter:
-    """Scripted async LLM for pipeline tests.
+    """Scripted LLM: ``script`` is a list of responses returned in order.
 
-    Each `complete` call records its args in `calls` and pops the next response
-    off `script` (FIFO). When `script` is empty, returns ``"{}"`` so callers
-    that expect JSON can still parse the result without raising.
+    Exhausting the script without seeding more raises AssertionError so tests
+    that forgot to seed a response fail loudly rather than passing on a
+    coincidentally-parseable ``"{}"`` fallback.
     """
 
     script: list[str] = field(default_factory=list)
     calls: list[dict] = field(default_factory=list)
 
     async def complete(self, prompt: str, **kwargs: Any) -> str:
+        """Record the call and return the next scripted response.
+
+        Raises AssertionError if the script is exhausted.
+        """
         self.calls.append({"prompt": prompt, **kwargs})
         if not self.script:
-            return "{}"
+            raise AssertionError(
+                "FakeLLMRouter.script exhausted; test did not seed a response. "
+                "Seed expected responses via `fake_llm_router.script = [...]`."
+            )
         return self.script.pop(0)
 
 
