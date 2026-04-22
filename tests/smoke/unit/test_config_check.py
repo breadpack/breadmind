@@ -1,7 +1,5 @@
 from pathlib import Path
 
-import pytest
-
 from breadmind.smoke.checks.base import CheckStatus
 from breadmind.smoke.checks.config import ConfigCheck
 
