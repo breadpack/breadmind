@@ -27,7 +27,7 @@ class ConfluenceAuthCheck:
         try:
             async with httpx.AsyncClient(timeout=timeout) as c:
                 r = await c.get(url, auth=(self.email, self.api_token))
-        except asyncio.TimeoutError:
+        except (asyncio.TimeoutError, httpx.TimeoutException):
             return CheckOutcome(name=self.name, status=CheckStatus.FAIL,
                                 detail="timeout",
                                 duration_ms=int((perf_counter() - t0) * 1000))
@@ -43,8 +43,17 @@ class ConfluenceAuthCheck:
                 detail=f"HTTP {r.status_code}: {body_preview}",
                 duration_ms=int((perf_counter() - t0) * 1000),
             )
+        try:
+            payload = r.json()
+        except ValueError as exc:
+            return CheckOutcome(
+                name=self.name, status=CheckStatus.FAIL,
+                detail=f"HTTP 200 but body not JSON: {redact_secrets(str(exc))}",
+                duration_ms=int((perf_counter() - t0) * 1000),
+            )
+        account_id = payload.get("accountId", "") if isinstance(payload, dict) else ""
         return CheckOutcome(
             name=self.name, status=CheckStatus.PASS,
-            detail=f"account={r.json().get('accountId', '')}",
+            detail=f"account={account_id}",
             duration_ms=int((perf_counter() - t0) * 1000),
         )
