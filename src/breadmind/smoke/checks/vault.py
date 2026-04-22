@@ -1,6 +1,7 @@
 """CredentialVault smoke check: every required credential id resolvable."""
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any
@@ -22,7 +23,15 @@ class VaultCheck:
         missing: list[str] = []
         for cid in _REQUIRED_IDS:
             try:
-                value = await self.vault.retrieve(cid)
+                value = await asyncio.wait_for(
+                    self.vault.retrieve(cid), timeout=timeout,
+                )
+            except asyncio.TimeoutError:
+                return CheckOutcome(
+                    name=self.name, status=CheckStatus.FAIL,
+                    detail=f"timeout retrieving {cid} after {timeout:.1f}s",
+                    duration_ms=int((perf_counter() - t0) * 1000),
+                )
             except Exception as exc:  # noqa: BLE001
                 return CheckOutcome(
                     name=self.name, status=CheckStatus.FAIL,
