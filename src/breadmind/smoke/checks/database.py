@@ -29,7 +29,7 @@ class DatabaseCheck:
             )
         try:
             conn = await asyncio.wait_for(asyncpg.connect(dsn=dsn), timeout=timeout)
-        except (asyncio.TimeoutError, Exception) as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             return CheckOutcome(
                 name=self.name, status=CheckStatus.FAIL,
                 detail=redact_secrets(
@@ -38,12 +38,21 @@ class DatabaseCheck:
                 duration_ms=int((perf_counter() - t0) * 1000),
             )
         try:
-            current = await asyncio.wait_for(
-                conn.fetchval(
-                    "SELECT version_num FROM alembic_version LIMIT 1",
-                ),
-                timeout=timeout,
-            )
+            try:
+                current = await asyncio.wait_for(
+                    conn.fetchval(
+                        "SELECT version_num FROM alembic_version LIMIT 1",
+                    ),
+                    timeout=timeout,
+                )
+            except Exception as exc:  # noqa: BLE001
+                return CheckOutcome(
+                    name=self.name, status=CheckStatus.FAIL,
+                    detail=redact_secrets(
+                        "timeout" if isinstance(exc, asyncio.TimeoutError) else str(exc),
+                    ),
+                    duration_ms=int((perf_counter() - t0) * 1000),
+                )
         finally:
             await conn.close()
 

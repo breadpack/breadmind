@@ -1,7 +1,5 @@
 from unittest.mock import AsyncMock
 
-import pytest
-
 from breadmind.smoke.checks.base import CheckStatus
 from breadmind.smoke.checks.database import DatabaseCheck
 from breadmind.smoke.targets import (
@@ -71,3 +69,20 @@ async def test_fail_on_timeout(monkeypatch):
     out = await DatabaseCheck().run(_make_targets(), timeout=0.1)
     assert out.status is CheckStatus.FAIL
     assert "timeout" in out.detail.lower()
+
+
+async def test_fail_when_fetchval_raises(monkeypatch):
+    conn = AsyncMock()
+    conn.fetchval.side_effect = RuntimeError(
+        'relation "alembic_version" does not exist',
+    )
+    monkeypatch.setattr(
+        "breadmind.smoke.checks.database.asyncpg.connect",
+        AsyncMock(return_value=conn),
+    )
+    monkeypatch.setenv("DATABASE_URL", "postgres://stub")
+    out = await DatabaseCheck().run(_make_targets(), timeout=5.0)
+    assert out.status is CheckStatus.FAIL
+    assert "alembic_version" in out.detail
+    # Connection must still be closed even when fetchval raises.
+    conn.close.assert_awaited_once()
