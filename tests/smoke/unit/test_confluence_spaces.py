@@ -75,3 +75,34 @@ async def test_404_reports_missing():
 async def test_empty_spaces_pass():
     out = await ConfluenceSpacesCheck(email="e", api_token="t").run(_t([]), timeout=5.0)
     assert out.status is CheckStatus.PASS
+
+
+@respx.mock
+async def test_exception_path_no_leak():
+    respx.get("https://x.atlassian.net/wiki/rest/api/space/NET").mock(
+        side_effect=httpx.ConnectError("boom ATATT_stub_token_1234567890 leaked"),
+    )
+    out = await ConfluenceSpacesCheck(
+        email="e", api_token="ATATT_stub_token_1234567890",
+    ).run(_t(["NET"]), timeout=5.0)
+    assert out.status is CheckStatus.FAIL
+    assert "NET" in out.detail
+    assert "HTTP n/a" in out.detail
+    assert "ATATT_stub_token_1234567890" not in out.detail
+
+
+@respx.mock
+async def test_body_secret_at_boundary_redacted():
+    # Put ATATT token at position ~190-220 to force the truncation boundary.
+    leaking_body = "x" * 190 + "ATATT_stub_token_AAAAAAAAAAAAAAAAAA end"
+    respx.get("https://x.atlassian.net/wiki/rest/api/space/LEAK").mock(
+        return_value=httpx.Response(403, text=leaking_body),
+    )
+    out = await ConfluenceSpacesCheck(
+        email="e", api_token="ATATT_stub_token_1234567890",
+    ).run(_t(["LEAK"]), timeout=5.0)
+    assert out.status is CheckStatus.FAIL
+    assert "LEAK" in out.detail
+    assert "403" in out.detail
+    # Full token must not leak even when straddling the truncation boundary.
+    assert "ATATT_stub_token_AAAAAAAAAAAAAAAAAA" not in out.detail

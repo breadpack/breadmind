@@ -36,7 +36,7 @@ class ConfluenceSpacesCheck:
                     f"{targets.confluence.base_url.rstrip('/')}/rest/api/space/{key}",
                     auth=(self.email, self.api_token),
                 )
-                return key, r.status_code, redact_secrets(r.text[:200])
+                return key, r.status_code, redact_secrets(r.text)[:200]
             except Exception as exc:  # noqa: BLE001
                 return key, 0, redact_secrets(str(exc))
 
