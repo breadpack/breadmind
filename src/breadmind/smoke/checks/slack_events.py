@@ -51,8 +51,12 @@ class SlackEventsCheck:
                 ),
                 duration_ms=int((perf_counter() - t0) * 1000),
             )
+        url = resp.get("url") or ""
+        if not isinstance(url, str):
+            url = str(url)
+        suffix = "…" if len(url) > 40 else ""
         return CheckOutcome(
             name=self.name, status=CheckStatus.PASS,
-            detail=f"ws={resp.get('url', '')[:40]}…",
+            detail=f"ws={url[:40]}{suffix}",
             duration_ms=int((perf_counter() - t0) * 1000),
         )

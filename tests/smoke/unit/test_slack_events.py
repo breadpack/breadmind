@@ -27,3 +27,40 @@ async def test_fail_on_not_ok():
     out = await chk.run(targets=None, timeout=5.0)
     assert out.status is CheckStatus.FAIL
     assert "missing_scope" in out.detail
+
+
+async def test_fail_on_sdk_exception_redacts():
+    c = AsyncMock()
+    c.apps_connections_open = AsyncMock(
+        side_effect=RuntimeError("bad xoxb-1111111111-deadbeef leaked"),
+    )
+    chk = SlackEventsCheck(app_token="xapp-1", client_factory=lambda t: c)
+    out = await chk.run(targets=None, timeout=5.0)
+    assert out.status is CheckStatus.FAIL
+    assert "xoxb-REDACTED" in out.detail
+    assert "deadbeef" not in out.detail
+
+
+async def test_pass_short_url_no_ellipsis():
+    c = AsyncMock()
+    c.apps_connections_open = AsyncMock(
+        return_value={"ok": True, "url": "wss://short"},
+    )
+    chk = SlackEventsCheck(app_token="xapp-1", client_factory=lambda t: c)
+    out = await chk.run(targets=None, timeout=5.0)
+    assert out.status is CheckStatus.PASS
+    assert out.detail == "ws=wss://short"
+    assert "…" not in out.detail
+
+
+async def test_pass_long_url_truncated_with_ellipsis():
+    long_url = "wss://wss-primary.slack.com/link/" + ("a" * 100)
+    c = AsyncMock()
+    c.apps_connections_open = AsyncMock(
+        return_value={"ok": True, "url": long_url},
+    )
+    chk = SlackEventsCheck(app_token="xapp-1", client_factory=lambda t: c)
+    out = await chk.run(targets=None, timeout=5.0)
+    assert out.status is CheckStatus.PASS
+    assert out.detail.endswith("…")
+    assert len(out.detail) == len("ws=") + 40 + len("…")
