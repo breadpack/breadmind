@@ -75,6 +75,14 @@ def _require_keys(d: dict[str, Any], allowed: set[str], where: str) -> None:
         raise TargetsError(f"{where}: missing keys {sorted(missing)}")
 
 
+def _require_type(value: Any, expected: type, where: str) -> None:
+    if not isinstance(value, expected):
+        raise TargetsError(
+            f"{where} must be {expected.__name__}, got "
+            f"{type(value).__name__}",
+        )
+
+
 def load_targets(path: Path) -> PilotTargets:
     if not path.exists():
         raise TargetsError(f"targets file not found: {path}")
@@ -91,6 +99,19 @@ def load_targets(path: Path) -> PilotTargets:
     _require_keys(raw["llm"], _LLM_KEYS, "llm")
     _require_keys(raw["llm"]["anthropic"], _ANTHROPIC_KEYS, "llm.anthropic")
     _require_keys(raw["llm"]["azure"], _AZURE_KEYS, "llm.azure")
+
+    _require_type(raw["migration_head"], str, "migration_head")
+    _require_type(raw["slack"]["required_channels"], list, "slack.required_channels")
+    _require_type(raw["slack"]["required_events"], list, "slack.required_events")
+    _require_type(raw["confluence"]["base_url"], str, "confluence.base_url")
+    _require_type(raw["confluence"]["required_spaces"], list, "confluence.required_spaces")
+    _require_type(raw["llm"]["anthropic"]["required_models"], list,
+                  "llm.anthropic.required_models")
+    _require_type(raw["llm"]["azure"]["endpoint_env"], str, "llm.azure.endpoint_env")
+    _require_type(raw["llm"]["azure"]["required_deployments"], list,
+                  "llm.azure.required_deployments")
+    _require_type(raw["llm"]["no_training_confirmed"], bool,
+                  "llm.no_training_confirmed")
 
     return PilotTargets(
         migration_head=str(raw["migration_head"]),

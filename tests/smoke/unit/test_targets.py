@@ -58,3 +58,55 @@ def test_rejects_missing_migration_head(tmp_path: Path):
 def test_rejects_missing_file(tmp_path: Path):
     with pytest.raises(TargetsError):
         load_targets(tmp_path / "nope.yaml")
+
+
+def test_rejects_non_bool_no_training(tmp_path: Path):
+    p = tmp_path / "t.yaml"
+    p.write_text(
+        _VALID.replace("no_training_confirmed: true",
+                       'no_training_confirmed: "false"'),
+        encoding="utf-8",
+    )
+    with pytest.raises(TargetsError) as ei:
+        load_targets(p)
+    assert "no_training_confirmed" in str(ei.value)
+    assert "bool" in str(ei.value).lower()
+
+
+def test_rejects_string_as_channel_list(tmp_path: Path):
+    p = tmp_path / "t.yaml"
+    p.write_text(
+        _VALID.replace('required_channels: ["C01ABC"]',
+                       'required_channels: "C01ABC"'),
+        encoding="utf-8",
+    )
+    with pytest.raises(TargetsError) as ei:
+        load_targets(p)
+    assert "required_channels" in str(ei.value)
+    assert "list" in str(ei.value).lower()
+
+
+def test_rejects_string_as_required_models(tmp_path: Path):
+    p = tmp_path / "t.yaml"
+    p.write_text(
+        _VALID.replace('required_models: ["claude-sonnet-4-6"]',
+                       'required_models: "claude-sonnet-4-6"'),
+        encoding="utf-8",
+    )
+    with pytest.raises(TargetsError) as ei:
+        load_targets(p)
+    assert "required_models" in str(ei.value)
+    assert "list" in str(ei.value).lower()
+
+
+def test_rejects_non_string_migration_head(tmp_path: Path):
+    p = tmp_path / "t.yaml"
+    p.write_text(
+        _VALID.replace('migration_head: "006_connector_configs"',
+                       "migration_head: 6"),
+        encoding="utf-8",
+    )
+    with pytest.raises(TargetsError) as ei:
+        load_targets(p)
+    assert "migration_head" in str(ei.value)
+    assert "str" in str(ei.value).lower()
