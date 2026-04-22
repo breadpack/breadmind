@@ -115,6 +115,32 @@ def _parse_args() -> argparse.Namespace:
     migrate_stamp = migrate_sub.add_parser("stamp", help="Stamp DB without running migrations")
     migrate_stamp.add_argument("revision", nargs="?", default="head", help="Revision to stamp (default: head)")
 
+    # breadmind smoke
+    smoke_parser = sub.add_parser(
+        "smoke",
+        help="Go-live preflight smoke gate (targets/credentials/APIs)",
+    )
+    smoke_parser.add_argument(
+        "--targets",
+        default="deploy/smoke/pilot-targets.yaml",
+        help="Path to pilot-targets.yaml (default: deploy/smoke/pilot-targets.yaml)",
+    )
+    smoke_parser.add_argument(
+        "--timeout", type=float, default=5.0,
+        help="Per-check timeout in seconds (default: 5.0)",
+    )
+    smoke_parser.add_argument(
+        "--skip", default="",
+        help="Comma-separated check names to skip",
+    )
+    smoke_parser.add_argument(
+        "--verbose", action="store_true",
+        help="Print full error details on stderr",
+    )
+    smoke_parser.add_argument(
+        "--config-dir", default=None, help="Config directory path",
+    )
+
     # breadmind setup
     sub.add_parser("setup", help="Interactive setup wizard")
 
@@ -383,6 +409,113 @@ async def run():
             extra_args = [getattr(args, "revision", "head")]
         run_migration_command(action, extra_args)
         return
+
+    if args.command == "smoke":
+        from pathlib import Path as _SmokePath
+        from breadmind.smoke.runner import SmokeRunner, render_table, ExitCode
+        from breadmind.smoke.checks import build_checks, CheckOutcome, CheckStatus
+        from breadmind.smoke.targets import load_targets, TargetsError
+        from breadmind.smoke._redact import redact_secrets
+        from breadmind.storage.credential_vault import CredentialVault
+
+        targets_path = _SmokePath(args.targets)
+        # Config-first: if targets file is missing/malformed we report a
+        # single ConfigCheck FAIL and exit 2 WITHOUT touching DB or vault.
+        try:
+            targets = load_targets(targets_path)
+        except TargetsError as exc:
+            outcome = CheckOutcome(
+                name="config", status=CheckStatus.FAIL,
+                detail=redact_secrets(str(exc)),
+            )
+            print(render_table([outcome]))
+            sys.exit(int(ExitCode.CONFIG_ERROR))
+
+        # Bootstrap DB using the same pattern as init_database() — connect
+        # directly so we can fetch vault credentials without dragging in
+        # the full agent bootstrap.
+        config_dir_smoke = args.config_dir or get_default_config_dir()
+        if os.path.isdir(config_dir_smoke) and os.path.exists(os.path.join(config_dir_smoke, "config.yaml")):
+            smoke_config = load_config(config_dir_smoke)
+        elif os.path.isdir("config"):
+            smoke_config = load_config("config")
+            config_dir_smoke = "config"
+        else:
+            smoke_config = load_config(config_dir_smoke)
+
+        # Load .env so DATABASE_URL, CONFLUENCE_EMAIL, AZURE_OPENAI_ENDPOINT, etc.
+        # are available to downstream checks.
+        env_file_smoke = os.path.join(config_dir_smoke, ".env")
+        set_env_file_path(env_file_smoke)
+        load_env_file(env_file_smoke)
+
+        from breadmind.storage.database import Database as _SmokeDatabase
+        _db_cfg = smoke_config.database
+        _dsn = f"postgresql://{_db_cfg.user}:{_db_cfg.password}@{_db_cfg.host}:{_db_cfg.port}/{_db_cfg.name}"
+        db = _SmokeDatabase(_dsn)
+        try:
+            await db.connect()
+        except Exception as e:
+            logger.warning("smoke: database connect failed (%s); vault lookups will return None", e)
+
+        vault = CredentialVault(db)
+        confluence_email = os.environ.get("CONFLUENCE_EMAIL", "")
+
+        checks = build_checks(
+            targets_path=targets_path,
+            vault=vault,
+            confluence_email=confluence_email,
+        )
+
+        # Inject resolved secrets into auth-capable checks.
+        from breadmind.smoke.checks.slack_auth import SlackAuthCheck
+        from breadmind.smoke.checks.slack_channels import SlackChannelsCheck
+        from breadmind.smoke.checks.slack_events import SlackEventsCheck
+        from breadmind.smoke.checks.confluence_auth import ConfluenceAuthCheck
+        from breadmind.smoke.checks.confluence_spaces import ConfluenceSpacesCheck
+
+        async def _safe_retrieve(key: str) -> str:
+            try:
+                return (await vault.retrieve(key)) or ""
+            except Exception:
+                return ""
+
+        bot_token = await _safe_retrieve("slack_bot_token")
+        app_token = await _safe_retrieve("slack_app_token")
+        conf_token = await _safe_retrieve("confluence_token")
+
+        slack_auth = next(c for c in checks if isinstance(c, SlackAuthCheck))
+        slack_auth.token = bot_token
+        # slack_channels consumes bot_user_id populated by slack_auth during run
+        slack_channels = next(c for c in checks if isinstance(c, SlackChannelsCheck))
+        slack_channels.token = bot_token
+        original_run = slack_channels.run
+
+        async def _patched_channels_run(targets, timeout):
+            slack_channels.bot_user_id = slack_auth.bot_user_id
+            return await original_run(targets, timeout)
+
+        slack_channels.run = _patched_channels_run  # type: ignore[assignment]
+
+        slack_events = next(c for c in checks if isinstance(c, SlackEventsCheck))
+        slack_events.app_token = app_token
+
+        for c in checks:
+            if isinstance(c, (ConfluenceAuthCheck, ConfluenceSpacesCheck)):
+                c.api_token = conf_token
+
+        skip = {s for s in (args.skip or "").split(",") if s}
+        runner = SmokeRunner(
+            checks=checks, targets=targets,
+            timeout=args.timeout, skip=skip,
+        )
+        exit_code, outcomes = await runner.run()
+        print(render_table(outcomes))
+        try:
+            await db.disconnect()
+        except Exception:
+            pass
+        sys.exit(int(exit_code))
 
     if args.command == "plugin":
         await _run_plugin_command(args)
