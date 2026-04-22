@@ -33,6 +33,12 @@ class SmokeRunner:
     progress: Any = None            # writable stream; default stderr at module boundary
 
     async def run(self) -> tuple[ExitCode, list[CheckOutcome]]:
+        names = [c.name for c in self.checks]
+        if len(set(names)) != len(names):
+            dupes = sorted({n for n in names if names.count(n) > 1})
+            raise ValueError(
+                f"duplicate smoke check names: {', '.join(dupes)}",
+            )
         outcomes: dict[str, CheckOutcome] = {}
         pending = {c.name: c for c in self.checks}
         order = [c.name for c in self.checks]
@@ -54,7 +60,18 @@ class SmokeRunner:
                     name=check.name, status=CheckStatus.SKIP,
                     detail=f"dependency {failed_deps[0]} not pass",
                 )
-            return await check.run(self.targets, self.timeout)
+            try:
+                return await check.run(self.targets, self.timeout)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                return CheckOutcome(
+                    name=check.name, status=CheckStatus.FAIL,
+                    detail=(
+                        f"runner exception: {type(exc).__name__}: "
+                        f"{redact_secrets(str(exc))}"
+                    ),
+                )
 
         total = len(self.checks)
         done = 0

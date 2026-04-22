@@ -1,6 +1,8 @@
 import asyncio
 from dataclasses import dataclass, field
 
+import pytest
+
 from breadmind.smoke.checks.base import CheckOutcome, CheckStatus
 from breadmind.smoke.runner import ExitCode, SmokeRunner
 
@@ -18,6 +20,18 @@ class FakeCheck:
         return CheckOutcome(name=self.name, status=self.status,
                             detail=f"{self.status.value} detail",
                             duration_ms=1)
+
+
+@dataclass
+class RaisingCheck:
+    name: str
+    depends_on: list[str] = field(default_factory=list)
+
+    async def run(self, targets, timeout):
+        # Token padded to 20+ chars so `_redact.ATATT[...]{20,}` matches.
+        raise RuntimeError(
+            "check exploded ATATT_SECRET_12345_PADDING_EXTRA_LEN leaked",
+        )
 
 
 async def test_all_pass_exit_0():
@@ -95,3 +109,26 @@ async def test_user_skip_list_marks_skip_not_fail():
     assert by_name["b"].status is CheckStatus.SKIP
     assert "--skip" in by_name["b"].detail
     assert exit_code is ExitCode.GO
+
+
+async def test_exception_converts_to_fail_with_redacted_detail():
+    r = SmokeRunner(
+        checks=[RaisingCheck("bomb")],
+        targets=object(), timeout=5.0,
+    )
+    exit_code, outcomes = await r.run()
+    assert exit_code is ExitCode.NO_GO
+    assert outcomes[0].status is CheckStatus.FAIL
+    assert "runner exception" in outcomes[0].detail
+    assert "RuntimeError" in outcomes[0].detail
+    assert "ATATT_SECRET_12345" not in outcomes[0].detail
+
+
+async def test_duplicate_check_names_raise():
+    r = SmokeRunner(
+        checks=[FakeCheck("dup", CheckStatus.PASS),
+                FakeCheck("dup", CheckStatus.PASS)],
+        targets=object(), timeout=5.0,
+    )
+    with pytest.raises(ValueError, match="duplicate smoke check names: dup"):
+        await r.run()
