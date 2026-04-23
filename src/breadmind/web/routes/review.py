@@ -11,6 +11,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from breadmind.kb.review_queue import ReviewQueue
+from breadmind.web.dependencies import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -33,18 +34,21 @@ def get_current_slack_user(request: Request) -> str | None:
     return session.get("slack_user")
 
 
-def get_review_queue() -> ReviewQueue:  # pragma: no cover
-    """Production wiring of ReviewQueue. Tests override this dependency
-    before any request executes, so this body is never reached in tests.
+def get_review_queue(db=Depends(get_db)) -> ReviewQueue:
+    """Production wiring: return a ReviewQueue backed by the app Database.
 
-    In production, wire a concrete ``ReviewQueue(db, slack_client)`` via
-    a startup event hook or by overriding this dependency at app creation
-    time. Task 17 is responsible for the production wiring.
+    ``slack_client`` is intentionally ``None`` here — approve/reject DM
+    notifications to the original contributor are best-effort (wrapped
+    in ``try/except`` inside :meth:`ReviewQueue.approve`), so they
+    silently no-op when no Slack client is registered. Wiring a real
+    Slack client is a future enhancement that requires reaching into
+    the messenger gateway state and is out of scope for this fix.
+
+    Tests override this dependency via
+    ``app.dependency_overrides[get_review_queue]`` to inject a custom
+    queue (typically with a ``FakeSlackClient``).
     """
-    raise HTTPException(
-        status_code=500,
-        detail="ReviewQueue not wired; dependency must be provided",
-    )
+    return ReviewQueue(db, slack_client=None)
 
 
 def _require_user(user: str | None) -> str:
