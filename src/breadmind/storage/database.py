@@ -30,6 +30,27 @@ class Database:
         async with self._pool.acquire() as conn:
             yield conn
 
+    # asyncpg.Pool-style one-shot convenience methods. Mirrors
+    # ``asyncpg.Pool.{fetch,fetchrow,fetchval,execute}`` so call sites that
+    # expect pool-level shortcuts (e.g. ``ConnectorConfigsStore``,
+    # ``BaseConnector``, ``ConfluenceConnector``) work against the Database
+    # wrapper without needing an explicit ``async with self._db.acquire()``.
+    async def fetch(self, query, *args, **kwargs):
+        async with self.acquire() as conn:
+            return await conn.fetch(query, *args, **kwargs)
+
+    async def fetchrow(self, query, *args, **kwargs):
+        async with self.acquire() as conn:
+            return await conn.fetchrow(query, *args, **kwargs)
+
+    async def fetchval(self, query, *args, **kwargs):
+        async with self.acquire() as conn:
+            return await conn.fetchval(query, *args, **kwargs)
+
+    async def execute(self, query, *args, **kwargs):
+        async with self.acquire() as conn:
+            return await conn.execute(query, *args, **kwargs)
+
     async def _migrate(self):
         async with self.acquire() as conn:
             await conn.execute("""
