@@ -474,6 +474,69 @@ class WebApp:
             except Exception as e:
                 logger.warning("HookRegistry init failed: %s", e)
 
+        # --- Coding JobStore + LogBuffer wiring (long-running monitoring) ---
+        # Construct a JobStore against the shared DB, bind it onto both the
+        # JobTracker singleton (for write-through) and ``app.state`` (for
+        # the /api/coding-jobs/{id}/phases/{step}/logs route). Also wires a
+        # LogBuffer + background tick task that drains idle per-phase
+        # buffers so UIs tailing a phase don't stall when the producer
+        # goes quiet between batches.
+        self._coding_tick_task: asyncio.Task | None = None
+
+        @app.on_event("startup")
+        async def _init_coding_job_store():
+            db = self._db
+            if db is None:
+                logger.info("coding JobStore init skipped: no database")
+                return
+            try:
+                from breadmind.coding.job_store import JobStore
+                from breadmind.coding.job_tracker import JobTracker
+                from breadmind.coding.log_buffer import LogBuffer
+            except Exception as e:  # pragma: no cover - defensive
+                logger.warning("coding module import failed: %s", e)
+                return
+            try:
+                store = JobStore(db)
+                app.state.job_store = store
+                tracker = JobTracker.get_instance()
+                tracker.bind_store(store)
+                buffer = LogBuffer(
+                    flush_fn=JobTracker.make_default_flush(store),
+                    size_threshold=50,
+                    time_threshold_s=1.0,
+                    per_phase_cap=5000,
+                )
+                tracker.bind_log_buffer(buffer)
+
+                async def _tick_loop():
+                    # Drain idle per-phase buffers every 0.5s so UIs
+                    # tailing a phase don't stall between producer bursts.
+                    while True:
+                        try:
+                            await asyncio.sleep(0.5)
+                            await buffer.tick()
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as e:  # pragma: no cover - defensive
+                            logger.debug("LogBuffer.tick failed: %s", e)
+
+                self._coding_tick_task = asyncio.create_task(_tick_loop())
+                logger.info("coding JobStore + LogBuffer wired")
+            except Exception as e:
+                logger.warning("coding JobStore wiring failed: %s", e)
+
+        @app.on_event("shutdown")
+        async def _shutdown_coding_tick():
+            task = self._coding_tick_task
+            if task is None:
+                return
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):  # pragma: no cover
+                pass
+
         # --- SkillStore exposure (skills-v2) ---
         # The skills_bundle router reads app.state.skill_store. The canonical
         # instance lives on ctx.skill_store (see WebApp._CTX_ATTR_MAP); mirror

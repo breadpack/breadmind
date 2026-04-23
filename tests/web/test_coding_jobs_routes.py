@@ -93,3 +93,20 @@ def test_list_default_mine_for_non_admin(
     assert r.status_code == 200
     data = r.json()
     assert all(j["user"] == "alice" for j in data)
+
+
+def test_logs_pagination(web_app_client: TestClient, seeded_jobs_with_logs):
+    """Cursor-paginated phase logs echo the last line_no so the client can
+    keep paging forward without duplicates."""
+    _login(web_app_client, "alice")
+    r = web_app_client.get("/api/coding-jobs/alice-job-1/phases/1/logs?limit=5")
+    assert r.status_code == 200
+    page1 = r.json()
+    assert len(page1["items"]) == 5
+    assert page1["next_after_line_no"] == page1["items"][-1]["line_no"]
+    r2 = web_app_client.get(
+        f"/api/coding-jobs/alice-job-1/phases/1/logs"
+        f"?after_line_no={page1['next_after_line_no']}&limit=5"
+    )
+    page2 = r2.json()
+    assert [i["line_no"] for i in page2["items"]] == [6, 7, 8, 9, 10]

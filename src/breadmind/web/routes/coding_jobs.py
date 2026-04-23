@@ -113,6 +113,79 @@ def register_coding_job_routes(app: Any) -> None:
             return JSONResponse({"error": "Job not found"}, status_code=404)
         return JSONResponse(job.to_dict())
 
+    @app.get("/api/coding-jobs/{job_id}/phases/{step}/logs")
+    async def list_phase_logs(
+        job_id: str,
+        step: int,
+        after_line_no: int | None = None,
+        before_line_no: int | None = None,
+        limit: int = 500,
+        current: CurrentUser = Depends(get_current_user),
+    ):
+        """Return phase log lines with cursor pagination.
+
+        Query params:
+            after_line_no: exclusive cursor — only return lines with
+                ``line_no > after_line_no``. Use for paging forward.
+            before_line_no: exclusive cursor — only return lines with
+                ``line_no < before_line_no``. Use for paging backward.
+            limit: page size, clamped to [1, 2000] (default 500).
+
+        Response shape::
+
+            {
+              "items": [{"line_no": int, "ts": iso8601, "text": str}, ...],
+              "next_after_line_no": int | null
+            }
+
+        ``next_after_line_no`` is the last row's ``line_no`` so the caller
+        can plug it straight back in as ``after_line_no`` for the next
+        page. When the page is empty we echo the caller's ``after_line_no``
+        so clients polling a live tail don't reset their cursor.
+
+        Authz mirrors ``/api/coding-jobs/{job_id}`` existence-hiding: a
+        caller that is neither the job owner nor an admin receives 404.
+        """
+        from breadmind.coding.job_tracker import JobTracker
+
+        tracker = JobTracker.get_instance()
+        job = tracker.get_job(job_id)
+        if not job or (
+            not current.is_admin and job.user != current.username
+        ):
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        store = getattr(app.state, "job_store", None)
+        if store is None:
+            # Startup hasn't bound a store (e.g. DB not configured). Fail
+            # loud so the caller sees the misconfiguration instead of
+            # getting a silently-empty page.
+            raise HTTPException(
+                status_code=503,
+                detail="job_store not configured",
+            )
+
+        limit = max(1, min(int(limit), 2000))
+        rows = await store.list_logs(
+            job_id,
+            step=int(step),
+            after_line_no=after_line_no,
+            before_line_no=before_line_no,
+            limit=limit,
+        )
+        next_after = rows[-1]["line_no"] if rows else after_line_no
+        return {
+            "items": [
+                {
+                    "line_no": r["line_no"],
+                    "ts": r["ts"].isoformat(),
+                    "text": r["text"],
+                }
+                for r in rows
+            ],
+            "next_after_line_no": next_after,
+        }
+
     @app.post("/api/coding-jobs/{job_id}/cancel")
     async def cancel_coding_job(
         request: Request,
