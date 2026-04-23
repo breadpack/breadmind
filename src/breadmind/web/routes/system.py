@@ -162,12 +162,14 @@ def setup_system_routes(r: APIRouter, app_state):
             return {"status": "ok", "message": "Auth disabled"}
         data = await request.json()
         password = data.get("password", "")
+        username = str(data.get("username", "") or "").strip() or "anonymous"
         if auth.verify_password(password):
             token = auth.create_session(
                 ip=request.client.host if request.client else "",
                 user_agent=request.headers.get("user-agent", ""),
+                username=username,
             )
-            response = JSONResponse({"status": "ok", "token": token})
+            response = JSONResponse({"status": "ok", "token": token, "username": username})
             response.set_cookie(
                 "breadmind_session", token,
                 httponly=True, samesite="strict",
