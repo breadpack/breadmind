@@ -1,8 +1,8 @@
 """Database persistence for long-running coding jobs.
 
-CRUD over ``coding_jobs`` / ``coding_phases`` (migration 007). Batch log
-inserts via ``insert_log_batch`` arrive in a subsequent task; this module
-currently covers only jobs and phases.
+CRUD over ``coding_jobs`` / ``coding_phases`` / ``coding_phase_logs``
+(migration 007). Supports batched log insert, cursor-paginated log
+retrieval, and time-based retention cleanup.
 """
 from __future__ import annotations
 
@@ -204,3 +204,83 @@ class JobStore:
                 job_id,
             )
             return [dict(r) for r in rows]
+
+    # ── Logs ────────────────────────────────────────────────────────────
+
+    async def insert_log_batch(
+        self,
+        job_id: str,
+        batch: list[tuple[int, int, datetime, str]],
+    ) -> None:
+        """Bulk-insert phase-log rows.
+
+        Each tuple is ``(step, line_no, ts, text)``. An empty batch is a
+        no-op (avoids a pointless round-trip). Duplicates on
+        ``(job_id, step, line_no)`` are NOT deduped — the caller owns
+        line-number monotonicity per phase.
+        """
+        if not batch:
+            return
+        rows = [
+            (job_id, step, line_no, ts, text)
+            for step, line_no, ts, text in batch
+        ]
+        async with self._db.acquire() as conn:
+            await conn.executemany(
+                "INSERT INTO coding_phase_logs (job_id, step, line_no, ts, text) "
+                "VALUES ($1,$2,$3,$4,$5)",
+                rows,
+            )
+
+    async def list_logs(
+        self,
+        job_id: str,
+        *,
+        step: int,
+        after_line_no: int | None = None,
+        before_line_no: int | None = None,
+        limit: int = 500,
+    ) -> list[dict]:
+        """Return log rows for ``(job_id, step)`` ordered ASC by ``line_no``.
+
+        ``after_line_no`` / ``before_line_no`` implement exclusive cursor
+        bounds so callers can page forward (``after=last_seen``) or
+        backward (``before=first_seen``) without overlap.
+        """
+        conds = ["job_id = $1", "step = $2"]
+        args: list[Any] = [job_id, step]
+        if after_line_no is not None:
+            conds.append(f"line_no > ${len(args) + 1}")
+            args.append(int(after_line_no))
+        if before_line_no is not None:
+            conds.append(f"line_no < ${len(args) + 1}")
+            args.append(int(before_line_no))
+        args.append(int(limit))
+        query = (
+            "SELECT id, step, line_no, ts, text FROM coding_phase_logs "
+            f"WHERE {' AND '.join(conds)} "
+            f"ORDER BY line_no ASC LIMIT ${len(args)}"
+        )
+        async with self._db.acquire() as conn:
+            rows = await conn.fetch(query, *args)
+            return [dict(r) for r in rows]
+
+    # ── Retention ───────────────────────────────────────────────────────
+
+    async def delete_old_jobs(self, *, finished_before: datetime) -> int:
+        """Delete completed jobs finished strictly before ``finished_before``.
+
+        Running jobs (``finished_at IS NULL``) are never touched.
+        Returns the number of rows removed. Cascade FKs drop associated
+        phases and logs.
+        """
+        async with self._db.acquire() as conn:
+            row = await conn.fetchrow(
+                "WITH d AS ("
+                "  DELETE FROM coding_jobs "
+                "  WHERE finished_at IS NOT NULL AND finished_at < $1 "
+                "  RETURNING id"
+                ") SELECT count(*) AS n FROM d",
+                finished_before,
+            )
+            return int(row["n"]) if row else 0

@@ -217,3 +217,114 @@ async def test_insert_phases_empty_is_noop(store: JobStore) -> None:
     )
     await store.insert_phases("j1", [])
     assert await store.list_phases("j1") == []
+
+
+async def test_insert_log_batch(store: JobStore) -> None:
+    await store.insert_job(
+        job_id="j1", project="p", agent="c", prompt="x",
+        user_name="", channel="",
+        started_at=datetime.now(timezone.utc), status="running",
+    )
+    now = datetime.now(timezone.utc)
+    batch = [(1, 1, now, "line 1"), (1, 2, now, "line 2"), (1, 3, now, "line 3")]
+    await store.insert_log_batch("j1", batch)
+    rows = await store.list_logs("j1", step=1, limit=10)
+    assert [r["line_no"] for r in rows] == [1, 2, 3]
+    assert rows[0]["text"] == "line 1"
+
+
+async def test_insert_log_batch_empty_is_noop(store: JobStore) -> None:
+    await store.insert_job(
+        job_id="j1", project="p", agent="c", prompt="x",
+        user_name="", channel="",
+        started_at=datetime.now(timezone.utc), status="running",
+    )
+    await store.insert_log_batch("j1", [])
+    assert await store.list_logs("j1", step=1, limit=10) == []
+
+
+async def test_list_logs_cursor_after(store: JobStore) -> None:
+    await store.insert_job(
+        job_id="j1", project="p", agent="c", prompt="x",
+        user_name="", channel="",
+        started_at=datetime.now(timezone.utc), status="running",
+    )
+    now = datetime.now(timezone.utc)
+    batch = [(1, i, now, f"l{i}") for i in range(1, 21)]
+    await store.insert_log_batch("j1", batch)
+    first = await store.list_logs("j1", step=1, limit=5)
+    assert len(first) == 5
+    assert first[-1]["line_no"] == 5
+    more = await store.list_logs("j1", step=1, after_line_no=5, limit=5)
+    assert [r["line_no"] for r in more] == [6, 7, 8, 9, 10]
+
+
+async def test_list_logs_cursor_before(store: JobStore) -> None:
+    """``before_line_no`` filters to lines strictly below the cursor, still
+    ordered ASC by ``line_no``."""
+    await store.insert_job(
+        job_id="j1", project="p", agent="c", prompt="x",
+        user_name="", channel="",
+        started_at=datetime.now(timezone.utc), status="running",
+    )
+    now = datetime.now(timezone.utc)
+    batch = [(1, i, now, f"l{i}") for i in range(1, 11)]
+    await store.insert_log_batch("j1", batch)
+    rows = await store.list_logs("j1", step=1, before_line_no=4, limit=10)
+    assert [r["line_no"] for r in rows] == [1, 2, 3]
+
+
+async def test_list_logs_filters_by_step(store: JobStore) -> None:
+    await store.insert_job(
+        job_id="j1", project="p", agent="c", prompt="x",
+        user_name="", channel="",
+        started_at=datetime.now(timezone.utc), status="running",
+    )
+    now = datetime.now(timezone.utc)
+    await store.insert_log_batch(
+        "j1",
+        [(1, 1, now, "a"), (1, 2, now, "b"), (2, 1, now, "c")],
+    )
+    rows = await store.list_logs("j1", step=2, limit=10)
+    assert [r["text"] for r in rows] == ["c"]
+
+
+async def test_delete_old_jobs_removes_finished_before_cutoff(
+    store: JobStore,
+) -> None:
+    """Jobs whose ``finished_at`` is strictly before the cutoff are deleted;
+    running jobs (``finished_at IS NULL``) and jobs finished at/after the
+    cutoff are preserved. Return value equals the deletion count."""
+    old_finish = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    new_finish = datetime(2026, 4, 1, tzinfo=timezone.utc)
+    cutoff = datetime(2026, 3, 1, tzinfo=timezone.utc)
+
+    # Old completed job — should be deleted.
+    await store.insert_job(
+        job_id="old", project="p", agent="c", prompt="x",
+        user_name="", channel="",
+        started_at=old_finish, status="completed",
+    )
+    await store.update_job(
+        job_id="old", status="completed", finished_at=old_finish,
+    )
+    # Newer completed job — should survive.
+    await store.insert_job(
+        job_id="new", project="p", agent="c", prompt="x",
+        user_name="", channel="",
+        started_at=new_finish, status="completed",
+    )
+    await store.update_job(
+        job_id="new", status="completed", finished_at=new_finish,
+    )
+    # Still-running job (finished_at IS NULL) — must never be deleted.
+    await store.insert_job(
+        job_id="running", project="p", agent="c", prompt="x",
+        user_name="", channel="",
+        started_at=old_finish, status="running",
+    )
+
+    deleted = await store.delete_old_jobs(finished_before=cutoff)
+    assert deleted == 1
+    remaining = {r["id"] for r in await store.list_jobs(limit=50)}
+    assert remaining == {"new", "running"}
