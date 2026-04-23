@@ -1,0 +1,48 @@
+# deploy/smoke/pilot-targets.yaml.example
+#
+# Copy this file to ``deploy/smoke/pilot-targets.yaml`` (or a name of your
+# choosing) and fill in the values for your pilot environment. The smoke
+# gate rejects unknown keys, so keep the top-level structure intact.
+
+# The migration revision the production DB MUST be at before Go-live.
+# Check current head with: breadmind migrate history | tail -1
+migration_head: "006_connector_configs"
+
+slack:
+  # Slack channel IDs (not names) that the bot must be a member of.
+  required_channels:
+    - "C01ABCDEF"          # #breadmind-pilot
+  # Events the Slack app manifest MUST subscribe to. Smoke does not
+  # introspect the manifest (no Slack API for that), but surfacing the
+  # list here keeps the manifest and smoke aligned at review time.
+  required_events:
+    - "team_join"
+    - "app_mention"
+    - "message.channels"
+
+confluence:
+  # The base URL used by the KB Confluence connector. Must be HTTPS.
+  base_url: "https://company.atlassian.net/wiki"
+  # Space keys the service account must be able to read.
+  required_spaces:
+    - "ENG"
+    - "ONBOARD"
+
+llm:
+  anthropic:
+    # Model IDs returned by GET /v1/models. The smoke gate asserts each of
+    # these is present in the response so a stale contract is detected.
+    required_models:
+      - "claude-sonnet-4-6"
+      - "claude-opus-4-7"
+  azure:
+    # Name of the env variable that holds the Azure OpenAI endpoint URL
+    # (e.g. https://acme.openai.azure.com). Decoupled so operators can
+    # follow their existing env-var conventions.
+    endpoint_env: "AZURE_OPENAI_ENDPOINT"
+    required_deployments:
+      - "gpt-4o"
+  # Flip to true only after the security / legal team confirms the
+  # Anthropic enterprise contract AND Azure OpenAI deployment terms both
+  # contain a no-training clause for our traffic.
+  no_training_confirmed: false
