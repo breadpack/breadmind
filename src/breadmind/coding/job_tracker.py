@@ -119,6 +119,13 @@ class JobTracker:
         # don't reorder via the asyncpg pool (max_size > 1).
         self._db_queue: asyncio.Queue | None = None
         self._db_worker: asyncio.Task | None = None
+        # Log streaming (Task 6): WS-broadcast listeners + DB-batching buffer.
+        # Log listeners fire immediately per append (raw ensure_future) for
+        # low-latency WS push; DB writes are routed through LogBuffer which
+        # batches by size/time and is force-flushed on complete_phase.
+        self._log_listeners: list[Callable] = []
+        self._log_buffer: Any | None = None  # LogBuffer | None
+        self._line_counters: dict[tuple[str, int], int] = {}
 
     @classmethod
     def get_instance(cls) -> JobTracker:
@@ -269,6 +276,8 @@ class JobTracker:
                 p.started_at = time.time()
                 started_at = p.started_at
                 break
+        # Reset per-phase line counter — append_log increments before use.
+        self._line_counters[(job_id, step)] = 0
         self._emit("phase_started", job)
         if self._store is not None:
             self._db_schedule(self._store.update_phase(
@@ -310,6 +319,16 @@ class JobTracker:
                 output_summary=updated.output,
                 files_changed=list(updated.files_changed),
             ))
+        # Force-flush any buffered logs for this phase so the UI's "final"
+        # view after phase completion doesn't miss the last partial batch.
+        # Raw ensure_future per spec: LogBuffer serializes via its own lock
+        # and insert_log_batch is append-only, so this does not need to go
+        # through the _db_queue path.
+        if self._log_buffer is not None:
+            try:
+                asyncio.ensure_future(self._log_buffer.force_flush(job_id, step))
+            except RuntimeError:
+                pass
 
     def complete_job(
         self,
@@ -394,6 +413,86 @@ class JobTracker:
             except RuntimeError:
                 # No event loop — skip
                 pass
+
+    # ── Log streaming (Task 6) ───────────────────────────────────────────
+
+    def bind_log_buffer(self, buffer: Any) -> None:
+        """Attach a :class:`LogBuffer` that batches DB writes for log lines.
+
+        The buffer is expected to expose ``append(job_id, step, line_no, text)``
+        and ``force_flush(job_id, step)`` coroutines. Typically constructed
+        with ``flush_fn=JobTracker.make_default_flush(store)``.
+        """
+        self._log_buffer = buffer
+
+    def add_log_listener(self, callback: Callable) -> None:
+        """Register a WS-broadcast callback fired on every ``append_log``.
+
+        Callback signature: ``async (job_id, step, line_no, ts, text) -> None``.
+        Listeners are invoked fire-and-forget via ``ensure_future`` so a slow
+        consumer cannot throttle log ingestion.
+        """
+        self._log_listeners.append(callback)
+
+    def remove_log_listener(self, callback: Callable) -> None:
+        self._log_listeners = [
+            cb for cb in self._log_listeners if cb is not callback
+        ]
+
+    async def append_log(
+        self, job_id: str, step: int, text: str,
+    ) -> None:
+        """Record a log line for ``(job_id, step)``.
+
+        Assigns a monotonically increasing ``line_no`` starting from 1 per
+        phase (reset in ``start_phase``). Fires listeners immediately for
+        low-latency WS push, then delegates DB persistence to the bound
+        :class:`LogBuffer`.
+
+        The buffered DB flush bypasses Task 5's ``_db_queue`` serializer
+        (it's append-only and ordering-safe on its own), but log rows FK
+        into ``coding_jobs`` / ``coding_phases`` — so we first drain any
+        pending setup writes (``insert_job`` / ``insert_phases``) to
+        guarantee the parent rows exist before the batch INSERT fires.
+        """
+        key = (job_id, step)
+        self._line_counters[key] = self._line_counters.get(key, 0) + 1
+        line_no = self._line_counters[key]
+        ts = datetime.now(timezone.utc)
+        # Fire listeners immediately — raw ensure_future, fire-and-forget.
+        for cb in list(self._log_listeners):
+            try:
+                asyncio.ensure_future(cb(job_id, step, line_no, ts, text))
+            except RuntimeError:
+                # No event loop (offline unit-test path) — skip
+                pass
+        # Buffered DB write — LogBuffer aggregates and flushes in batches.
+        if self._log_buffer is not None:
+            # Drain the DB write-through queue so the job/phase rows this
+            # log FKs into are durable before a size-triggered flush fires.
+            # Cheap (returns immediately) once the queue is idle.
+            if self._db_queue is not None:
+                await self._db_queue.join()
+            await self._log_buffer.append(job_id, step, line_no, text)
+
+    @staticmethod
+    def make_default_flush(store: Any) -> Callable:
+        """Return a :class:`LogBuffer` ``flush_fn`` that writes to ``store``.
+
+        Batches arrive as a flat list of ``(job_id, step, line_no, ts, text)``
+        tuples; we regroup by ``job_id`` so each :meth:`JobStore.insert_log_batch`
+        call honours its per-job API shape.
+        """
+        async def flush(
+            batch: list[tuple[str, int, int, datetime, str]],
+        ) -> None:
+            by_job: dict[str, list[tuple[int, int, datetime, str]]] = {}
+            for job_id, step, line_no, ts, text in batch:
+                by_job.setdefault(job_id, []).append((step, line_no, ts, text))
+            for job_id, items in by_job.items():
+                await store.insert_log_batch(job_id, items)
+
+        return flush
 
     # ── Cleanup ──────────────────────────────────────────────────────────
 

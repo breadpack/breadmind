@@ -17,6 +17,7 @@ import pytest
 
 from breadmind.coding.job_store import JobStore
 from breadmind.coding.job_tracker import JobTracker
+from breadmind.coding.log_buffer import LogBuffer
 
 
 @pytest.fixture(autouse=True)
@@ -68,3 +69,38 @@ async def test_tracker_write_through_phases_and_complete(test_db) -> None:
     phases = await store.list_phases("j2")
     assert phases[0]["status"] == "completed"
     assert phases[0]["files_changed"] == ["x.py"]
+
+
+async def test_tracker_append_log(test_db) -> None:
+    store = JobStore(test_db)
+    tracker = JobTracker()
+    tracker.bind_store(store)
+
+    buffer = LogBuffer(
+        flush_fn=JobTracker.make_default_flush(store),
+        size_threshold=2,
+        time_threshold_s=0.05,
+    )
+    tracker.bind_log_buffer(buffer)
+
+    tracker.create_job("j3", "p", "c", "x", user="", channel="")
+    tracker.set_phases("j3", [{"step": 1, "title": "a"}])
+    tracker.start_phase("j3", 1)
+
+    emitted: list[tuple] = []
+
+    async def log_listener(job_id, step, line_no, ts, text):
+        emitted.append((job_id, step, line_no, text))
+
+    tracker.add_log_listener(log_listener)
+
+    for i in range(1, 4):
+        await tracker.append_log("j3", 1, f"line {i}")
+
+    tracker.complete_phase("j3", 1, success=True)
+    await asyncio.sleep(0.15)
+
+    rows = await store.list_logs("j3", step=1, limit=10)
+    assert [r["text"] for r in rows] == ["line 1", "line 2", "line 3"]
+    assert [r["line_no"] for r in rows] == [1, 2, 3]
+    assert len(emitted) == 3
