@@ -104,3 +104,33 @@ async def test_tracker_append_log(test_db) -> None:
     assert [r["text"] for r in rows] == ["line 1", "line 2", "line 3"]
     assert [r["line_no"] for r in rows] == [1, 2, 3]
     assert len(emitted) == 3
+
+
+async def test_code_delegate_propagates_user_channel(test_db, monkeypatch) -> None:
+    """Task 9: ``_register_job_for_delegation`` must forward ``user``/``channel``.
+
+    The helper is the single entry point used by ``code_delegate`` to register
+    a job with ``JobTracker``. Replacing the module-level ``JobTracker``
+    reference with a factory lambda verifies the helper doesn't hard-code
+    ``.get_instance()`` in a way that would break test injection.
+    """
+    from breadmind.coding import tool as ct
+
+    tracker = JobTracker()
+    store = JobStore(test_db)
+    tracker.bind_store(store)
+
+    # Replace the class reference with a factory returning our test tracker.
+    # The helper falls back to ``JobTracker()`` when ``get_instance`` is absent.
+    monkeypatch.setattr(ct, "JobTracker", lambda: tracker, raising=False)
+
+    ct._register_job_for_delegation(
+        job_id="jD", project="p", agent="c", prompt="x",
+        user="alice", channel="#ops",
+    )
+    await asyncio.sleep(0.05)
+
+    row = await store.get_job("jD")
+    assert row is not None
+    assert row["user_name"] == "alice"
+    assert row["channel"] == "#ops"
