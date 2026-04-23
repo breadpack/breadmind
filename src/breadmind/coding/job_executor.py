@@ -6,14 +6,38 @@ Can run standalone (async) or be dispatched via BackgroundJobManager.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
 from typing import Any
 
+from breadmind.smoke._redact import redact_secrets
 from breadmind.utils.helpers import generate_short_id
 
 logger = logging.getLogger("breadmind.coding.job_executor")
+
+
+async def _capture_stream_to_tracker(
+    stream, tracker, *, job_id: str, step: int,
+) -> None:
+    """Read stream line-by-line, redact, and append to tracker."""
+    while True:
+        raw = await stream.readline()
+        if not raw:
+            return
+        try:
+            line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+        except Exception:
+            continue
+        try:
+            line = redact_secrets(line)
+        except Exception:
+            continue  # drop on redact failure
+        try:
+            await tracker.append_log(job_id, step, line)
+        except Exception:
+            pass  # tracker append failure does not kill phase
 
 
 class CodingJobExecutor:
@@ -159,6 +183,58 @@ class CodingJobExecutor:
 
             # Execute phase
             try:
+                if hasattr(executor, "run_phase_async"):
+                    # Async streaming path: capture stdout/stderr line-by-line,
+                    # redact, and append to JobTracker log ring in real time.
+                    # Task 8 will implement LocalExecutor.run_phase_async; until
+                    # then this branch is inert (hasattr() is False).
+                    proc = await executor.run_phase_async(phase, adapter)  # type: ignore[attr-defined]
+                    t_out = asyncio.create_task(_capture_stream_to_tracker(
+                        proc.stdout, self._tracker, job_id=job_id, step=step_num,
+                    ))
+                    t_err = asyncio.create_task(_capture_stream_to_tracker(
+                        proc.stderr, self._tracker, job_id=job_id, step=step_num,
+                    ))
+                    rc = await proc.wait()
+                    await asyncio.gather(t_out, t_err)
+
+                    # Get supervisor report
+                    report_text = ""
+                    if supervisor:
+                        try:
+                            report = await supervisor.stop()
+                            report_text = report.summary
+                        except Exception:
+                            pass
+
+                    phase_result = {
+                        "step": step_num,
+                        "title": title,
+                        "success": rc == 0,
+                        "output": report_text,
+                        "files_changed": [],
+                        "session_id": session_id,
+                    }
+                    results.append(phase_result)
+                    self._tracker.complete_phase(
+                        job_id, step_num, success=(rc == 0),
+                        output=report_text[:500] if report_text else "",
+                        files_changed=[],
+                    )
+                    if publish_fn:
+                        publish_fn(job_id, {
+                            "type": "phase_complete",
+                            "phase": step_num,
+                            "success": rc == 0,
+                            "title": title,
+                        })
+                    if rc != 0:
+                        logger.warning("Phase %d failed (rc=%d)", step_num, rc)
+                        if self._notify_callback:
+                            await self._notify_callback(step_num, "failed", f"rc={rc}")
+                    continue  # skip legacy post-processing below
+
+                # Legacy sync path — existing behavior preserved verbatim.
                 exec_result = await executor.run(command, cwd=project, timeout=timeout)
 
                 # Parse result for session ID
