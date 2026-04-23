@@ -61,6 +61,11 @@ class WebApp:
             ctx = AppContext(**kwargs)
         self.ctx = ctx
 
+        # Register AuthManager with the shared get_current_user dependency so
+        # route handlers that use ``Depends(get_current_user)`` can reach it.
+        from breadmind.web.deps import set_auth_manager
+        set_auth_manager(self._auth)
+
         try:
             from importlib.metadata import version as _pkg_ver
             _version = _pkg_ver("breadmind")
