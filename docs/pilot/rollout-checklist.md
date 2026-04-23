@@ -15,7 +15,9 @@
 
 ## Database
 - [ ] Postgres 17 + pgvector provisioned.
-- [ ] `alembic upgrade head` applied.
+- [ ] `breadmind migrate upgrade` applied (BreadMind's built-in runner against
+      `src/breadmind/storage/migrations/versions/`; current head is
+      `006_connector_configs`). Verify with `breadmind migrate check`.
 - [ ] `pgBackRest` configured (daily full + 15m WAL, 30d retention).
 - [ ] DR drill date on calendar.
 
