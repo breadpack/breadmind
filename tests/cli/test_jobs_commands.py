@@ -75,3 +75,22 @@ async def test_cmd_logs_one_shot(capsys):
     out = capsys.readouterr().out
     assert "hello" in out and "world" in out
     assert rc == 0
+
+
+@pytest.mark.asyncio
+async def test_watch_plain_mode(capsys):
+    from breadmind.cli.jobs_watch import cmd_watch_plain
+
+    async def fake_events():
+        yield {"type": "coding_job_running", "data": {"job_id": "j1", "total_phases": 2}}
+        yield {"type": "phase_started", "data": {"job_id": "j1", "current_phase": 1}}
+        yield {"type": "coding_phase_log", "data": {"job_id": "j1", "step": 1, "line_no": 1, "ts": "t", "text": "hello"}}
+        yield {"type": "phase_completed", "data": {"job_id": "j1"}}
+        yield {"type": "coding_job_completed", "data": {"job_id": "j1"}}
+
+    rc = await cmd_watch_plain("j1", event_source=fake_events())
+    out = capsys.readouterr().out
+    assert "phase_started" in out
+    assert "hello" in out
+    assert "coding_job_completed" in out or "job_completed" in out
+    assert rc == 0
