@@ -1,9 +1,6 @@
 """CodingJobExecutor.execute_plan must propagate user/channel to JobTracker."""
 from __future__ import annotations
 
-import asyncio
-from typing import Any
-
 import pytest
 
 from breadmind.coding.job_executor import CodingJobExecutor
