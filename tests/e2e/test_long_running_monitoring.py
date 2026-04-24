@@ -84,13 +84,13 @@ async def test_full_monitoring_flow(postgres_container, breadmind_server):
 
     # Drain any pending DB write-through and log-buffer flushes so the
     # subsequent REST reads see the final state.
-    if tracker._db_queue is not None:
-        await tracker._db_queue.join()
-    if tracker._log_buffer is not None:
+    if tracker._db_writer is not None:
+        await tracker._db_writer.join()
+    if tracker._log_stream is not None and tracker._log_stream._buffer is not None:
         # Signal log-buffer worker to drain; small sleep below gives it
         # time to complete (force_flush is fire-and-forget post-Task 10).
-        await tracker._log_buffer.force_flush("e2e-1", 1)
-        await tracker._log_buffer.force_flush("e2e-1", 2)
+        await tracker._log_stream._buffer.force_flush("e2e-1", 1)
+        await tracker._log_stream._buffer.force_flush("e2e-1", 2)
         await asyncio.sleep(0.1)
 
     base = breadmind_server["url"]
