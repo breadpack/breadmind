@@ -19,7 +19,7 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 
 from breadmind.sdui.patches import diff_specs
 from breadmind.sdui.projector import UISpecProjector
@@ -639,6 +639,37 @@ async def coding_jobs_page(
         current_username=current.username,
         is_admin=current.is_admin,
         mine=bool(mine_effective),
+    )
+
+
+@router.get("/coding-jobs/{job_id}")
+async def coding_job_detail_page(
+    job_id: str,
+    step: int | None = None,
+    current: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """SDUI detail-screen schema for a single coding job (Task 17).
+
+    Authz mirrors ``GET /api/coding-jobs/{job_id}``: non-owner non-admin
+    callers receive 404 (existence hiding). The optional ``step`` query
+    param lets clients persist their selected phase across page reloads;
+    when omitted, the schema auto-selects the running phase.
+    """
+    from breadmind.coding.job_tracker import JobTracker
+    from breadmind.sdui.views.coding_jobs_view import build_detail_screen
+
+    tracker = JobTracker.get_instance()
+    job = tracker.get_job(job_id)
+    if not job or (
+        not current.is_admin and job.user != current.username
+    ):
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    can_cancel = current.is_admin or job.user == current.username
+    return build_detail_screen(
+        job=job.to_dict(),
+        can_cancel=can_cancel,
+        selected_step=step,
     )
 
 

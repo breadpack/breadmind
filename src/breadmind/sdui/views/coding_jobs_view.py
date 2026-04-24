@@ -280,3 +280,94 @@ def build_list_screen(
             "phase_completed",
         ],
     }
+
+
+# ── Task 17: flat dict schema for HTTP /coding-jobs/{job_id} page ────────────
+
+
+_CANCELLABLE_STATUSES = ("pending", "decomposing", "running")
+
+
+def build_detail_screen(
+    *,
+    job: dict[str, Any],
+    can_cancel: bool,
+    selected_step: int | None = None,
+) -> dict[str, Any]:
+    """Build the flat detail-screen schema used by ``GET /coding-jobs/{job_id}``.
+
+    Parameters
+    ----------
+    job:
+        A :meth:`JobInfo.to_dict` payload. Must carry ``job_id``, ``status``,
+        ``project``, ``agent``, ``prompt``, phase counters, and a ``phases``
+        list where each entry has ``step``, ``title``, ``status``,
+        ``duration_seconds``, and ``files_changed``.
+    can_cancel:
+        The authz verdict from the route — ``True`` when the caller is the
+        job owner or an admin. The button is still hidden for terminal-status
+        jobs even when this is ``True``.
+    selected_step:
+        Which phase the log panel should tail. When ``None`` (the default for
+        route callers not echoing a query param) we pick the running phase,
+        falling back to the first phase if none is running.
+
+    The shape mirrors :func:`build_list_screen` (flat JSON, not a
+    :class:`UISpec`) so the same thin HTTP client that renders the list page
+    can render the detail page without going through the WebSocket projector.
+    """
+    phases = job.get("phases", [])
+    if selected_step is None:
+        running_phase = next(
+            (p for p in phases if p.get("status") == "running"), None
+        )
+        if running_phase is not None:
+            selected_step = running_phase["step"]
+        elif phases:
+            selected_step = phases[0]["step"]
+        else:
+            selected_step = 1
+
+    job_id = job["job_id"]
+    return {
+        "type": "screen",
+        "title": f"Job {job_id}",
+        "header": {
+            "project": job.get("project", ""),
+            "agent": job.get("agent", ""),
+            "user": job.get("user", ""),
+            "status": job["status"],
+            "duration_seconds": job.get("duration_seconds", 0),
+            "progress_pct": job.get("progress_pct", 0),
+            "total_phases": job.get("total_phases", 0),
+            "completed_phases": job.get("completed_phases", 0),
+        },
+        "phases": [
+            {
+                "step": p["step"],
+                "title": p["title"],
+                "status": p["status"],
+                "duration_seconds": p.get("duration_seconds", 0),
+                "files_changed_count": len(p.get("files_changed", [])),
+                "files_changed": p.get("files_changed", []),
+            }
+            for p in phases
+        ],
+        "log_panel": {
+            "selected_step": selected_step,
+            "fetch_url": (
+                f"/api/coding-jobs/{job_id}/phases/{selected_step}/logs"
+            ),
+            "ws_event": "coding_phase_log",
+            "autoscroll": True,
+        },
+        "cancel_button": {
+            "visible": (
+                bool(can_cancel) and job["status"] in _CANCELLABLE_STATUSES
+            ),
+            "action_url": f"/api/coding-jobs/{job_id}/cancel",
+            "confirm_text": (
+                "이 job을 취소하시겠습니까? 실행 중인 Phase가 중단됩니다."
+            ),
+        },
+    }

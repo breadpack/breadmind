@@ -160,6 +160,56 @@ def test_coding_jobs_page_admin_sees_all(
     assert schema["header"]["is_admin"] is True
 
 
+def test_coding_job_detail_page_renders_schema(
+    web_app_client: TestClient, seeded_jobs
+):
+    """Task 17: ``GET /coding-jobs/{job_id}`` returns the SDUI detail schema."""
+    _login(web_app_client, "alice")
+    r = web_app_client.get("/coding-jobs/alice-job-1")
+    assert r.status_code == 200
+    schema = r.json()
+    assert schema["title"] == "Job alice-job-1"
+    assert schema["header"]["user"] == "alice"
+    # Owner can cancel when the job is still in a non-terminal state.
+    # ``create_job`` leaves status=pending so the cancel button is visible.
+    assert schema["cancel_button"]["visible"] is True
+    assert schema["cancel_button"]["action_url"] == (
+        "/api/coding-jobs/alice-job-1/cancel"
+    )
+
+
+def test_coding_job_detail_page_hides_from_non_owner(
+    web_app_client: TestClient, seeded_jobs
+):
+    """Non-owner non-admin gets 404 for someone else's detail (existence hiding)."""
+    _login(web_app_client, "carol")
+    r = web_app_client.get("/coding-jobs/bob-job-1")
+    assert r.status_code == 404
+
+
+def test_coding_job_detail_page_admin_can_read_any(
+    web_app_client: TestClient, seeded_jobs, monkeypatch
+):
+    """Admin can read any user's detail page."""
+    monkeypatch.setenv("BREADMIND_ADMIN_USERS", "alice")
+    _login(web_app_client, "alice")
+    r = web_app_client.get("/coding-jobs/bob-job-1")
+    assert r.status_code == 200
+    assert r.json()["header"]["user"] == "bob"
+
+
+def test_coding_job_detail_page_respects_step_query(
+    web_app_client: TestClient, seeded_jobs
+):
+    """The ``step`` query param persists client-side phase selection."""
+    _login(web_app_client, "alice")
+    r = web_app_client.get("/coding-jobs/alice-job-1?step=7")
+    assert r.status_code == 200
+    schema = r.json()
+    assert schema["log_panel"]["selected_step"] == 7
+    assert schema["log_panel"]["fetch_url"].endswith("/phases/7/logs")
+
+
 def test_logs_pagination(web_app_client: TestClient, seeded_jobs_with_logs):
     """Cursor-paginated phase logs echo the last line_no so the client can
     keep paging forward without duplicates."""
