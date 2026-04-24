@@ -39,6 +39,100 @@ class LogBuffer:
         self._buffers: dict[tuple[str, int], list[tuple[int, datetime, str]]] = {}
         self._last_flush_ts: dict[tuple[str, int], float] = {}
         self._lock = asyncio.Lock()
+        # Worker lifecycle (Task 9): start()/stop() manage a background drain
+        # loop. _wake signals immediate drain (size-triggered or force_flush);
+        # _stop signals graceful shutdown. _force_keys accumulates keys that
+        # must be flushed on the next drain regardless of age/size.
+        self._wake = asyncio.Event()
+        self._stop = asyncio.Event()
+        self._worker: asyncio.Task | None = None
+        self._force_keys: set[tuple[str, int]] = set()
+
+    async def start(self) -> None:
+        """Start the background drain worker. Idempotent."""
+        if self._worker is None or self._worker.done():
+            self._stop.clear()
+            self._worker = asyncio.create_task(self._worker_loop())
+
+    async def stop(self) -> None:
+        """Signal the worker to stop and await its final drain."""
+        self._stop.set()
+        self._wake.set()
+        if self._worker is not None:
+            try:
+                await self._worker
+            except Exception:
+                # Worker errors must not prevent clean shutdown.
+                pass
+            self._worker = None
+
+    async def _worker_loop(self) -> None:
+        """Wake on _wake event or every time_threshold_s; drain; repeat."""
+        while not self._stop.is_set():
+            try:
+                await asyncio.wait_for(
+                    self._wake.wait(), timeout=self._time_threshold_s,
+                )
+            except asyncio.TimeoutError:
+                pass
+            self._wake.clear()
+            await self._drain_once()
+        # Final drain on stop so in-flight batches aren't lost.
+        await self._drain_once()
+
+    async def _drain_once(self) -> None:
+        """Snapshot eligible buffers under lock, flush outside lock."""
+        async with self._lock:
+            now = time.monotonic()
+            keys_to_flush: list[tuple[str, int]] = []
+            for k, buf in self._buffers.items():
+                if not buf:
+                    continue
+                aged = now - self._last_flush_ts.get(k, 0.0) >= self._time_threshold_s
+                sized = len(buf) >= self._size_threshold
+                forced = k in self._force_keys
+                if aged or sized or forced:
+                    keys_to_flush.append(k)
+            payloads: list[
+                tuple[tuple[str, int], list[tuple[str, int, int, datetime, str]]]
+            ] = []
+            for k in keys_to_flush:
+                buf = self._buffers[k]
+                payload = [(k[0], k[1], n, ts, text) for (n, ts, text) in buf]
+                self._buffers[k] = []
+                self._last_flush_ts[k] = now
+                payloads.append((k, payload))
+            self._force_keys.difference_update(keys_to_flush)
+        # Flush outside lock — concurrent gather, exceptions absorbed so a
+        # single key's DB failure doesn't block siblings.
+        if payloads:
+            await asyncio.gather(
+                *[self._flush_payload(k, p) for k, p in payloads],
+                return_exceptions=True,
+            )
+
+    async def _flush_payload(
+        self,
+        key: tuple[str, int],
+        payload: list[tuple[str, int, int, datetime, str]],
+    ) -> None:
+        with tracer.start_as_current_span("coding.log.flush") as span:
+            try:
+                span.set_attribute("coding.job_id", key[0])
+                span.set_attribute("coding.step", key[1])
+                span.set_attribute("coding.batch_size", len(payload))
+            except Exception:
+                pass
+            try:
+                await self._flush_fn(payload)
+            except Exception as exc:
+                coding_log_drops_total.labels(reason="db_flush_fail").inc(len(payload))
+                try:
+                    span.record_exception(exc)
+                except Exception:
+                    pass
+                logger.warning("LogBuffer flush failed for %s: %s", key, exc)
+                # Do NOT re-raise — gather() must still succeed for sibling keys.
 
     async def append(self, job_id: str, step: int, line_no: int, text: str) -> None:
         key = (job_id, step)

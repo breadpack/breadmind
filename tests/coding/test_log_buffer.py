@@ -82,3 +82,21 @@ async def test_size_cap_drops_oldest():
     # See runner report Task 4 — spec test assertion was [2]; actual
     # implementation drops once per append when len>cap.
     assert dropped == [1, 1]
+
+
+async def test_start_stop_lifecycle() -> None:
+    """LogBuffer worker can be started and cleanly stopped."""
+    from breadmind.coding.log_buffer import LogBuffer
+
+    flushed: list[list] = []
+
+    async def flush(payload):
+        flushed.append(payload)
+
+    buf = LogBuffer(flush_fn=flush, time_threshold_s=0.05)
+    await buf.start()
+    assert buf._worker is not None
+    assert not buf._worker.done()
+
+    await buf.stop()
+    assert buf._worker is None or buf._worker.done()
