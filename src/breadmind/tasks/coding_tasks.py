@@ -17,6 +17,7 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 
+from breadmind.metrics import coding_jobs_deleted_total
 from breadmind.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -27,9 +28,8 @@ def cleanup_old_jobs() -> int:
     """Delete completed coding jobs older than the retention window.
 
     Returns the number of rows deleted so Beat / Flower surface the
-    count in task results. Exposes ``coding_jobs_deleted_total`` as a
-    Prometheus counter when the metrics module is available (Task 24);
-    the import is gated so this task runs standalone until then.
+    count in task results. Bumps ``coding_jobs_deleted_total`` so the
+    Prometheus scrape endpoint reflects retention activity.
     """
     days = int(os.environ.get("BREADMIND_JOBS_RETENTION_DAYS", "90"))
 
@@ -63,13 +63,5 @@ def cleanup_old_jobs() -> int:
         days,
     )
 
-    # Metrics increment is gated — Task 24 will land
-    # ``breadmind.metrics.coding_jobs_deleted_total``.
-    try:
-        from breadmind.metrics import coding_jobs_deleted_total
-
-        coding_jobs_deleted_total.inc(n)
-    except ImportError:
-        pass
-
+    coding_jobs_deleted_total.inc(n)
     return n

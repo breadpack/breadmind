@@ -12,6 +12,7 @@ import logging
 import time
 from typing import Any
 
+from breadmind.metrics import coding_log_drops_total, tracer
 from breadmind.smoke._redact import redact_secrets
 from breadmind.utils.helpers import generate_short_id
 
@@ -33,6 +34,7 @@ async def _capture_stream_to_tracker(
         try:
             line = redact_secrets(line)
         except Exception:
+            coding_log_drops_total.labels(reason="redact_error").inc()
             continue  # drop on redact failure
         try:
             await tracker.append_log(job_id, step, line)
@@ -86,6 +88,22 @@ class CodingJobExecutor:
         # Register with JobTracker
         if not job_id:
             job_id = generate_short_id()
+
+        # Outer OTel span — scopes the whole plan execution.  Attributes
+        # are set best-effort; span attribute failures must not break
+        # a run.  ``start_as_current_span`` returns a CM; we keep it open
+        # across the full method via a push/pop pattern so existing
+        # control-flow (continues, exceptions, returns) stays untouched.
+        _outer_span_cm = tracer.start_as_current_span("coding.job.execute")
+        _outer_span = _outer_span_cm.__enter__()
+        try:
+            _outer_span.set_attribute("coding.job_id", job_id)
+            _outer_span.set_attribute("coding.project", project)
+            _outer_span.set_attribute("coding.agent", agent)
+            _outer_span.set_attribute("coding.total_phases", len(phases))
+        except Exception:
+            pass
+
         self._tracker.create_job(
             job_id=job_id, project=project, agent=agent,
             prompt=original_prompt,
@@ -114,6 +132,20 @@ class CodingJobExecutor:
             prompt = phase.get("prompt", "")
             timeout = phase.get("timeout", 300)
 
+            # Per-phase OTel span — nested inside coding.job.execute.
+            # Opened here and closed at the bottom of the iteration via
+            # a try/finally-free pattern: we rely on the CM's ``__exit__``
+            # being called in both the normal-exit and continue/break
+            # branches below. Python's ``continue`` inside a ``with``
+            # block fires ``__exit__``, so a bare CM is sufficient.
+            _phase_span_cm = tracer.start_as_current_span("coding.phase.execute")
+            _phase_span = _phase_span_cm.__enter__()
+            try:
+                _phase_span.set_attribute("coding.job_id", job_id)
+                _phase_span.set_attribute("coding.step", step_num)
+                _phase_span.set_attribute("coding.title", title)
+            except Exception:
+                pass
             # Progress update
             pct = int((i / total) * 100)
             if store and job_id:
@@ -307,6 +339,12 @@ class CodingJobExecutor:
                             mcp_json_path.unlink(missing_ok=True)
                     except Exception:
                         pass
+                # Close the per-phase OTel span.  Best-effort — we never
+                # want span teardown to mask a real execution error.
+                try:
+                    _phase_span_cm.__exit__(None, None, None)
+                except Exception:
+                    pass
 
         # Final summary
         elapsed = time.monotonic() - t0
@@ -340,5 +378,18 @@ class CodingJobExecutor:
 
         if publish_fn:
             publish_fn(job_id, {"type": "completed", "summary": summary})
+
+        # Close the outer OTel span — best-effort (see note on phase span).
+        try:
+            _outer_span.set_attribute("coding.success", summary["success"])
+            _outer_span.set_attribute(
+                "coding.phases_completed", summary["phases_completed"],
+            )
+        except Exception:
+            pass
+        try:
+            _outer_span_cm.__exit__(None, None, None)
+        except Exception:
+            pass
 
         return summary

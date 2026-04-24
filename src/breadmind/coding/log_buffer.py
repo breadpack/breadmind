@@ -11,6 +11,8 @@ import time
 from datetime import datetime, timezone
 from typing import Awaitable, Callable
 
+from breadmind.metrics import coding_log_drops_total, tracer
+
 logger = logging.getLogger(__name__)
 
 FlushFn = Callable[[list[tuple[str, int, int, datetime, str]]], Awaitable[None]]
@@ -49,6 +51,7 @@ class LogBuffer:
             if len(buf) > self._per_phase_cap:
                 dropped = len(buf) - self._per_phase_cap
                 del buf[:dropped]
+                coding_log_drops_total.labels(reason="buffer_full").inc(dropped)
                 if self._on_drop:
                     self._on_drop(dropped)
             # Size-triggered flush
@@ -82,4 +85,25 @@ class LogBuffer:
         self._buffers[key] = []
         self._last_flush_ts[key] = time.monotonic()
         payload = [(job_id, step, line_no, ts, text) for (line_no, ts, text) in buf]
-        await self._flush_fn(payload)
+        with tracer.start_as_current_span("coding.log.flush") as span:
+            try:
+                span.set_attribute("coding.job_id", job_id)
+                span.set_attribute("coding.step", step)
+                span.set_attribute("coding.batch_size", len(payload))
+            except Exception:
+                # OTel is best-effort; attribute-set failures must not
+                # break a flush.
+                pass
+            try:
+                await self._flush_fn(payload)
+            except Exception as exc:
+                # DB flush failure: lines are already pulled out of the
+                # buffer, so they're effectively dropped. Record the drop
+                # size and re-raise so the caller (tick/force_flush/append)
+                # stays in charge of retry policy.
+                coding_log_drops_total.labels(reason="db_flush_fail").inc(len(payload))
+                try:
+                    span.record_exception(exc)
+                except Exception:
+                    pass
+                raise

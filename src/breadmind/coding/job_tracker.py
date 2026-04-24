@@ -13,6 +13,13 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Coroutine
 
+from breadmind.metrics import (
+    coding_active_jobs,
+    coding_job_duration_seconds,
+    coding_jobs_total,
+    coding_phase_log_lines_total,
+)
+
 logger = logging.getLogger("breadmind.coding.tracker")
 
 
@@ -231,6 +238,7 @@ class JobTracker:
         self._jobs[job_id] = job
         self._emit("job_created", job)
         self._db_insert_job(job)
+        coding_active_jobs.set(len(self.get_active_jobs()))
         logger.info("Job created: %s (%s)", job_id, project)
         return job
 
@@ -355,6 +363,12 @@ class JobTracker:
                 session_id=session_id,
                 error=error,
             ))
+        # Prometheus: terminal counter + duration histogram, then refresh
+        # the gauge using the live active-jobs set (handles concurrent
+        # completions and duplicate calls idempotently).
+        coding_jobs_total.labels(status=job.status.value).inc()
+        coding_job_duration_seconds.observe(job.duration_seconds)
+        coding_active_jobs.set(len(self.get_active_jobs()))
         logger.info(
             "Job %s: %s (%.1fs, %d/%d phases)",
             "completed" if success else "failed",
@@ -378,6 +392,8 @@ class JobTracker:
                 finished_at=self._utc(job.finished_at),
                 duration_seconds=job.duration_seconds,
             ))
+        coding_jobs_total.labels(status=job.status.value).inc()
+        coding_active_jobs.set(len(self.get_active_jobs()))
         return True
 
     # ── Queries ──────────────────────────────────────────────────────────
@@ -459,6 +475,7 @@ class JobTracker:
         self._line_counters[key] = self._line_counters.get(key, 0) + 1
         line_no = self._line_counters[key]
         ts = datetime.now(timezone.utc)
+        coding_phase_log_lines_total.inc()
         # Fire listeners immediately — raw ensure_future, fire-and-forget.
         for cb in list(self._log_listeners):
             try:
