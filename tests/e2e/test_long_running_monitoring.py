@@ -165,3 +165,36 @@ async def test_full_monitoring_flow(postgres_container, breadmind_server):
         f"got rc={proc_c.returncode} stdout={proc_c.stdout!r} "
         f"stderr={proc_c.stderr!r}"
     )
+
+
+async def test_e2e_user_channel_persisted(postgres_container, breadmind_server) -> None:
+    """A long_running job submitted with user/channel persists those to coding_jobs row."""
+    from breadmind.coding.job_executor import CodingJobExecutor
+
+    store = breadmind_server["store"]
+    db = breadmind_server["db"]
+
+    executor = CodingJobExecutor(provider=None, db=db)
+    await executor.execute_plan(
+        plan_data={
+            "project": "/tmp/proj",
+            "agent": "claude",
+            "phases": [],  # zero-phase early exit; create_job still fires
+            "original_prompt": "e2e",
+        },
+        job_id="e2e-uc-1",
+        user="bob",
+        channel="#qa",
+    )
+
+    # write-through is async; poll briefly.
+    row = None
+    for _ in range(20):
+        row = await store.get_job("e2e-uc-1")
+        if row and row.get("user_name") == "bob":
+            break
+        await asyncio.sleep(0.05)
+
+    assert row is not None
+    assert row["user_name"] == "bob"
+    assert row["channel"] == "#qa"
