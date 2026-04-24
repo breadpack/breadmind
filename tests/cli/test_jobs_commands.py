@@ -94,3 +94,31 @@ async def test_watch_plain_mode(capsys):
     assert "hello" in out
     assert "coding_job_completed" in out or "job_completed" in out
     assert rc == 0
+
+
+@pytest.mark.asyncio
+async def test_watch_tui_builds_renderable():
+    from rich.console import Console
+    from breadmind.cli.jobs_watch_tui import JobsWatchState
+
+    st = JobsWatchState(job_id="j1")
+    st.apply({"type": "coding_job_running", "data": {
+        "job_id": "j1", "status": "running",
+        "phases": [
+            {"step": 1, "title": "a", "status": "running"},
+            {"step": 2, "title": "b", "status": "pending"},
+        ],
+        "current_phase": 1, "total_phases": 2, "completed_phases": 0,
+        "progress_pct": 0,
+    }})
+    st.apply({"type": "coding_phase_log", "data": {
+        "job_id": "j1", "step": 1, "line_no": 1, "ts": "", "text": "hi"
+    }})
+    panel = st.render_panel()
+    # `rich.panel.Panel` has no `render_str`; capture via a recorder Console
+    # so the test doesn't depend on rendering internals.
+    console = Console(record=True, width=120)
+    console.print(panel)
+    text = console.export_text()
+    assert "j1" in text
+    assert "hi" in text
