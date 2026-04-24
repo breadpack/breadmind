@@ -167,3 +167,23 @@ async def test_code_delegate_propagates_user_channel(test_db, monkeypatch) -> No
     assert row is not None
     assert row["user_name"] == "alice"
     assert row["channel"] == "#ops"
+
+
+async def test_bind_log_buffer_auto_starts_worker(test_db) -> None:
+    """JobTracker.bind_log_buffer must trigger LogBuffer.start() (fire-and-forget)."""
+    from breadmind.coding.job_store import JobStore
+    from breadmind.coding.job_tracker import JobTracker
+    from breadmind.coding.log_buffer import LogBuffer
+
+    store = JobStore(test_db)
+    tracker = JobTracker()
+    tracker.bind_store(store)
+    buf = LogBuffer(flush_fn=JobTracker.make_default_flush(store))
+    tracker.bind_log_buffer(buf)
+
+    # Give create_task a tick to schedule.
+    await asyncio.sleep(0.02)
+    assert buf._worker is not None
+    assert not buf._worker.done()
+
+    await buf.stop()  # cleanup

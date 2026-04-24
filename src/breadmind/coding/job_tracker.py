@@ -248,16 +248,22 @@ class JobTracker:
     # ── Log streaming ────────────────────────────────────────────────────
 
     def bind_log_buffer(self, buffer: Any) -> None:
-        """Attach a :class:`LogBuffer` that batches DB writes for log lines.
+        """Attach a :class:`LogBuffer` and auto-start its worker.
 
-        The buffer is expected to expose ``append(job_id, step, line_no, text)``
-        and ``force_flush(job_id, step)`` coroutines. Typically constructed
-        with ``flush_fn=JobTracker.make_default_flush(store)``.
+        Called from sync context, so we use ``create_task(buffer.start())``
+        fire-and-forget. ``start()`` only schedules the background loop, so
+        no await is needed; if there's no running loop (offline test path),
+        the start is silently skipped — caller can invoke ``buffer.start()``
+        explicitly later.
         """
         if self._log_stream is None:
             self._log_stream = JobLogStream(db_writer=self._db_writer)
         self._log_stream.bind_buffer(buffer)
-        # Phase 5 (Task 11) wires the auto-start here — not yet.
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(buffer.start())
 
     def add_log_listener(self, callback: Callable) -> None:
         """Register a WS-broadcast callback fired on every ``append_log``.
