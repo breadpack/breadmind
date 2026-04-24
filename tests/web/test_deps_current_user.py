@@ -1,4 +1,3 @@
-import os
 import pytest
 from unittest.mock import MagicMock
 from breadmind.web.deps import CurrentUser, get_current_user

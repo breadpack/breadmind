@@ -59,7 +59,6 @@ async def test_cmd_cancel_forbidden(capsys):
         async def cancel_job(self, job_id):
             return 403
     rc = await cmd_cancel(C(), "j1")
-    out = capsys.readouterr().out + capsys.readouterr().err
     assert rc == 3
 
 
@@ -125,7 +124,6 @@ async def test_watch_tui_builds_renderable():
 
 
 def test_main_dispatches_jobs_list(monkeypatch, capsys):
-    import asyncio
     called = {}
     async def fake_cmd_list(client, *, mine, status, limit, fmt):
         called["args"] = (mine, status, limit, fmt)

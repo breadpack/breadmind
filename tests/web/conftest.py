@@ -115,14 +115,14 @@ def seeded_jobs_with_logs(web_app_client, seeded_jobs):
     # Run migrations once (sync). Idempotent on repeated test runs.
     Migrator(MigrationConfig(database_url=dsn)).upgrade("head")
 
-    db = Database(dsn)
+    database = Database(dsn)
 
     async def _setup() -> JobStore:
-        db._pool = await asyncpg.create_pool(dsn, min_size=1, max_size=4)
-        store = JobStore(db)
+        database._pool = await asyncpg.create_pool(dsn, min_size=1, max_size=4)
+        store = JobStore(database)
         # Clean slate on the coding tables so repeated runs don't collide
         # on ``(job_id, step, line_no)``.
-        async with db.acquire() as conn:
+        async with database.acquire() as conn:
             await conn.execute("DELETE FROM coding_jobs")
         # Parent job row first so phase/logs FKs are satisfied.
         await store.insert_job(
@@ -155,8 +155,8 @@ def seeded_jobs_with_logs(web_app_client, seeded_jobs):
         yield store
     finally:
         async def _teardown() -> None:
-            if db._pool is not None:
-                await db._pool.close()
+            if database._pool is not None:
+                await database._pool.close()
 
         try:
             portal.call(_teardown)
