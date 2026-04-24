@@ -299,7 +299,11 @@ class JobTracker:
     # ── Cleanup ──────────────────────────────────────────────────────────
 
     def _cleanup_history(self) -> None:
-        """Remove old completed jobs beyond max_history."""
+        """Remove old completed jobs beyond max_history.
+
+        Also evicts the JobLogStream line counters for any popped job so
+        long-running operation doesn't accumulate counter entries.
+        """
         completed = [
             j for j in self._jobs.values()
             if j.status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED)
@@ -308,3 +312,5 @@ class JobTracker:
             completed.sort(key=lambda j: j.finished_at)
             for j in completed[: len(completed) - self._max_history]:
                 self._jobs.pop(j.job_id, None)
+                if self._log_stream is not None:
+                    self._log_stream.evict_job_counters(j.job_id)

@@ -106,6 +106,39 @@ async def test_tracker_append_log(test_db) -> None:
     assert len(emitted) == 3
 
 
+async def test_cleanup_history_evicts_line_counters(test_db) -> None:
+    """When _cleanup_history evicts a job, its log-line counters must go too."""
+    from breadmind.coding.job_store import JobStore
+    from breadmind.coding.job_tracker import JobTracker
+    from breadmind.coding.log_buffer import LogBuffer
+
+    store = JobStore(test_db)
+    tracker = JobTracker()
+    tracker.bind_store(store)
+    tracker._max_history = 2  # easier to exercise eviction
+
+    buf = LogBuffer(flush_fn=JobTracker.make_default_flush(store))
+    tracker.bind_log_buffer(buf)
+
+    # Create + complete 3 jobs with logs in each.
+    for n in range(3):
+        job_id = f"old-{n}"
+        tracker.create_job(job_id, "p", "c", "x")
+        tracker.set_phases(job_id, [{"step": 1, "title": "t"}])
+        tracker.start_phase(job_id, 1)
+        await tracker.append_log(job_id, 1, "line")
+        tracker.complete_phase(job_id, 1, success=True)
+        tracker.complete_job(job_id, success=True)
+
+    await asyncio.sleep(0.1)
+
+    # The oldest job ("old-0") was evicted by _cleanup_history.
+    # Its counter entries must be gone from JobLogStream.
+    assert ("old-0", 1) not in tracker._log_stream._line_counters
+    assert ("old-1", 1) not in tracker._log_stream._line_counters or \
+           ("old-2", 1) in tracker._log_stream._line_counters
+
+
 async def test_code_delegate_propagates_user_channel(test_db, monkeypatch) -> None:
     """Task 9: ``_register_job_for_delegation`` must forward ``user``/``channel``.
 
