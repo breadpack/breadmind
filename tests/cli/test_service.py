@@ -30,7 +30,7 @@ SERVICE_NAME: BreadMind
 
 class TestIsAdmin:
     def test_non_nt_falls_back_to_geteuid(self, monkeypatch):
-        monkeypatch.setattr(service.os, "name", "posix")
+        monkeypatch.setattr(service, "_is_windows", lambda: False)
         # os.geteuid should be present on POSIX; if not, returns False safely.
         # Here we just verify the function doesn't raise.
         result = service.is_admin()
@@ -55,19 +55,19 @@ class TestOnWindowsOnly:
 @pytest.mark.asyncio
 class TestStatus:
     async def test_non_windows_returns_1(self, monkeypatch):
-        monkeypatch.setattr(service.os, "name", "posix")
+        monkeypatch.setattr(service, "_is_windows", lambda: False)
         rc = await service.status()
         assert rc == 1
 
     async def test_unregistered_returns_1(self, monkeypatch):
-        monkeypatch.setattr(service.os, "name", "nt")
+        monkeypatch.setattr(service, "_is_windows", lambda: True)
         mock = AsyncMock(return_value=(1, ""))
         with patch.object(service, "_run", mock):
             rc = await service.status()
         assert rc == 1
 
     async def test_registered_returns_0(self, monkeypatch):
-        monkeypatch.setattr(service.os, "name", "nt")
+        monkeypatch.setattr(service, "_is_windows", lambda: True)
         query_out = "SERVICE_NAME: BreadMind\n        STATE              : 1  STOPPED\n"
         qc_out = "        START_TYPE         : 2   AUTO_START\n"
         call_outputs = [(0, query_out), (0, qc_out)]
@@ -83,7 +83,7 @@ class TestAdminGating:
     """All mutating actions must refuse to run without admin."""
 
     async def test_install_requires_admin(self, monkeypatch, capsys):
-        monkeypatch.setattr(service.os, "name", "nt")
+        monkeypatch.setattr(service, "_is_windows", lambda: True)
         monkeypatch.setattr(service, "is_admin", lambda: False)
         rc = await service.install()
         assert rc == 1
@@ -92,25 +92,25 @@ class TestAdminGating:
         assert "breadmind service install" in captured
 
     async def test_start_requires_admin(self, monkeypatch):
-        monkeypatch.setattr(service.os, "name", "nt")
+        monkeypatch.setattr(service, "_is_windows", lambda: True)
         monkeypatch.setattr(service, "is_admin", lambda: False)
         rc = await service.start()
         assert rc == 1
 
     async def test_stop_requires_admin(self, monkeypatch):
-        monkeypatch.setattr(service.os, "name", "nt")
+        monkeypatch.setattr(service, "_is_windows", lambda: True)
         monkeypatch.setattr(service, "is_admin", lambda: False)
         rc = await service.stop()
         assert rc == 1
 
     async def test_restart_requires_admin(self, monkeypatch):
-        monkeypatch.setattr(service.os, "name", "nt")
+        monkeypatch.setattr(service, "_is_windows", lambda: True)
         monkeypatch.setattr(service, "is_admin", lambda: False)
         rc = await service.restart()
         assert rc == 1
 
     async def test_remove_requires_admin(self, monkeypatch):
-        monkeypatch.setattr(service.os, "name", "nt")
+        monkeypatch.setattr(service, "_is_windows", lambda: True)
         monkeypatch.setattr(service, "is_admin", lambda: False)
         rc = await service.remove()
         assert rc == 1
@@ -144,7 +144,7 @@ class TestDispatcher:
 @pytest.mark.asyncio
 class TestInstallHappyPath:
     async def test_install_runs_nssm_commands(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(service.os, "name", "nt")
+        monkeypatch.setattr(service, "_is_windows", lambda: True)
         monkeypatch.setattr(service, "is_admin", lambda: True)
         fake_nssm = tmp_path / "nssm.exe"
         fake_nssm.write_text("")
@@ -166,7 +166,7 @@ class TestInstallHappyPath:
     async def test_install_passes_dash_s_to_python(self, monkeypatch, tmp_path):
         """`-s` before `-m breadmind` prevents the service from inheriting
         the caller's user site-packages, which LocalSystem can't read anyway."""
-        monkeypatch.setattr(service.os, "name", "nt")
+        monkeypatch.setattr(service, "_is_windows", lambda: True)
         monkeypatch.setattr(service, "is_admin", lambda: True)
         fake_nssm = tmp_path / "nssm.exe"
         fake_nssm.write_text("")
@@ -191,7 +191,7 @@ class TestInstallHappyPath:
     async def test_install_sets_pythonnousersite_env(self, monkeypatch, tmp_path):
         """PYTHONNOUSERSITE=1 goes into AppEnvironmentExtra so the service
         ignores user site-packages even when `-s` is edited out later."""
-        monkeypatch.setattr(service.os, "name", "nt")
+        monkeypatch.setattr(service, "_is_windows", lambda: True)
         monkeypatch.setattr(service, "is_admin", lambda: True)
         fake_nssm = tmp_path / "nssm.exe"
         fake_nssm.write_text("")
@@ -211,7 +211,7 @@ class TestInstallHappyPath:
         assert "PYTHONUNBUFFERED=1" in env_value[0]
 
     async def test_install_configures_log_rotation(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(service.os, "name", "nt")
+        monkeypatch.setattr(service, "_is_windows", lambda: True)
         monkeypatch.setattr(service, "is_admin", lambda: True)
         fake_nssm = tmp_path / "nssm.exe"
         fake_nssm.write_text("")

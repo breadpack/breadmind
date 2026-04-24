@@ -20,9 +20,19 @@ from pathlib import Path
 SERVICE_NAME = "BreadMind"
 
 
+def _is_windows() -> bool:
+    """Platform predicate indirected through a helper so tests can flip it
+    without patching ``os.name`` — that module attribute is also consulted
+    by ``pathlib.Path`` during instantiation and poking it globally makes
+    ``Path()`` raise ``cannot instantiate 'WindowsPath' on your system`` on
+    Linux CI runners.
+    """
+    return os.name == "nt"
+
+
 def is_admin() -> bool:
     """True when the current process has elevated / root privileges."""
-    if os.name != "nt":
+    if not _is_windows():
         try:
             return os.geteuid() == 0  # type: ignore[attr-defined]
         except AttributeError:
@@ -81,7 +91,7 @@ def _parse_sc_state(output: str) -> str:
 # --- Actions ---------------------------------------------------------------
 
 async def status() -> int:
-    if os.name != "nt":
+    if not _is_windows():
         print("  `breadmind service` currently supports Windows only.")
         return 1
     rc, out = await _run("sc", "query", SERVICE_NAME)
@@ -103,7 +113,7 @@ async def status() -> int:
 
 
 async def install(config_dir: str | None = None) -> int:
-    if os.name != "nt":
+    if not _is_windows():
         print("  Windows only.")
         return 1
     if not is_admin():
@@ -160,7 +170,7 @@ async def install(config_dir: str | None = None) -> int:
 
 
 async def _simple_sc(verb: str, *, command_name: str) -> int:
-    if os.name != "nt":
+    if not _is_windows():
         print("  Windows only.")
         return 1
     if not is_admin():
@@ -187,7 +197,7 @@ async def stop() -> int:
 
 
 async def restart() -> int:
-    if os.name != "nt":
+    if not _is_windows():
         print("  Windows only.")
         return 1
     if not is_admin():
@@ -204,7 +214,7 @@ async def restart() -> int:
 
 
 async def remove() -> int:
-    if os.name != "nt":
+    if not _is_windows():
         print("  Windows only.")
         return 1
     if not is_admin():

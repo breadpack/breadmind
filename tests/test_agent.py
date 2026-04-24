@@ -173,7 +173,8 @@ async def test_chat_timeout(agent):
     agent._provider.chat = slow_chat
     agent._chat_timeout = 0.1
     result = await agent.handle_message("hi", user="test", channel="test")
-    assert result == "요청 시간이 초과되었습니다."
+    assert "요청 시간이 초과되었습니다" in result
+    assert "Settings" in result and "LLM" in result
 
 
 @pytest.mark.asyncio
@@ -200,7 +201,8 @@ async def test_tool_timeout(agent):
 async def test_provider_exception(agent):
     agent._provider.chat = AsyncMock(side_effect=RuntimeError("connection lost"))
     result = await agent.handle_message("hi", user="test", channel="test")
-    assert result == "서비스 오류가 발생했습니다."
+    assert "LLM 공급자를 사용할 수 없습니다" in result
+    assert "RuntimeError" in result and "connection lost" in result
 
 
 # --- Cooldown integration ---
