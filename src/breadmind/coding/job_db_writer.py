@@ -35,9 +35,18 @@ class JobDbWriter:
         max_queue_size: int | None = None,
     ) -> None:
         self._store = store
-        self._max_queue_size = max_queue_size or int(
-            os.getenv("BREADMIND_CODING_DB_QUEUE_MAX", "2000")
-        )
+        if max_queue_size is None:
+            raw = int(os.getenv("BREADMIND_CODING_DB_QUEUE_MAX", "2000"))
+            if raw <= 0:
+                logger.warning(
+                    "BREADMIND_CODING_DB_QUEUE_MAX=%d is ambiguous (asyncio treats "
+                    "0/negative as unbounded); using default 2000.",
+                    raw,
+                )
+                raw = 2000
+            self._max_queue_size = raw
+        else:
+            self._max_queue_size = max_queue_size
         self._queue: asyncio.Queue | None = None
         self._worker: asyncio.Task | None = None
 
@@ -47,16 +56,16 @@ class JobDbWriter:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            coro.close()
             coding_db_writer_drops_total.labels(reason="no_loop").inc()
+            coro.close()
             return
         if self._queue is None:
             self._queue = asyncio.Queue(maxsize=self._max_queue_size)
         if self._worker is None or self._worker.done():
             self._worker = loop.create_task(self._worker_loop())
         if self._queue.full():
-            coro.close()
             coding_db_writer_drops_total.labels(reason="queue_full").inc()
+            coro.close()
             return
         self._queue.put_nowait(coro)
 

@@ -113,14 +113,6 @@ async def test_drop_newest_on_queue_full(monkeypatch) -> None:
 
 async def test_drop_newest_increments_counter() -> None:
     """Direct coverage: when queue is full schedule() must close coro + inc counter."""
-    from breadmind.coding.job_db_writer import JobDbWriter
-
-    closed: list[bool] = []
-
-    class _Tracker:
-        def close(self):
-            closed.append(True)
-
     writer = JobDbWriter(store=object(), max_queue_size=1)
     # Force queue creation by scheduling one no-op coro
     async def _noop():
@@ -141,6 +133,14 @@ async def test_drop_newest_increments_counter() -> None:
 
 async def test_max_queue_size_env_default(monkeypatch) -> None:
     monkeypatch.setenv("BREADMIND_CODING_DB_QUEUE_MAX", "7")
-    from breadmind.coding.job_db_writer import JobDbWriter
     w = JobDbWriter(store=object())
     assert w._max_queue_size == 7
+
+
+async def test_max_queue_size_env_zero_falls_back_to_default(monkeypatch, caplog) -> None:
+    monkeypatch.setenv("BREADMIND_CODING_DB_QUEUE_MAX", "0")
+    import logging
+    with caplog.at_level(logging.WARNING, logger="breadmind.coding.job_db_writer"):
+        w = JobDbWriter(store=object())
+    assert w._max_queue_size == 2000
+    assert any("ambiguous" in rec.message for rec in caplog.records)
