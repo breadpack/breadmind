@@ -64,6 +64,8 @@ class CodingJobExecutor:
         job_id: str = "",
         store: Any = None,
         publish_fn: Any = None,
+        user: str = "",
+        channel: str = "",
     ) -> dict:
         """Execute a coding plan step by step.
 
@@ -72,6 +74,8 @@ class CodingJobExecutor:
             job_id: Background job ID (for progress updates)
             store: BgJobsStore for persisting progress
             publish_fn: Redis publish function for real-time updates
+            user: Originating user (propagated to JobTracker for attribution)
+            channel: Originating channel (propagated to JobTracker for attribution)
 
         Returns:
             Summary dict with results per phase.
@@ -82,12 +86,20 @@ class CodingJobExecutor:
         phases = plan_data.get("phases", [])
         original_prompt = plan_data.get("original_prompt", "")
 
-        if not phases:
-            return {"success": False, "error": "No phases in plan"}
-
-        # Register with JobTracker
         if not job_id:
             job_id = generate_short_id()
+
+        # Register first so user/channel land on the row even if phases is empty.
+        self._tracker.create_job(
+            job_id=job_id, project=project, agent=agent,
+            prompt=original_prompt,
+            user=user, channel=channel,
+        )
+
+        if not phases:
+            # No phases: mark immediately failed and return.
+            self._tracker.complete_job(job_id, False, error="No phases in plan")
+            return {"success": False, "error": "No phases in plan"}
 
         # Outer OTel span — scopes the whole plan execution.  Attributes
         # are set best-effort; span attribute failures must not break
@@ -104,10 +116,6 @@ class CodingJobExecutor:
         except Exception:
             pass
 
-        self._tracker.create_job(
-            job_id=job_id, project=project, agent=agent,
-            prompt=original_prompt,
-        )
         self._tracker.set_decomposing(job_id)
         self._tracker.set_phases(job_id, phases)
 

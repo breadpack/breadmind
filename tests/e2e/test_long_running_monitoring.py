@@ -84,11 +84,14 @@ async def test_full_monitoring_flow(postgres_container, breadmind_server):
 
     # Drain any pending DB write-through and log-buffer flushes so the
     # subsequent REST reads see the final state.
-    if tracker._db_queue is not None:
-        await tracker._db_queue.join()
-    if tracker._log_buffer is not None:
-        await tracker._log_buffer.force_flush("e2e-1", 1)
-        await tracker._log_buffer.force_flush("e2e-1", 2)
+    if tracker._db_writer is not None:
+        await tracker._db_writer.join()
+    if tracker._log_stream is not None and tracker._log_stream._buffer is not None:
+        # Signal log-buffer worker to drain; small sleep below gives it
+        # time to complete (force_flush is fire-and-forget post-Task 10).
+        await tracker._log_stream._buffer.force_flush("e2e-1", 1)
+        await tracker._log_stream._buffer.force_flush("e2e-1", 2)
+        await asyncio.sleep(0.1)
 
     base = breadmind_server["url"]
     api_key = breadmind_server["api_key"]
@@ -162,3 +165,36 @@ async def test_full_monitoring_flow(postgres_container, breadmind_server):
         f"got rc={proc_c.returncode} stdout={proc_c.stdout!r} "
         f"stderr={proc_c.stderr!r}"
     )
+
+
+async def test_e2e_user_channel_persisted(postgres_container, breadmind_server) -> None:
+    """A long_running job submitted with user/channel persists those to coding_jobs row."""
+    from breadmind.coding.job_executor import CodingJobExecutor
+
+    store = breadmind_server["store"]
+    db = breadmind_server["db"]
+
+    executor = CodingJobExecutor(provider=None, db=db)
+    await executor.execute_plan(
+        plan_data={
+            "project": "/tmp/proj",
+            "agent": "claude",
+            "phases": [],  # zero-phase early exit; create_job still fires
+            "original_prompt": "e2e",
+        },
+        job_id="e2e-uc-1",
+        user="bob",
+        channel="#qa",
+    )
+
+    # write-through is async; poll briefly.
+    row = None
+    for _ in range(20):
+        row = await store.get_job("e2e-uc-1")
+        if row and row.get("user_name") == "bob":
+            break
+        await asyncio.sleep(0.05)
+
+    assert row is not None
+    assert row["user_name"] == "bob"
+    assert row["channel"] == "#qa"
