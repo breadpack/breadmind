@@ -17,6 +17,9 @@ class JobsApiClient:
             base_url=base_url,
             headers={"X-API-Key": api_key},
             timeout=30.0,
+            # API versioning middleware rewrites /api/... -> /api/v1/...
+            # via 307; follow transparently so the CLI sees the real status.
+            follow_redirects=True,
         )
 
     async def list_jobs(self, *, mine: bool, status: str | None, limit: int) -> list[dict]:
