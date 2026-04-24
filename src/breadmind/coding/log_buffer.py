@@ -81,7 +81,12 @@ class LogBuffer:
         await self._drain_once()
 
     async def _drain_once(self) -> None:
-        """Snapshot eligible buffers under lock, flush outside lock."""
+        """Snapshot eligible buffers under lock, flush outside lock.
+
+        On shutdown (``_stop`` set) every non-empty buffer is flushed so the
+        final drain after the worker loop exits does not leak pending lines.
+        """
+        stopping = self._stop.is_set()
         async with self._lock:
             now = time.monotonic()
             keys_to_flush: list[tuple[str, int]] = []
@@ -91,7 +96,7 @@ class LogBuffer:
                 aged = now - self._last_flush_ts.get(k, 0.0) >= self._time_threshold_s
                 sized = len(buf) >= self._size_threshold
                 forced = k in self._force_keys
-                if aged or sized or forced:
+                if stopping or aged or sized or forced:
                     keys_to_flush.append(k)
             payloads: list[
                 tuple[tuple[str, int], list[tuple[str, int, int, datetime, str]]]
@@ -141,63 +146,21 @@ class LogBuffer:
             buf = self._buffers.setdefault(key, [])
             buf.append((line_no, now, text))
             self._last_flush_ts.setdefault(key, time.monotonic())
-            # Enforce cap
             if len(buf) > self._per_phase_cap:
                 dropped = len(buf) - self._per_phase_cap
                 del buf[:dropped]
                 coding_log_drops_total.labels(reason="buffer_full").inc(dropped)
                 if self._on_drop:
                     self._on_drop(dropped)
-            # Size-triggered flush
             if len(buf) >= self._size_threshold:
-                await self._flush_key_locked(key)
-
-    async def tick(self) -> None:
-        """Check all buffers; flush those that have aged past time_threshold_s."""
-        now = time.monotonic()
-        async with self._lock:
-            keys = [
-                k
-                for k in self._buffers
-                if self._buffers[k]
-                and now - self._last_flush_ts.get(k, 0.0) >= self._time_threshold_s
-            ]
-            for k in keys:
-                await self._flush_key_locked(k)
+                self._wake.set()
 
     async def force_flush(self, job_id: str, step: int) -> None:
-        key = (job_id, step)
+        """Best-effort signal to flush. Worker handles soon (no sync guarantee)."""
         async with self._lock:
-            if self._buffers.get(key):
-                await self._flush_key_locked(key)
+            self._force_keys.add((job_id, step))
+        self._wake.set()
 
-    async def _flush_key_locked(self, key: tuple[str, int]) -> None:
-        job_id, step = key
-        buf = self._buffers.get(key) or []
-        if not buf:
-            return
-        self._buffers[key] = []
-        self._last_flush_ts[key] = time.monotonic()
-        payload = [(job_id, step, line_no, ts, text) for (line_no, ts, text) in buf]
-        with tracer.start_as_current_span("coding.log.flush") as span:
-            try:
-                span.set_attribute("coding.job_id", job_id)
-                span.set_attribute("coding.step", step)
-                span.set_attribute("coding.batch_size", len(payload))
-            except Exception:
-                # OTel is best-effort; attribute-set failures must not
-                # break a flush.
-                pass
-            try:
-                await self._flush_fn(payload)
-            except Exception as exc:
-                # DB flush failure: lines are already pulled out of the
-                # buffer, so they're effectively dropped. Record the drop
-                # size and re-raise so the caller (tick/force_flush/append)
-                # stays in charge of retry policy.
-                coding_log_drops_total.labels(reason="db_flush_fail").inc(len(payload))
-                try:
-                    span.record_exception(exc)
-                except Exception:
-                    pass
-                raise
+    async def tick(self) -> None:
+        """Compatibility shim — wake the worker and let it drain."""
+        self._wake.set()
