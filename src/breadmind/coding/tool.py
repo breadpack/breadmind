@@ -21,35 +21,6 @@ from breadmind.utils.helpers import generate_short_id
 logger = logging.getLogger("breadmind.coding")
 
 
-def _register_job_for_delegation(
-    *,
-    job_id: str,
-    project: str,
-    agent: str,
-    prompt: str,
-    user: str = "",
-    channel: str = "",
-) -> None:
-    """Register a coding job with :class:`JobTracker`, forwarding ``user``/``channel``.
-
-    Single entry point used by ``code_delegate`` so that the dispatch-chain
-    context (messenger user, channel) is consistently attached to the job
-    row, enabling per-user job filtering and notification routing downstream.
-
-    Resolution is dual-mode: in production ``JobTracker`` is the class with a
-    ``get_instance()`` classmethod singleton; in tests the module-level name
-    may be monkey-patched to a factory callable (``lambda: tracker``), in
-    which case we fall through to direct instantiation.
-    """
-    if hasattr(JobTracker, "get_instance"):
-        tracker = JobTracker.get_instance()
-    else:
-        tracker = JobTracker()
-    tracker.create_job(
-        job_id, project, agent, prompt, user=user, channel=channel,
-    )
-
-
 def _channel_available() -> bool:
     """Check if a JS runtime (Bun, tsx, or Node) is available for channel supervision."""
     return any(shutil.which(rt) for rt in ("bun", "tsx", "node"))

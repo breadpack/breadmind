@@ -55,6 +55,12 @@ async def test_code_delegate_default_user_channel_empty(monkeypatch) -> None:
     assert captured["channel"] == ""
 
 
+def test_register_job_for_delegation_removed() -> None:
+    """Dead helper from pre-Task-9 wiring must be gone."""
+    from breadmind.coding import tool
+    assert not hasattr(tool, "_register_job_for_delegation")
+
+
 # Silence unused-import warning for asyncio; kept available for potential
 # future spawn/cancel tests.
 _ = asyncio
