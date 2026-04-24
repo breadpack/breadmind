@@ -159,19 +159,25 @@ def test_per_loop_worker_isolation() -> None:
         writer.schedule(_coro())
         return id(_asyncio.get_running_loop())
 
+    def _teardown(loop):
+        # Cancel the worker task + tick so done_callback fires.
+        for worker in list(writer._workers.values()):
+            if not worker.task.done():
+                worker.task.cancel()
+        loop.run_until_complete(_asyncio.sleep(0))
+        loop.close()
+
     loop_a = _asyncio.new_event_loop()
     loop_b = _asyncio.new_event_loop()
     try:
         id_a = loop_a.run_until_complete(_enqueue_in_loop())
         id_b = loop_b.run_until_complete(_enqueue_in_loop())
+        assert id_a != id_b
+        assert len(writer._workers) == 2
     finally:
-        loop_a.close()
-        loop_b.close()
+        _teardown(loop_a)
+        _teardown(loop_b)
 
-    assert id_a != id_b
-    # After both loops closed, both worker tasks must be done; the dict
-    # entries should have been popped via done_callback.
-    # (We can't access loops anymore, but the dict must be empty.)
     assert writer._workers == {}
 
 
@@ -188,12 +194,11 @@ def test_done_callback_removes_dict_entry() -> None:
                 return None
             writer.schedule(_coro())
         loop.run_until_complete(_enqueue())
-        # While loop is still alive, entry should exist.
         assert len(writer._workers) == 1
+        # Cancel the worker explicitly + run one tick so done_callback fires.
+        worker = next(iter(writer._workers.values()))
+        worker.task.cancel()
+        loop.run_until_complete(_asyncio.sleep(0))
+        assert writer._workers == {}
     finally:
         loop.close()
-
-    # After loop close, worker task is cancelled → done → callback pops entry.
-    # asyncio.Task.add_done_callback fires synchronously when the loop closes
-    # if it cancels the task; no extra awaiting needed.
-    assert writer._workers == {}

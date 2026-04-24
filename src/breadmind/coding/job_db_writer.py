@@ -4,9 +4,9 @@ Per-loop FIFO queue + per-loop worker preserves the ordering guarantee that
 prevents `status='running'` from committing after `status='completed'`
 under asyncpg pool max_size > 1. Each event loop (pytest, uvicorn, etc.) gets
 its own (queue, task) pair keyed by id(loop). The task's done_callback pops
-the dict entry; a close-hook patched on the loop ensures the cancellation
-flushes synchronously even when the caller does not await task cancellation
-before calling loop.close() (Python 3.13 does not cancel tasks on close).
+the dict entry when the task finishes. Production teardown (asyncio.Runner.close(),
+uvicorn shutdown) cancels tasks as part of its normal sequence, which fires
+the done_callback.
 """
 from __future__ import annotations
 
@@ -83,36 +83,7 @@ class JobDbWriter:
         loop_id = id(loop)
         worker = _LoopWorker(queue=q, task=task)
         self._workers[loop_id] = worker
-
-        # done_callback: pops the entry when the task finishes (cancelled or
-        # normal completion). This fires when the task reaches a done state.
         task.add_done_callback(lambda _t: self._workers.pop(loop_id, None))
-
-        # Close-hook: Python 3.13 does not cancel pending tasks on loop.close().
-        # We patch the loop's close() method to (a) cancel our task and
-        # (b) run the loop one tick so the CancelledError propagates through
-        # the worker and the done_callback fires synchronously before the loop
-        # is truly closed. This ensures _workers is empty right after close().
-        original_close = loop.close
-
-        def _close_with_cancel() -> None:
-            if not task.done():
-                task.cancel()
-
-                async def _flush() -> None:
-                    try:
-                        await asyncio.sleep(0)
-                    except asyncio.CancelledError:
-                        pass
-
-                try:
-                    loop.run_until_complete(_flush())
-                except Exception:
-                    pass  # Loop may already be stopping; best-effort.
-            loop.close = original_close  # Restore before calling to avoid recursion.
-            original_close()
-
-        loop.close = _close_with_cancel  # type: ignore[method-assign]
         return worker
 
     async def _worker_loop(self, q: asyncio.Queue) -> None:
