@@ -122,3 +122,18 @@ async def test_watch_tui_builds_renderable():
     text = console.export_text()
     assert "j1" in text
     assert "hi" in text
+
+
+def test_main_dispatches_jobs_list(monkeypatch, capsys):
+    import asyncio
+    called = {}
+    async def fake_cmd_list(client, *, mine, status, limit, fmt):
+        called["args"] = (mine, status, limit, fmt)
+        return 0
+    monkeypatch.setattr("breadmind.cli.jobs.cmd_list", fake_cmd_list)
+    monkeypatch.setattr("breadmind.cli.jobs.build_client_from_env",
+                        lambda args: None)
+    import breadmind.main as m
+    rc = m.main_with_args(["jobs", "list", "--limit", "20", "--mine"])
+    assert rc == 0
+    assert called["args"] == (True, None, 20, "table")
