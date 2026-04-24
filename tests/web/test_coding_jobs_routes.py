@@ -95,6 +95,36 @@ def test_list_default_mine_for_non_admin(
     assert all(j["user"] == "alice" for j in data)
 
 
+def test_cancel_403_non_owner(web_app_client: TestClient, seeded_jobs):
+    """Task 15: non-owner non-admin gets 403 (not 404) on cancel.
+
+    Cancel is a mutation, so existence-hiding is relaxed — the caller is
+    authenticated and deserves to know their request was rejected for
+    authz reasons, not silently shadowed as a 404.
+    """
+    _login(web_app_client, "carol")
+    r = web_app_client.post("/api/coding-jobs/bob-job-1/cancel")
+    assert r.status_code == 403
+
+
+def test_cancel_200_owner(web_app_client: TestClient, seeded_jobs):
+    """Owner can cancel their own job and gets a well-formed ack."""
+    _login(web_app_client, "alice")
+    r = web_app_client.post("/api/coding-jobs/alice-job-1/cancel")
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+
+
+def test_cancel_200_admin(
+    web_app_client: TestClient, seeded_jobs, monkeypatch
+):
+    """An admin (via BREADMIND_ADMIN_USERS) can cancel any user's job."""
+    monkeypatch.setenv("BREADMIND_ADMIN_USERS", "super")
+    _login(web_app_client, "super")
+    r = web_app_client.post("/api/coding-jobs/alice-job-1/cancel")
+    assert r.status_code == 200
+
+
 def test_logs_pagination(web_app_client: TestClient, seeded_jobs_with_logs):
     """Cursor-paginated phase logs echo the last line_no so the client can
     keep paging forward without duplicates."""

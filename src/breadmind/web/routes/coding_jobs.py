@@ -19,7 +19,6 @@ import logging
 from typing import Any
 
 from fastapi import Depends, HTTPException
-from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from breadmind.web.deps import CurrentUser, get_current_user
@@ -188,35 +187,34 @@ def register_coding_job_routes(app: Any) -> None:
 
     @app.post("/api/coding-jobs/{job_id}/cancel")
     async def cancel_coding_job(
-        request: Request,
         job_id: str,
         current: CurrentUser = Depends(get_current_user),
     ):
         """Cancel a running coding job.
 
-        Mirrors the detail endpoint's existence-hiding: non-owner non-admin
-        callers get 404 rather than 403.
+        Task 15 relaxes the detail endpoint's existence-hiding on this
+        mutation endpoint: authenticated non-owner non-admin callers get
+        **403** instead of 404. Rationale: the caller has already proven
+        they hold a valid session, so returning 403 surfaces the real
+        authorization failure to them (and their UI) instead of silently
+        pretending the job doesn't exist.
         """
         from breadmind.coding.job_tracker import JobTracker
 
         tracker = JobTracker.get_instance()
         job = tracker.get_job(job_id)
         if not job:
-            return JSONResponse(
-                {"error": "Job not found"}, status_code=404
-            )
+            raise HTTPException(status_code=404, detail="not found")
         if not current.is_admin and job.user != current.username:
-            return JSONResponse(
-                {"error": "Job not found"}, status_code=404
-            )
+            raise HTTPException(status_code=403, detail="not owner")
 
         cancelled = tracker.cancel_job(job_id)
         if not cancelled:
-            return JSONResponse(
-                {"error": "Job not found or already finished"},
+            raise HTTPException(
                 status_code=400,
+                detail="already finished",
             )
-        return JSONResponse({"ok": True, "job_id": job_id})
+        return {"ok": True, "job_id": job_id}
 
     # ── WebSocket push via EventBus ──────────────────────────────────────
     # Register a listener that forwards job events to all WebSocket clients
@@ -224,7 +222,20 @@ def register_coding_job_routes(app: Any) -> None:
 
 
 def _setup_websocket_push(app: Any) -> None:
-    """Wire JobTracker events to WebSocket broadcast."""
+    """Wire JobTracker events + per-phase log lines to WebSocket broadcast.
+
+    Registers two listeners on the singleton :class:`JobTracker`:
+
+    * A job event listener that emits ``coding_job_<event_type>`` frames
+      (created / started / phase_started / completed / failed / cancelled).
+    * A log listener that emits ``coding_phase_log`` frames — one per
+      :meth:`JobTracker.append_log` call — so UIs tailing a phase can
+      stream without polling the REST paginated endpoint.
+
+    The ``hasattr(app, "broadcast_event")`` guard makes this a safe no-op
+    when the caller passes a bare FastAPI instance (no WebApp wrapper),
+    which is the case in unit tests that don't care about the WS fan-out.
+    """
     from breadmind.coding.job_tracker import JobTracker
 
     tracker = JobTracker.get_instance()
@@ -240,5 +251,29 @@ def _setup_websocket_push(app: Any) -> None:
         except Exception as e:
             logger.debug("WebSocket broadcast failed: %s", e)
 
+    async def _on_log_event(
+        job_id: str,
+        step: int,
+        line_no: int,
+        ts: Any,
+        text: str,
+    ) -> None:
+        """Forward a single phase log line to WebSocket clients."""
+        try:
+            if hasattr(app, "broadcast_event"):
+                await app.broadcast_event({
+                    "type": "coding_phase_log",
+                    "data": {
+                        "job_id": job_id,
+                        "step": step,
+                        "line_no": line_no,
+                        "ts": ts.isoformat(),
+                        "text": text,
+                    },
+                })
+        except Exception as e:
+            logger.debug("WebSocket log broadcast failed: %s", e)
+
     tracker.add_listener(_on_job_event)
-    logger.info("Coding job WebSocket push registered")
+    tracker.add_log_listener(_on_log_event)
+    logger.info("Coding job WebSocket push registered (events + logs)")
