@@ -33,6 +33,7 @@ celery_app.conf.update(
     imports=[
         "breadmind.tasks.worker",
         "breadmind.tasks.kb_tasks",
+        "breadmind.tasks.coding_tasks",
         "breadmind.kb.connectors.schedule",
         "breadmind.kb.quality_eval",
     ],
@@ -48,6 +49,10 @@ celery_app.conf.update(
         "kb-weekly-quality-eval": {
             "task": "breadmind.kb.quality_eval.weekly",
             "schedule": crontab(hour=3, minute=0, day_of_week=1),  # Mon 03:00 UTC
+        },
+        "coding.cleanup": {
+            "task": "coding.cleanup_old_jobs",
+            "schedule": crontab(hour=3, minute=30),  # daily 03:30 UTC
         },
     },
 )

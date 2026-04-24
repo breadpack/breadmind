@@ -33,12 +33,15 @@ class AuthManager:
     def verify_api_key(self, key: str) -> bool:
         return key in self._api_keys
 
-    def create_session(self, ip: str = "", user_agent: str = "") -> str:
+    def create_session(
+        self, ip: str = "", user_agent: str = "", username: str = "",
+    ) -> str:
         token = secrets.token_urlsafe(32)
         self._sessions[token] = {
             "created_at": time.time(),
             "ip": ip,
             "user_agent": user_agent,
+            "username": username or "anonymous",
         }
         return token
 
@@ -50,6 +53,15 @@ class AuthManager:
             del self._sessions[token]
             return False
         return True
+
+    def get_session_username(self, token: str) -> str | None:
+        s = self._sessions.get(token)
+        if not s:
+            return None
+        if time.time() - s["created_at"] > self._session_timeout:
+            del self._sessions[token]
+            return None
+        return s.get("username", "anonymous")
 
     def revoke_session(self, token: str):
         self._sessions.pop(token, None)

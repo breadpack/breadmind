@@ -19,11 +19,12 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 
 from breadmind.sdui.patches import diff_specs
 from breadmind.sdui.projector import UISpecProjector
 from breadmind.sdui.spec import UISpec
+from breadmind.web.deps import CurrentUser, get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["ui"])
@@ -588,6 +589,88 @@ async def handle_ws_ui(ws: WebSocket) -> None:
                 await subscription_task
             except (asyncio.CancelledError, Exception):
                 pass
+
+
+@router.get("/coding-jobs")
+async def coding_jobs_page(
+    mine: int | None = None,
+    current: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """SDUI list-screen schema for the coding-job monitor (Task 16).
+
+    Mirrors the existence-hiding / admin rules of ``/api/coding-jobs``:
+
+    * Non-admin, ``mine`` unset → defaults to ``mine=1`` (own jobs only).
+    * Non-admin, ``mine=0`` → still scoped to own jobs (no 403 here —
+      this endpoint returns a UI schema, so degrading gracefully is
+      friendlier than a hard refusal).
+    * Admin → sees everyone's jobs unless they explicitly flip ``mine=1``.
+    """
+    from breadmind.coding.job_tracker import JobTracker
+    from breadmind.sdui.views.coding_jobs_view import build_list_screen
+
+    tracker = JobTracker.get_instance()
+    all_jobs = tracker.list_jobs()
+
+    if mine is None:
+        mine_effective = 0 if current.is_admin else 1
+    else:
+        mine_effective = int(mine)
+
+    def _visible(job: Any) -> bool:
+        if mine_effective:
+            return job.user == current.username
+        # mine=0: admins see all, non-admins still only their own.
+        return current.is_admin or job.user == current.username
+
+    visible_jobs = [j for j in all_jobs if _visible(j)]
+
+    active_statuses = {"pending", "decomposing", "running"}
+    active = [
+        j.to_dict() for j in visible_jobs if j.status.value in active_statuses
+    ]
+    recent = [
+        j.to_dict() for j in visible_jobs if j.status.value not in active_statuses
+    ]
+
+    return build_list_screen(
+        active_jobs=active,
+        recent_jobs=recent,
+        current_username=current.username,
+        is_admin=current.is_admin,
+        mine=bool(mine_effective),
+    )
+
+
+@router.get("/coding-jobs/{job_id}")
+async def coding_job_detail_page(
+    job_id: str,
+    step: int | None = None,
+    current: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """SDUI detail-screen schema for a single coding job (Task 17).
+
+    Authz mirrors ``GET /api/coding-jobs/{job_id}``: non-owner non-admin
+    callers receive 404 (existence hiding). The optional ``step`` query
+    param lets clients persist their selected phase across page reloads;
+    when omitted, the schema auto-selects the running phase.
+    """
+    from breadmind.coding.job_tracker import JobTracker
+    from breadmind.sdui.views.coding_jobs_view import build_detail_screen
+
+    tracker = JobTracker.get_instance()
+    job = tracker.get_job(job_id)
+    if not job or (
+        not current.is_admin and job.user != current.username
+    ):
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    can_cancel = current.is_admin or job.user == current.username
+    return build_detail_screen(
+        job=job.to_dict(),
+        can_cancel=can_cancel,
+        selected_step=step,
+    )
 
 
 @router.websocket("/ws/ui")

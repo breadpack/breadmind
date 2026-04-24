@@ -1,0 +1,227 @@
+"""Tests for /api/coding-jobs filters and existence-hiding (Task 13).
+
+Shared fixtures ``web_app_client`` and ``seeded_jobs`` live in
+``tests/web/conftest.py``.
+"""
+from __future__ import annotations
+
+from fastapi.testclient import TestClient
+
+
+def _login(client: TestClient, username: str, password: str = "p") -> None:
+    r = client.post(
+        "/api/auth/login",
+        json={"password": password, "username": username},
+    )
+    assert r.status_code == 200
+
+
+def test_list_mine_filter(web_app_client: TestClient, seeded_jobs):
+    _login(web_app_client, "alice")
+    r = web_app_client.get("/api/coding-jobs?mine=1")
+    assert r.status_code == 200
+    data = r.json()
+    assert data, "expected at least one job for alice"
+    assert all(j["user"] == "alice" for j in data)
+
+
+def test_list_admin_sees_all(
+    web_app_client: TestClient, seeded_jobs, monkeypatch
+):
+    monkeypatch.setenv("BREADMIND_ADMIN_USERS", "alice")
+    _login(web_app_client, "alice")
+    r = web_app_client.get("/api/coding-jobs?mine=0")
+    assert r.status_code == 200
+    data = r.json()
+    users = {j["user"] for j in data}
+    assert users >= {"alice", "bob"}
+
+
+def test_list_non_admin_all_view_forbidden(
+    web_app_client: TestClient, seeded_jobs
+):
+    """Non-admin users asking for the all-jobs view get 403."""
+    _login(web_app_client, "carol")
+    r = web_app_client.get("/api/coding-jobs?mine=0")
+    assert r.status_code == 403
+
+
+def test_detail_hides_from_non_owner(web_app_client: TestClient, seeded_jobs):
+    """Non-owner, non-admin gets 404 for someone else's job (existence hiding)."""
+    _login(web_app_client, "carol")
+    r = web_app_client.get("/api/coding-jobs/bob-job-1")
+    assert r.status_code == 404
+
+
+def test_detail_owner_can_read_own_job(
+    web_app_client: TestClient, seeded_jobs
+):
+    _login(web_app_client, "alice")
+    r = web_app_client.get("/api/coding-jobs/alice-job-1")
+    assert r.status_code == 200
+    assert r.json()["user"] == "alice"
+
+
+def test_detail_admin_can_read_any_job(
+    web_app_client: TestClient, seeded_jobs, monkeypatch
+):
+    monkeypatch.setenv("BREADMIND_ADMIN_USERS", "alice")
+    _login(web_app_client, "alice")
+    r = web_app_client.get("/api/coding-jobs/bob-job-1")
+    assert r.status_code == 200
+    assert r.json()["user"] == "bob"
+
+
+def test_active_filters_to_current_user_for_non_admin(
+    web_app_client: TestClient, seeded_jobs
+):
+    """``/api/coding-jobs/active`` must only return jobs owned by the caller
+    when the caller is not an admin."""
+    _login(web_app_client, "alice")
+    r = web_app_client.get("/api/coding-jobs/active")
+    assert r.status_code == 200
+    data = r.json()
+    assert all(j["user"] == "alice" for j in data)
+
+
+def test_list_default_mine_for_non_admin(
+    web_app_client: TestClient, seeded_jobs
+):
+    """When ``mine`` is unspecified, a non-admin should only see their own."""
+    _login(web_app_client, "alice")
+    r = web_app_client.get("/api/coding-jobs")
+    assert r.status_code == 200
+    data = r.json()
+    assert all(j["user"] == "alice" for j in data)
+
+
+def test_cancel_403_non_owner(web_app_client: TestClient, seeded_jobs):
+    """Task 15: non-owner non-admin gets 403 (not 404) on cancel.
+
+    Cancel is a mutation, so existence-hiding is relaxed — the caller is
+    authenticated and deserves to know their request was rejected for
+    authz reasons, not silently shadowed as a 404.
+    """
+    _login(web_app_client, "carol")
+    r = web_app_client.post("/api/coding-jobs/bob-job-1/cancel")
+    assert r.status_code == 403
+
+
+def test_cancel_200_owner(web_app_client: TestClient, seeded_jobs):
+    """Owner can cancel their own job and gets a well-formed ack."""
+    _login(web_app_client, "alice")
+    r = web_app_client.post("/api/coding-jobs/alice-job-1/cancel")
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+
+
+def test_cancel_200_admin(
+    web_app_client: TestClient, seeded_jobs, monkeypatch
+):
+    """An admin (via BREADMIND_ADMIN_USERS) can cancel any user's job."""
+    monkeypatch.setenv("BREADMIND_ADMIN_USERS", "super")
+    _login(web_app_client, "super")
+    r = web_app_client.post("/api/coding-jobs/alice-job-1/cancel")
+    assert r.status_code == 200
+
+
+def test_coding_jobs_page_renders_schema(
+    web_app_client: TestClient, seeded_jobs
+):
+    """Task 16: ``GET /coding-jobs`` returns the SDUI list-screen dict."""
+    _login(web_app_client, "alice")
+    r = web_app_client.get("/coding-jobs")
+    assert r.status_code == 200
+    schema = r.json()
+    titles = [s["title"] for s in schema["sections"]]
+    assert titles == ["Active", "Recent"]
+    # Alice's job is pending (create_job leaves status=PENDING) so it
+    # lands in Active. No other user's rows are visible without admin.
+    active = schema["sections"][0]["items"]
+    assert any(item["id"] == "alice-job-1" for item in active)
+    assert all(item["user"] == "alice" for item in active)
+
+
+def test_coding_jobs_page_admin_sees_all(
+    web_app_client: TestClient, seeded_jobs, monkeypatch
+):
+    """Admin sees both users' rows by default (``mine`` unspecified)."""
+    monkeypatch.setenv("BREADMIND_ADMIN_USERS", "alice")
+    _login(web_app_client, "alice")
+    r = web_app_client.get("/coding-jobs")
+    assert r.status_code == 200
+    schema = r.json()
+    all_ids = {
+        item["id"]
+        for section in schema["sections"]
+        for item in section["items"]
+    }
+    assert {"alice-job-1", "bob-job-1"} <= all_ids
+    assert schema["header"]["is_admin"] is True
+
+
+def test_coding_job_detail_page_renders_schema(
+    web_app_client: TestClient, seeded_jobs
+):
+    """Task 17: ``GET /coding-jobs/{job_id}`` returns the SDUI detail schema."""
+    _login(web_app_client, "alice")
+    r = web_app_client.get("/coding-jobs/alice-job-1")
+    assert r.status_code == 200
+    schema = r.json()
+    assert schema["title"] == "Job alice-job-1"
+    assert schema["header"]["user"] == "alice"
+    # Owner can cancel when the job is still in a non-terminal state.
+    # ``create_job`` leaves status=pending so the cancel button is visible.
+    assert schema["cancel_button"]["visible"] is True
+    assert schema["cancel_button"]["action_url"] == (
+        "/api/coding-jobs/alice-job-1/cancel"
+    )
+
+
+def test_coding_job_detail_page_hides_from_non_owner(
+    web_app_client: TestClient, seeded_jobs
+):
+    """Non-owner non-admin gets 404 for someone else's detail (existence hiding)."""
+    _login(web_app_client, "carol")
+    r = web_app_client.get("/coding-jobs/bob-job-1")
+    assert r.status_code == 404
+
+
+def test_coding_job_detail_page_admin_can_read_any(
+    web_app_client: TestClient, seeded_jobs, monkeypatch
+):
+    """Admin can read any user's detail page."""
+    monkeypatch.setenv("BREADMIND_ADMIN_USERS", "alice")
+    _login(web_app_client, "alice")
+    r = web_app_client.get("/coding-jobs/bob-job-1")
+    assert r.status_code == 200
+    assert r.json()["header"]["user"] == "bob"
+
+
+def test_coding_job_detail_page_respects_step_query(
+    web_app_client: TestClient, seeded_jobs
+):
+    """The ``step`` query param persists client-side phase selection."""
+    _login(web_app_client, "alice")
+    r = web_app_client.get("/coding-jobs/alice-job-1?step=7")
+    assert r.status_code == 200
+    schema = r.json()
+    assert schema["log_panel"]["selected_step"] == 7
+    assert schema["log_panel"]["fetch_url"].endswith("/phases/7/logs")
+
+
+def test_logs_pagination(web_app_client: TestClient, seeded_jobs_with_logs):
+    """Cursor-paginated phase logs echo the last line_no so the client can
+    keep paging forward without duplicates."""
+    _login(web_app_client, "alice")
+    r = web_app_client.get("/api/coding-jobs/alice-job-1/phases/1/logs?limit=5")
+    assert r.status_code == 200
+    page1 = r.json()
+    assert len(page1["items"]) == 5
+    assert page1["next_after_line_no"] == page1["items"][-1]["line_no"]
+    r2 = web_app_client.get(
+        f"/api/coding-jobs/alice-job-1/phases/1/logs"
+        f"?after_line_no={page1['next_after_line_no']}&limit=5"
+    )
+    page2 = r2.json()
+    assert [i["line_no"] for i in page2["items"]] == [6, 7, 8, 9, 10]

@@ -9,8 +9,16 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
-from typing import Callable
+from typing import Any, Callable, Coroutine
+
+from breadmind.metrics import (
+    coding_active_jobs,
+    coding_job_duration_seconds,
+    coding_jobs_total,
+    coding_phase_log_lines_total,
+)
 
 logger = logging.getLogger("breadmind.coding.tracker")
 
@@ -112,12 +120,99 @@ class JobTracker:
         self._jobs: dict[str, JobInfo] = {}
         self._listeners: list[Callable] = []  # async callbacks for real-time push
         self._max_history: int = 50
+        self._store: Any | None = None  # JobStore | None — avoid hard import
+        # DB write-through serializer: a single background worker drains
+        # coroutines in FIFO order so concurrent UPDATEs to the same row
+        # don't reorder via the asyncpg pool (max_size > 1).
+        self._db_queue: asyncio.Queue | None = None
+        self._db_worker: asyncio.Task | None = None
+        # Log streaming (Task 6): WS-broadcast listeners + DB-batching buffer.
+        # Log listeners fire immediately per append (raw ensure_future) for
+        # low-latency WS push; DB writes are routed through LogBuffer which
+        # batches by size/time and is force-flushed on complete_phase.
+        self._log_listeners: list[Callable] = []
+        self._log_buffer: Any | None = None  # LogBuffer | None
+        self._line_counters: dict[tuple[str, int], int] = {}
 
     @classmethod
     def get_instance(cls) -> JobTracker:
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
+
+    def bind_store(self, store: Any) -> None:
+        """Attach a :class:`JobStore` so state changes also write-through to DB.
+
+        Writes are scheduled via ``asyncio.ensure_future`` and are
+        best-effort: if no running event loop exists (e.g. offline unit
+        tests), the write is silently skipped.
+        """
+        self._store = store
+
+    # ── DB write-through helpers ─────────────────────────────────────────
+
+    @staticmethod
+    def _utc(ts: float) -> datetime | None:
+        """Convert epoch seconds to a timezone-aware UTC datetime, or None."""
+        if not ts:
+            return None
+        return datetime.fromtimestamp(ts, tz=timezone.utc)
+
+    def _db_schedule(self, coro: Coroutine[Any, Any, Any]) -> None:
+        """Fire-and-forget enqueue ``coro`` onto the DB write-through queue.
+
+        A single background worker (lazily created on first call) drains
+        the queue in FIFO order so writes stay serialized even when the
+        underlying asyncpg pool has multiple connections. Swallows
+        ``RuntimeError`` raised when no loop is running (common in
+        offline unit-test paths) by closing ``coro`` to avoid the
+        "coroutine was never awaited" warning.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            coro.close()
+            return
+        if self._db_queue is None:
+            self._db_queue = asyncio.Queue()
+        if self._db_worker is None or self._db_worker.done():
+            self._db_worker = loop.create_task(self._db_worker_loop())
+        self._db_queue.put_nowait(coro)
+
+    async def _db_worker_loop(self) -> None:
+        """Drain ``self._db_queue`` one coroutine at a time."""
+        assert self._db_queue is not None
+        while True:
+            coro = await self._db_queue.get()
+            try:
+                await coro
+            except Exception as exc:
+                logger.warning("JobTracker DB write-through failed: %s", exc)
+            finally:
+                self._db_queue.task_done()
+
+    def _db_insert_job(self, job: JobInfo) -> None:
+        if self._store is None:
+            return
+        started_at = self._utc(job.started_at) or datetime.now(timezone.utc)
+        self._db_schedule(self._store.insert_job(
+            job_id=job.job_id,
+            project=job.project,
+            agent=job.agent,
+            prompt=job.prompt,
+            user_name=job.user,
+            channel=job.channel,
+            started_at=started_at,
+            status=job.status.value,
+        ))
+
+    def _db_update_job_status(self, job: JobInfo) -> None:
+        if self._store is None:
+            return
+        self._db_schedule(self._store.update_job(
+            job_id=job.job_id,
+            status=job.status.value,
+        ))
 
     # ── Job lifecycle ────────────────────────────────────────────────────
 
@@ -142,6 +237,8 @@ class JobTracker:
         )
         self._jobs[job_id] = job
         self._emit("job_created", job)
+        self._db_insert_job(job)
+        coding_active_jobs.set(len(self.get_active_jobs()))
         logger.info("Job created: %s (%s)", job_id, project)
         return job
 
@@ -150,6 +247,7 @@ class JobTracker:
         if job:
             job.status = JobStatus.DECOMPOSING
             self._emit("job_decomposing", job)
+            self._db_update_job_status(job)
 
     def set_phases(self, job_id: str, phases: list[dict]) -> None:
         job = self._jobs.get(job_id)
@@ -162,18 +260,40 @@ class JobTracker:
         ]
         job.status = JobStatus.RUNNING
         self._emit("job_running", job)
+        # DB write-through: insert phase rows + patch job.total_phases/status.
+        if self._store is not None:
+            phase_payload = [
+                {"step": p.step, "title": p.title} for p in job.phases
+            ]
+            self._db_schedule(self._store.insert_phases(job_id, phase_payload))
+            self._db_schedule(self._store.update_job(
+                job_id=job_id,
+                status=job.status.value,
+                total_phases=job.total_phases,
+            ))
 
     def start_phase(self, job_id: str, step: int) -> None:
         job = self._jobs.get(job_id)
         if not job:
             return
         job.current_phase = step
+        started_at: float = 0.0
         for p in job.phases:
             if p.step == step:
                 p.status = PhaseStatus.RUNNING
                 p.started_at = time.time()
+                started_at = p.started_at
                 break
+        # Reset per-phase line counter — append_log increments before use.
+        self._line_counters[(job_id, step)] = 0
         self._emit("phase_started", job)
+        if self._store is not None:
+            self._db_schedule(self._store.update_phase(
+                job_id=job_id,
+                step=step,
+                status=PhaseStatus.RUNNING.value,
+                started_at=self._utc(started_at),
+            ))
 
     def complete_phase(
         self,
@@ -186,6 +306,7 @@ class JobTracker:
         job = self._jobs.get(job_id)
         if not job:
             return
+        updated: PhaseInfo | None = None
         for p in job.phases:
             if p.step == step:
                 p.status = PhaseStatus.COMPLETED if success else PhaseStatus.FAILED
@@ -193,8 +314,29 @@ class JobTracker:
                 p.duration_seconds = p.finished_at - p.started_at if p.started_at else 0
                 p.output = output[:500]
                 p.files_changed = files_changed or []
+                updated = p
                 break
         self._emit("phase_completed", job)
+        if self._store is not None and updated is not None:
+            self._db_schedule(self._store.update_phase(
+                job_id=job_id,
+                step=updated.step,
+                status=updated.status.value,
+                finished_at=self._utc(updated.finished_at),
+                duration_seconds=updated.duration_seconds,
+                output_summary=updated.output,
+                files_changed=list(updated.files_changed),
+            ))
+        # Force-flush any buffered logs for this phase so the UI's "final"
+        # view after phase completion doesn't miss the last partial batch.
+        # Raw ensure_future per spec: LogBuffer serializes via its own lock
+        # and insert_log_batch is append-only, so this does not need to go
+        # through the _db_queue path.
+        if self._log_buffer is not None:
+            try:
+                asyncio.ensure_future(self._log_buffer.force_flush(job_id, step))
+            except RuntimeError:
+                pass
 
     def complete_job(
         self,
@@ -212,6 +354,21 @@ class JobTracker:
         job.session_id = session_id
         job.error = error
         self._emit("job_completed", job)
+        if self._store is not None:
+            self._db_schedule(self._store.update_job(
+                job_id=job_id,
+                status=job.status.value,
+                finished_at=self._utc(job.finished_at),
+                duration_seconds=job.duration_seconds,
+                session_id=session_id,
+                error=error,
+            ))
+        # Prometheus: terminal counter + duration histogram, then refresh
+        # the gauge using the live active-jobs set (handles concurrent
+        # completions and duplicate calls idempotently).
+        coding_jobs_total.labels(status=job.status.value).inc()
+        coding_job_duration_seconds.observe(job.duration_seconds)
+        coding_active_jobs.set(len(self.get_active_jobs()))
         logger.info(
             "Job %s: %s (%.1fs, %d/%d phases)",
             "completed" if success else "failed",
@@ -228,6 +385,15 @@ class JobTracker:
         job.finished_at = time.time()
         job.duration_seconds = job.finished_at - job.started_at
         self._emit("job_cancelled", job)
+        if self._store is not None:
+            self._db_schedule(self._store.update_job(
+                job_id=job_id,
+                status=job.status.value,
+                finished_at=self._utc(job.finished_at),
+                duration_seconds=job.duration_seconds,
+            ))
+        coding_jobs_total.labels(status=job.status.value).inc()
+        coding_active_jobs.set(len(self.get_active_jobs()))
         return True
 
     # ── Queries ──────────────────────────────────────────────────────────
@@ -263,6 +429,87 @@ class JobTracker:
             except RuntimeError:
                 # No event loop — skip
                 pass
+
+    # ── Log streaming (Task 6) ───────────────────────────────────────────
+
+    def bind_log_buffer(self, buffer: Any) -> None:
+        """Attach a :class:`LogBuffer` that batches DB writes for log lines.
+
+        The buffer is expected to expose ``append(job_id, step, line_no, text)``
+        and ``force_flush(job_id, step)`` coroutines. Typically constructed
+        with ``flush_fn=JobTracker.make_default_flush(store)``.
+        """
+        self._log_buffer = buffer
+
+    def add_log_listener(self, callback: Callable) -> None:
+        """Register a WS-broadcast callback fired on every ``append_log``.
+
+        Callback signature: ``async (job_id, step, line_no, ts, text) -> None``.
+        Listeners are invoked fire-and-forget via ``ensure_future`` so a slow
+        consumer cannot throttle log ingestion.
+        """
+        self._log_listeners.append(callback)
+
+    def remove_log_listener(self, callback: Callable) -> None:
+        self._log_listeners = [
+            cb for cb in self._log_listeners if cb is not callback
+        ]
+
+    async def append_log(
+        self, job_id: str, step: int, text: str,
+    ) -> None:
+        """Record a log line for ``(job_id, step)``.
+
+        Assigns a monotonically increasing ``line_no`` starting from 1 per
+        phase (reset in ``start_phase``). Fires listeners immediately for
+        low-latency WS push, then delegates DB persistence to the bound
+        :class:`LogBuffer`.
+
+        The buffered DB flush bypasses Task 5's ``_db_queue`` serializer
+        (it's append-only and ordering-safe on its own), but log rows FK
+        into ``coding_jobs`` / ``coding_phases`` — so we first drain any
+        pending setup writes (``insert_job`` / ``insert_phases``) to
+        guarantee the parent rows exist before the batch INSERT fires.
+        """
+        key = (job_id, step)
+        self._line_counters[key] = self._line_counters.get(key, 0) + 1
+        line_no = self._line_counters[key]
+        ts = datetime.now(timezone.utc)
+        coding_phase_log_lines_total.inc()
+        # Fire listeners immediately — raw ensure_future, fire-and-forget.
+        for cb in list(self._log_listeners):
+            try:
+                asyncio.ensure_future(cb(job_id, step, line_no, ts, text))
+            except RuntimeError:
+                # No event loop (offline unit-test path) — skip
+                pass
+        # Buffered DB write — LogBuffer aggregates and flushes in batches.
+        if self._log_buffer is not None:
+            # Drain the DB write-through queue so the job/phase rows this
+            # log FKs into are durable before a size-triggered flush fires.
+            # Cheap (returns immediately) once the queue is idle.
+            if self._db_queue is not None:
+                await self._db_queue.join()
+            await self._log_buffer.append(job_id, step, line_no, text)
+
+    @staticmethod
+    def make_default_flush(store: Any) -> Callable:
+        """Return a :class:`LogBuffer` ``flush_fn`` that writes to ``store``.
+
+        Batches arrive as a flat list of ``(job_id, step, line_no, ts, text)``
+        tuples; we regroup by ``job_id`` so each :meth:`JobStore.insert_log_batch`
+        call honours its per-job API shape.
+        """
+        async def flush(
+            batch: list[tuple[str, int, int, datetime, str]],
+        ) -> None:
+            by_job: dict[str, list[tuple[int, int, datetime, str]]] = {}
+            for job_id, step, line_no, ts, text in batch:
+                by_job.setdefault(job_id, []).append((step, line_no, ts, text))
+            for job_id, items in by_job.items():
+                await store.insert_log_batch(job_id, items)
+
+        return flush
 
     # ── Cleanup ──────────────────────────────────────────────────────────
 

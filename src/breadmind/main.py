@@ -25,7 +25,12 @@ def _find_free_port(preferred: int, max_attempts: int = 10) -> int:
     return preferred  # fallback, let uvicorn report the error
 
 
-def _parse_args() -> argparse.Namespace:
+def _build_parser() -> argparse.ArgumentParser:
+    """Build the top-level argparse parser.
+
+    Extracted from ``_parse_args`` so ``main_with_args`` (used by tests)
+    can inject a custom argv without re-declaring every subparser.
+    """
     parser = argparse.ArgumentParser(description="BreadMind AI Infrastructure Agent")
     sub = parser.add_subparsers(dest="command")
 
@@ -172,8 +177,50 @@ def _parse_args() -> argparse.Namespace:
     backup_delete.add_argument("filename", help="Backup filename to delete")
     backup_sub.add_parser("cleanup", help="Remove old backups exceeding retention limit")
 
-    args = parser.parse_args()
-    # Default to web if no command given
+    # breadmind jobs <list|show|watch|cancel|logs>
+    jobs_parser = sub.add_parser("jobs", help="Manage long-running coding jobs")
+    jobs_sub = jobs_parser.add_subparsers(dest="jobs_action", required=True)
+
+    def _add_common(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--as-user", dest="as_user", default=None)
+        p.add_argument("--api-key", dest="api_key", default=None)
+
+    j_list = jobs_sub.add_parser("list", help="List coding jobs")
+    _add_common(j_list)
+    j_list.add_argument("--status", default=None)
+    j_list.add_argument("--mine", dest="mine", action="store_true")
+    j_list.add_argument("--all", dest="all_jobs", action="store_true")
+    j_list.add_argument("--limit", type=int, default=50)
+    j_list.add_argument("--format", dest="fmt", choices=["table", "json"], default="table")
+
+    j_show = jobs_sub.add_parser("show", help="Show job detail")
+    _add_common(j_show)
+    j_show.add_argument("id")
+    j_show.add_argument("--format", dest="fmt", choices=["table", "json"], default="table")
+
+    j_watch = jobs_sub.add_parser("watch", help="Watch job in real time")
+    _add_common(j_watch)
+    j_watch.add_argument("id")
+    j_watch.add_argument("--phase", type=int, default=None)
+    j_watch.add_argument("--plain", action="store_true")
+
+    j_cancel = jobs_sub.add_parser("cancel", help="Cancel a running job")
+    _add_common(j_cancel)
+    j_cancel.add_argument("id")
+
+    j_logs = jobs_sub.add_parser("logs", help="Tail job logs")
+    _add_common(j_logs)
+    j_logs.add_argument("id")
+    j_logs.add_argument("--phase", type=int, required=True)
+    j_logs.add_argument("--follow", action="store_true")
+    j_logs.add_argument("--lines", type=int, default=200)
+    j_logs.add_argument("--plain", action="store_true")
+
+    return parser
+
+
+def _apply_default_command(args: argparse.Namespace) -> argparse.Namespace:
+    """If no subcommand was given, default to the ``web`` subcommand."""
     if args.command is None:
         args.command = "web"
         args.host = None
@@ -183,6 +230,75 @@ def _parse_args() -> argparse.Namespace:
         args.mode = "standalone"
         args.commander_url = ""
     return args
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    return _apply_default_command(args)
+
+
+def _dispatch_jobs(args: argparse.Namespace) -> int:
+    """Sync dispatch for ``breadmind jobs`` subcommands.
+
+    Jobs CLI talks to a running BreadMind server via HTTP/WebSocket, so it
+    does not need the full async bootstrap that ``run()`` performs. We keep
+    it as a plain sync function returning an int exit code so ``main_with_args``
+    (used by tests) can call it without entering a full asyncio runtime.
+    """
+    import asyncio
+    from breadmind.cli import jobs as cli_jobs
+    from breadmind.cli.jobs_watch import cmd_watch
+
+    client = cli_jobs.build_client_from_env(args)
+    action = args.jobs_action
+    try:
+        if action == "list":
+            mine = bool(args.mine) or not bool(args.all_jobs)
+            return asyncio.run(cli_jobs.cmd_list(
+                client, mine=mine, status=args.status,
+                limit=args.limit, fmt=args.fmt))
+        if action == "show":
+            return asyncio.run(cli_jobs.cmd_show(client, args.id, fmt=args.fmt))
+        if action == "cancel":
+            return asyncio.run(cli_jobs.cmd_cancel(client, args.id))
+        if action == "logs":
+            return asyncio.run(cli_jobs.cmd_logs(
+                client, args.id, phase=args.phase, follow=args.follow,
+                lines=args.lines, plain=args.plain))
+        if action == "watch":
+            token = os.environ.get("BREADMIND_API_KEY", "")
+            base = os.environ.get("BREADMIND_URL", "http://localhost:8080")
+            return asyncio.run(cmd_watch(
+                args.id, plain=args.plain, phase=args.phase,
+                base_url=base, api_key=token, token=token))
+        return 2
+    finally:
+        # ``client`` may be ``None`` when tests monkeypatch
+        # ``build_client_from_env`` — guard the close call accordingly.
+        if client is not None:
+            try:
+                asyncio.run(client.close())
+            except Exception:
+                pass
+
+
+def main_with_args(argv: list[str]) -> int:
+    """Entry point that accepts an explicit argv list.
+
+    Used by tests to drive the CLI without touching ``sys.argv``. Jobs
+    subcommands are dispatched synchronously here; other commands fall
+    through to the async ``run()`` pipeline.
+    """
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    args = _apply_default_command(args)
+
+    if args.command == "jobs":
+        return _dispatch_jobs(args)
+
+    asyncio.run(run(args))
+    return 0
 
 
 async def run_worker(config, args):
@@ -369,8 +485,9 @@ async def _run_backup_command(args):
         print(f"  Error: {exc}")
 
 
-async def run():
-    args = _parse_args()
+async def run(args: argparse.Namespace | None = None):
+    if args is None:
+        args = _parse_args()
 
     if args.command == "version":
         print(f"BreadMind v{_get_version()}")
@@ -1099,7 +1216,9 @@ async def run():
 
 
 def main():
-    asyncio.run(run())
+    rc = main_with_args(sys.argv[1:])
+    if rc:
+        sys.exit(rc)
 
 
 if __name__ == "__main__":
