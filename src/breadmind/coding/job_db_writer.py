@@ -1,15 +1,19 @@
 """DB write-through serializer for JobTracker (extracted from job_tracker.py).
 
-Single FIFO queue + single worker preserves the ordering guarantee that
+Per-loop FIFO queue + per-loop worker preserves the ordering guarantee that
 prevents `status='running'` from committing after `status='completed'`
-under asyncpg pool max_size > 1. Phase 2 adds bounded queue + drop_newest;
-Phase 3 promotes the single (queue, worker) pair to a per-loop dict.
+under asyncpg pool max_size > 1. Each event loop (pytest, uvicorn, etc.) gets
+its own (queue, task) pair keyed by id(loop). The task's done_callback pops
+the dict entry; a close-hook patched on the loop ensures the cancellation
+flushes synchronously even when the caller does not await task cancellation
+before calling loop.close() (Python 3.13 does not cancel tasks on close).
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Coroutine
 
@@ -23,6 +27,12 @@ def _utc(ts: float) -> datetime | None:
     if not ts:
         return None
     return datetime.fromtimestamp(ts, tz=timezone.utc)
+
+
+@dataclass
+class _LoopWorker:
+    queue: asyncio.Queue
+    task: asyncio.Task
 
 
 class JobDbWriter:
@@ -39,16 +49,15 @@ class JobDbWriter:
             raw = int(os.getenv("BREADMIND_CODING_DB_QUEUE_MAX", "2000"))
             if raw <= 0:
                 logger.warning(
-                    "BREADMIND_CODING_DB_QUEUE_MAX=%d is ambiguous (asyncio treats "
-                    "0/negative as unbounded); using default 2000.",
+                    "BREADMIND_CODING_DB_QUEUE_MAX=%d is ambiguous (asyncio "
+                    "treats 0/negative as unbounded); using default 2000.",
                     raw,
                 )
                 raw = 2000
             self._max_queue_size = raw
         else:
             self._max_queue_size = max_queue_size
-        self._queue: asyncio.Queue | None = None
-        self._worker: asyncio.Task | None = None
+        self._workers: dict[int, _LoopWorker] = {}
 
     # ── Scheduling ──────────────────────────────────────────────────────
 
@@ -59,32 +68,79 @@ class JobDbWriter:
             coding_db_writer_drops_total.labels(reason="no_loop").inc()
             coro.close()
             return
-        if self._queue is None:
-            self._queue = asyncio.Queue(maxsize=self._max_queue_size)
-        if self._worker is None or self._worker.done():
-            self._worker = loop.create_task(self._worker_loop())
-        if self._queue.full():
+        worker = self._workers.get(id(loop))
+        if worker is None:
+            worker = self._spawn(loop)
+        if worker.queue.full():
             coding_db_writer_drops_total.labels(reason="queue_full").inc()
             coro.close()
             return
-        self._queue.put_nowait(coro)
+        worker.queue.put_nowait(coro)
 
-    async def _worker_loop(self) -> None:
-        assert self._queue is not None
+    def _spawn(self, loop: asyncio.AbstractEventLoop) -> _LoopWorker:
+        q: asyncio.Queue = asyncio.Queue(maxsize=self._max_queue_size)
+        task = loop.create_task(self._worker_loop(q))
+        loop_id = id(loop)
+        worker = _LoopWorker(queue=q, task=task)
+        self._workers[loop_id] = worker
+
+        # done_callback: pops the entry when the task finishes (cancelled or
+        # normal completion). This fires when the task reaches a done state.
+        task.add_done_callback(lambda _t: self._workers.pop(loop_id, None))
+
+        # Close-hook: Python 3.13 does not cancel pending tasks on loop.close().
+        # We patch the loop's close() method to (a) cancel our task and
+        # (b) run the loop one tick so the CancelledError propagates through
+        # the worker and the done_callback fires synchronously before the loop
+        # is truly closed. This ensures _workers is empty right after close().
+        original_close = loop.close
+
+        def _close_with_cancel() -> None:
+            if not task.done():
+                task.cancel()
+
+                async def _flush() -> None:
+                    try:
+                        await asyncio.sleep(0)
+                    except asyncio.CancelledError:
+                        pass
+
+                try:
+                    loop.run_until_complete(_flush())
+                except Exception:
+                    pass  # Loop may already be stopping; best-effort.
+            loop.close = original_close  # Restore before calling to avoid recursion.
+            original_close()
+
+        loop.close = _close_with_cancel  # type: ignore[method-assign]
+        return worker
+
+    async def _worker_loop(self, q: asyncio.Queue) -> None:
         while True:
-            coro = await self._queue.get()
+            coro = await q.get()
             try:
                 await coro
+            except asyncio.CancelledError:
+                # Worker is being torn down — close the in-flight coro
+                # and exit the loop. done_callback will pop the entry.
+                if hasattr(coro, "close"):
+                    coro.close()
+                raise
             except Exception as exc:
                 logger.warning("JobDbWriter coro failed: %s", exc)
                 coding_db_writer_drops_total.labels(reason="coro_failed").inc()
             finally:
-                self._queue.task_done()
+                q.task_done()
 
     async def join(self) -> None:
-        """Wait until the queue drains. Used by JobLogStream.append."""
-        if self._queue is not None:
-            await self._queue.join()
+        """Wait until the *current loop's* queue drains."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        worker = self._workers.get(id(loop))
+        if worker is not None:
+            await worker.queue.join()
 
     # ── Helpers (one method per JobTracker mutation) ────────────────────
 

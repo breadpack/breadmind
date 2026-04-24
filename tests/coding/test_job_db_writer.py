@@ -144,3 +144,56 @@ async def test_max_queue_size_env_zero_falls_back_to_default(monkeypatch, caplog
         w = JobDbWriter(store=object())
     assert w._max_queue_size == 2000
     assert any("ambiguous" in rec.message for rec in caplog.records)
+
+
+def test_per_loop_worker_isolation() -> None:
+    """Two distinct event loops get distinct worker tasks + queues."""
+    import asyncio as _asyncio
+    from breadmind.coding.job_db_writer import JobDbWriter
+
+    writer = JobDbWriter(store=_StubStore())
+
+    async def _enqueue_in_loop():
+        async def _coro():
+            return None
+        writer.schedule(_coro())
+        return id(_asyncio.get_running_loop())
+
+    loop_a = _asyncio.new_event_loop()
+    loop_b = _asyncio.new_event_loop()
+    try:
+        id_a = loop_a.run_until_complete(_enqueue_in_loop())
+        id_b = loop_b.run_until_complete(_enqueue_in_loop())
+    finally:
+        loop_a.close()
+        loop_b.close()
+
+    assert id_a != id_b
+    # After both loops closed, both worker tasks must be done; the dict
+    # entries should have been popped via done_callback.
+    # (We can't access loops anymore, but the dict must be empty.)
+    assert writer._workers == {}
+
+
+def test_done_callback_removes_dict_entry() -> None:
+    """When a worker task completes, its loop-id entry is popped from the dict."""
+    import asyncio as _asyncio
+    from breadmind.coding.job_db_writer import JobDbWriter
+
+    writer = JobDbWriter(store=_StubStore())
+    loop = _asyncio.new_event_loop()
+    try:
+        async def _enqueue():
+            async def _coro():
+                return None
+            writer.schedule(_coro())
+        loop.run_until_complete(_enqueue())
+        # While loop is still alive, entry should exist.
+        assert len(writer._workers) == 1
+    finally:
+        loop.close()
+
+    # After loop close, worker task is cancelled → done → callback pops entry.
+    # asyncio.Task.add_done_callback fires synchronously when the loop closes
+    # if it cancels the task; no extra awaiting needed.
+    assert writer._workers == {}
