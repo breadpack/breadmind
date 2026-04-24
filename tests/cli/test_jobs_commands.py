@@ -1,7 +1,7 @@
 # tests/cli/test_jobs_commands.py
 import json
 import pytest
-from breadmind.cli.jobs import cmd_list, cmd_show
+from breadmind.cli.jobs import cmd_cancel, cmd_list, cmd_logs, cmd_show
 
 
 class FakeClient:
@@ -42,3 +42,36 @@ async def test_cmd_show_not_found(capsys):
     out = capsys.readouterr().out
     assert "not found" in out.lower() or "404" in out
     assert rc != 0
+
+
+@pytest.mark.asyncio
+async def test_cmd_cancel_ok(capsys):
+    class C(FakeClient):
+        async def cancel_job(self, job_id):
+            return 200
+    rc = await cmd_cancel(C(), "j1")
+    assert rc == 0
+
+
+@pytest.mark.asyncio
+async def test_cmd_cancel_forbidden(capsys):
+    class C(FakeClient):
+        async def cancel_job(self, job_id):
+            return 403
+    rc = await cmd_cancel(C(), "j1")
+    out = capsys.readouterr().out + capsys.readouterr().err
+    assert rc == 3
+
+
+@pytest.mark.asyncio
+async def test_cmd_logs_one_shot(capsys):
+    class C(FakeClient):
+        async def list_logs(self, job_id, step, *, after, limit):
+            return {"items": [
+                {"line_no": 1, "ts": "2026-04-23T00:00:00Z", "text": "hello"},
+                {"line_no": 2, "ts": "2026-04-23T00:00:01Z", "text": "world"},
+            ], "next_after_line_no": 2}
+    rc = await cmd_logs(C(), "j1", phase=1, follow=False, lines=100, plain=True)
+    out = capsys.readouterr().out
+    assert "hello" in out and "world" in out
+    assert rc == 0

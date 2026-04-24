@@ -94,3 +94,38 @@ async def cmd_show(client, job_id: str, *, fmt: str) -> int:
             print(f"  {icon} step {p['step']:>2}  {p['title']:<30}  "
                   f"{p.get('duration_seconds',0):.1f}s  files={len(p.get('files_changed',[]))}")
     return 0
+
+
+async def cmd_cancel(client, job_id: str) -> int:
+    status = await client.cancel_job(job_id)
+    if status == 200:
+        print(f"cancelled {job_id}")
+        return 0
+    if status == 403:
+        print(f"forbidden — not owner of {job_id}", file=sys.stderr)
+        return 3
+    if status == 404:
+        print(f"job {job_id} not found", file=sys.stderr)
+        return 2
+    print(f"cancel failed (HTTP {status})", file=sys.stderr)
+    return 1
+
+
+async def cmd_logs(
+    client, job_id: str, *, phase: int, follow: bool, lines: int, plain: bool,
+) -> int:
+    page = await client.list_logs(job_id, phase, after=None, limit=lines)
+    for item in page.get("items", []):
+        print(f"[{item['ts']}] {item['text']}")
+    if not follow:
+        return 0
+    # Follow mode: poll at 1s intervals via cursor
+    import asyncio
+    after = page.get("next_after_line_no")
+    while True:
+        await asyncio.sleep(1.0)
+        page = await client.list_logs(job_id, phase, after=after, limit=500)
+        for item in page.get("items", []):
+            print(f"[{item['ts']}] {item['text']}")
+        if page.get("next_after_line_no"):
+            after = page["next_after_line_no"]
