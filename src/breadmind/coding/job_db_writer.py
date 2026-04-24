@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Any, Coroutine
 
 from breadmind.coding.job_models import JobInfo, PhaseInfo, PhaseStatus
+from breadmind.metrics import coding_db_writer_drops_total
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +28,16 @@ def _utc(ts: float) -> datetime | None:
 class JobDbWriter:
     """Best-effort DB write-through for JobTracker state mutations."""
 
-    def __init__(self, store: Any) -> None:
+    def __init__(
+        self,
+        store: Any,
+        *,
+        max_queue_size: int | None = None,
+    ) -> None:
         self._store = store
+        self._max_queue_size = max_queue_size or int(
+            os.getenv("BREADMIND_CODING_DB_QUEUE_MAX", "2000")
+        )
         self._queue: asyncio.Queue | None = None
         self._worker: asyncio.Task | None = None
 
@@ -38,11 +48,16 @@ class JobDbWriter:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             coro.close()
+            coding_db_writer_drops_total.labels(reason="no_loop").inc()
             return
         if self._queue is None:
-            self._queue = asyncio.Queue()
+            self._queue = asyncio.Queue(maxsize=self._max_queue_size)
         if self._worker is None or self._worker.done():
             self._worker = loop.create_task(self._worker_loop())
+        if self._queue.full():
+            coro.close()
+            coding_db_writer_drops_total.labels(reason="queue_full").inc()
+            return
         self._queue.put_nowait(coro)
 
     async def _worker_loop(self) -> None:
@@ -53,6 +68,7 @@ class JobDbWriter:
                 await coro
             except Exception as exc:
                 logger.warning("JobDbWriter coro failed: %s", exc)
+                coding_db_writer_drops_total.labels(reason="coro_failed").inc()
             finally:
                 self._queue.task_done()
 
