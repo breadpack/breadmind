@@ -174,7 +174,8 @@ async def test_time_threshold_triggers_flush() -> None:
     try:
         await buf.append("j1", 1, 1, "x")
         await asyncio.sleep(0.15)  # exceed time_threshold_s
-        assert len(flushed) >= 1
+        assert len(flushed) == 1
+        assert len(flushed[0]) == 1
     finally:
         await buf.stop()
 
@@ -200,6 +201,7 @@ async def test_flush_failure_does_not_block_other_keys() -> None:
         await asyncio.sleep(0.05)
         # j2 must have flushed; j1 raised but absorbed.
         assert "j2" in flushed_keys
+        assert "j1" not in flushed_keys  # failure absorbed, j1's lines dropped by design
     finally:
         await buf.stop()
 
@@ -214,5 +216,9 @@ async def test_stop_drains_remaining_batches() -> None:
     buf = LogBuffer(flush_fn=flush, size_threshold=100, time_threshold_s=10.0)
     await buf.start()
     await buf.append("j1", 1, 1, "x")
+    # Buffer has 1 line, size_threshold=100, time_threshold=10s.
+    # Neither aged nor sized gate will fire. Only the stopping gate can flush this.
+    assert flushed == []  # verify no drain happened yet
     await buf.stop()  # final drain inside stop()
-    assert len(flushed) >= 1
+    assert len(flushed) == 1
+    assert len(flushed[0]) == 1
