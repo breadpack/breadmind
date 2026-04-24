@@ -1,4 +1,14 @@
-"""Coding jobs view: list jobs with progress and cancel actions."""
+"""Coding jobs view: list jobs with progress and cancel actions.
+
+Two schema flavours live here:
+
+* ``build(db, job_tracker=...)`` — async, returns a :class:`UISpec` tree.
+  Used by the SDUI projector / WebSocket ``/ws/ui`` channel.
+* ``build_list_screen(...)`` — sync, returns a flat dict schema with
+  ``Active`` / ``Recent`` sections. Used by the HTTP ``/coding-jobs``
+  page route (Task 16) so non-WebSocket clients (e.g. plain browser
+  navigation, curl probes) can render the same list.
+"""
 from __future__ import annotations
 
 from typing import Any
@@ -177,4 +187,96 @@ def _normalize(j: Any) -> dict:
         "progress": getattr(j, "progress", None),
         "error": getattr(j, "error", None),
         "description": getattr(j, "description", None),
+    }
+
+
+# ── Task 16: flat dict schema for HTTP /coding-jobs page ─────────────────────
+
+
+def _row(j: dict[str, Any]) -> dict[str, Any]:
+    """Project a ``JobInfo.to_dict()`` payload into a compact list row.
+
+    All job-originated fields use ``.get(...)`` with defaults so the row
+    still renders cleanly if upstream drops a key (e.g. older serialized
+    rows missing ``total_phases``).
+    """
+    total = j.get("total_phases", 0)
+    done = j.get("completed_phases", 0)
+    pct = j.get("progress_pct", 0)
+    prompt = j.get("prompt", "") or ""
+    return {
+        "type": "job_row",
+        "id": j["job_id"],
+        "status": j["status"],
+        "project": j.get("project", ""),
+        "prompt": prompt[:80],
+        "progress": f"{done}/{total} ({pct}%)",
+        "user": j.get("user", ""),
+        "started_at": j.get("started_at", 0),
+        "link": f"/coding-jobs/{j['job_id']}",
+    }
+
+
+def build_list_screen(
+    *,
+    active_jobs: list[dict[str, Any]],
+    recent_jobs: list[dict[str, Any]],
+    current_username: str,
+    is_admin: bool,
+    mine: bool,
+) -> dict[str, Any]:
+    """Build the flat list-screen schema used by ``GET /coding-jobs``.
+
+    The shape is intentionally JSON-serialisable without going through
+    :class:`UISpec`: this page is rendered by a thin HTTP client, not the
+    WebSocket projector. The ``ws_subscribe`` list tells clients which
+    ``/ws/ui`` frame types to listen on for live refresh.
+    """
+    return {
+        "type": "screen",
+        "title": "Coding Jobs",
+        "header": {
+            "filters": [
+                {
+                    "type": "toggle",
+                    "key": "mine",
+                    "label": "My jobs only",
+                    "value": bool(mine),
+                    # Admins get the toggle OFF by default (they see all),
+                    # while non-admins are forced to mine=1 server-side.
+                    "admin_default_off": is_admin,
+                },
+                {
+                    "type": "select",
+                    "key": "status",
+                    "label": "Status",
+                    "options": [
+                        "all", "running", "completed", "failed", "cancelled",
+                    ],
+                    "value": "all",
+                },
+            ],
+            "current_user": current_username,
+            "is_admin": is_admin,
+        },
+        "sections": [
+            {
+                "title": "Active",
+                "items": [_row(j) for j in active_jobs],
+                "empty_text": "활성 작업이 없습니다.",
+            },
+            {
+                "title": "Recent",
+                "items": [_row(j) for j in recent_jobs],
+                "empty_text": "최근 작업이 없습니다.",
+            },
+        ],
+        "ws_subscribe": [
+            "coding_job_created",
+            "coding_job_running",
+            "coding_job_completed",
+            "coding_job_cancelled",
+            "phase_started",
+            "phase_completed",
+        ],
     }

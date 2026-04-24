@@ -125,6 +125,41 @@ def test_cancel_200_admin(
     assert r.status_code == 200
 
 
+def test_coding_jobs_page_renders_schema(
+    web_app_client: TestClient, seeded_jobs
+):
+    """Task 16: ``GET /coding-jobs`` returns the SDUI list-screen dict."""
+    _login(web_app_client, "alice")
+    r = web_app_client.get("/coding-jobs")
+    assert r.status_code == 200
+    schema = r.json()
+    titles = [s["title"] for s in schema["sections"]]
+    assert titles == ["Active", "Recent"]
+    # Alice's job is pending (create_job leaves status=PENDING) so it
+    # lands in Active. No other user's rows are visible without admin.
+    active = schema["sections"][0]["items"]
+    assert any(item["id"] == "alice-job-1" for item in active)
+    assert all(item["user"] == "alice" for item in active)
+
+
+def test_coding_jobs_page_admin_sees_all(
+    web_app_client: TestClient, seeded_jobs, monkeypatch
+):
+    """Admin sees both users' rows by default (``mine`` unspecified)."""
+    monkeypatch.setenv("BREADMIND_ADMIN_USERS", "alice")
+    _login(web_app_client, "alice")
+    r = web_app_client.get("/coding-jobs")
+    assert r.status_code == 200
+    schema = r.json()
+    all_ids = {
+        item["id"]
+        for section in schema["sections"]
+        for item in section["items"]
+    }
+    assert {"alice-job-1", "bob-job-1"} <= all_ids
+    assert schema["header"]["is_admin"] is True
+
+
 def test_logs_pagination(web_app_client: TestClient, seeded_jobs_with_logs):
     """Cursor-paginated phase logs echo the last line_no so the client can
     keep paging forward without duplicates."""

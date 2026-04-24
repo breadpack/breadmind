@@ -71,3 +71,55 @@ async def test_coding_jobs_view_with_broken_tracker(test_db):
 
     spec = await coding_jobs_view.build(test_db, job_tracker=Broken())
     assert spec.root.type == "page"
+
+
+def test_list_view_schema_renders_sections():
+    """Task 16: ``build_list_screen`` returns a dict schema with Active/Recent sections."""
+    from breadmind.sdui.views.coding_jobs_view import build_list_screen
+
+    schema = build_list_screen(
+        active_jobs=[
+            {
+                "job_id": "a",
+                "status": "running",
+                "progress_pct": 50,
+                "project": "p",
+                "prompt": "x",
+                "user": "alice",
+                "started_at": 1,
+                "total_phases": 2,
+                "completed_phases": 1,
+            }
+        ],
+        recent_jobs=[
+            {
+                "job_id": "b",
+                "status": "completed",
+                "progress_pct": 100,
+                "project": "q",
+                "prompt": "y",
+                "user": "bob",
+                "started_at": 0,
+                "total_phases": 1,
+                "completed_phases": 1,
+            }
+        ],
+        current_username="alice",
+        is_admin=False,
+        mine=True,
+    )
+    titles = [s.get("title") for s in schema.get("sections", [])]
+    assert "Active" in titles
+    assert "Recent" in titles
+    # The rows should carry the job_id and a detail link.
+    active = next(s for s in schema["sections"] if s["title"] == "Active")
+    assert active["items"][0]["id"] == "a"
+    assert active["items"][0]["link"] == "/coding-jobs/a"
+    # Header must expose filters + current-user context.
+    header = schema["header"]
+    assert header["current_user"] == "alice"
+    assert header["is_admin"] is False
+    filter_keys = {f["key"] for f in header["filters"]}
+    assert {"mine", "status"} <= filter_keys
+    # WS subscription wiring so the UI can live-refresh on job events.
+    assert "coding_job_running" in schema["ws_subscribe"]
