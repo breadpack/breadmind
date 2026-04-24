@@ -70,3 +70,11 @@ async def test_active_gauge_tracks_running(test_db) -> None:
     after = _value()
     # Back to zero — our tracker has no other active jobs.
     assert after == 0
+
+
+def test_coding_db_writer_drops_total_exists() -> None:
+    from breadmind import metrics
+    assert hasattr(metrics, "coding_db_writer_drops_total")
+    # Verify labels API works (no-op fallback path also supports .labels)
+    metric = metrics.coding_db_writer_drops_total.labels(reason="queue_full")
+    metric.inc()  # must not raise

@@ -28,6 +28,7 @@ __all__ = [
     "coding_job_duration_seconds",
     "coding_active_jobs",
     "coding_phase_log_lines_total",
+    "coding_db_writer_drops_total",
     "coding_log_drops_total",
     "coding_jobs_deleted_total",
     "tracer",
@@ -91,6 +92,11 @@ try:  # pragma: no cover - exercised whenever prometheus_client is installed
         "Log lines dropped before persistence, labelled by reason.",
         ("reason",),
     )
+    coding_db_writer_drops_total: Any = Counter(
+        "coding_db_writer_drops_total",
+        "JobDbWriter drops by reason (queue_full | no_loop | coro_failed).",
+        ("reason",),
+    )
     coding_jobs_deleted_total: Any = Counter(
         "coding_jobs_deleted_total",
         "Coding jobs pruned by the daily retention cron.",
@@ -101,6 +107,7 @@ except Exception:  # pragma: no cover - defensive stub path
     coding_active_jobs = _NoopMetric()
     coding_phase_log_lines_total = _NoopMetric()
     coding_log_drops_total = _NoopMetric()
+    coding_db_writer_drops_total = _NoopMetric()
     coding_jobs_deleted_total = _NoopMetric()
 
 
