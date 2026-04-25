@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -126,3 +128,29 @@ class EpisodicRecorder:
         if kind is SignalKind.TOOL_EXECUTED:
             return "success"
         return "neutral"
+
+
+_JSON_BLOCK = re.compile(r"\{[\s\S]*\}")
+
+
+class LLMJsonAdapter:
+    """Wraps any provider that exposes `await complete(prompt) -> str` and
+    parses a JSON object out of the response."""
+
+    def __init__(self, base):
+        self.base = base
+
+    async def complete_json(self, prompt: str) -> dict:
+        text = await self.base.complete(prompt)
+        # Try strict first
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        m = _JSON_BLOCK.search(text or "")
+        if not m:
+            raise ValueError("LLM response contained no JSON object")
+        try:
+            return json.loads(m.group(0))
+        except json.JSONDecodeError as e:
+            raise ValueError(f"LLM JSON parse failed: {e}") from e
