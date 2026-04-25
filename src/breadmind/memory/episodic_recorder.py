@@ -30,6 +30,41 @@ class RecorderConfig:
     semaphore_size: int = 8
     queue_max: int = 200
 
+    @classmethod
+    def from_env(cls) -> "RecorderConfig":
+        import os
+
+        def _bool(name: str, default: bool) -> bool:
+            v = os.getenv(name)
+            if v is None:
+                return default
+            return v.strip().lower() in {"1", "true", "yes", "on"}
+
+        def _float(name: str, default: float) -> float:
+            v = os.getenv(name)
+            if v is None:
+                return default
+            try:
+                return float(v)
+            except ValueError:
+                return default
+
+        def _int(name: str, default: int) -> int:
+            v = os.getenv(name)
+            if v is None:
+                return default
+            try:
+                return int(v)
+            except ValueError:
+                return default
+
+        return cls(
+            normalize=_bool("BREADMIND_EPISODIC_NORMALIZE", True),
+            timeout_sec=_float("BREADMIND_EPISODIC_NORMALIZE_TIMEOUT_SEC", 8.0),
+            semaphore_size=_int("BREADMIND_EPISODIC_SEMAPHORE_SIZE", 8),
+            queue_max=_int("BREADMIND_EPISODIC_QUEUE_MAX", 200),
+        )
+
 
 _PROMPTS_ROOT = Path(__file__).parent.parent / "prompts" / "memory"
 _jinja = Environment(
