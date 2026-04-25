@@ -49,6 +49,7 @@ class EpisodicRecorder:
         self.llm = llm
         self.config = config or RecorderConfig()
         self._sem = asyncio.Semaphore(self.config.semaphore_size)
+        self._inflight = 0
 
     async def record(self, event: SignalEvent) -> None:
         try:
@@ -76,18 +77,28 @@ class EpisodicRecorder:
         if not self.config.normalize:
             self._bump_outcome("raw_fallback")
             return self._raw_note(event)
-        async with self._sem:
-            try:
-                with memory_normalize_latency_seconds.time():
-                    payload = await asyncio.wait_for(
-                        self._normalize_with_llm(event),
-                        timeout=self.config.timeout_sec,
-                    )
-            except Exception:
-                logger.warning("episodic normalize failed; falling back to raw", exc_info=True)
-                self._bump_outcome("llm_failed")
-                self._bump_outcome("raw_fallback")
-                return self._raw_note(event)
+        # Backpressure: if too many normalizations are already in flight,
+        # skip the LLM and emit a raw note. The check runs synchronously
+        # before any await, so it is race-free under asyncio.
+        if self._inflight >= self.config.queue_max:
+            self._bump_outcome("raw_fallback")
+            return self._raw_note(event)
+        self._inflight += 1
+        try:
+            async with self._sem:
+                try:
+                    with memory_normalize_latency_seconds.time():
+                        payload = await asyncio.wait_for(
+                            self._normalize_with_llm(event),
+                            timeout=self.config.timeout_sec,
+                        )
+                except Exception:
+                    logger.warning("episodic normalize failed; falling back to raw", exc_info=True)
+                    self._bump_outcome("llm_failed")
+                    self._bump_outcome("raw_fallback")
+                    return self._raw_note(event)
+        finally:
+            self._inflight -= 1
         if not payload.get("should_record", True):
             raise _SkipRecording()
         self._bump_outcome("recorded")
