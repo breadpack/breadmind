@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from breadmind.core.tool_gap import ToolGapDetector
     from breadmind.llm.cost_router import CostRouter
     from breadmind.memory.episodic_recorder import EpisodicRecorder
+    from breadmind.memory.episodic_store import EpisodicStore
     from breadmind.memory.signals import SignalDetector
 
 logger = logging.getLogger("breadmind.agent")
@@ -44,6 +45,7 @@ class CoreAgent:
         cost_router: CostRouter | None = None,
         signal_detector: SignalDetector | None = None,
         episodic_recorder: EpisodicRecorder | None = None,
+        episodic_store: EpisodicStore | None = None,
     ):
         from breadmind.settings.llm_holder import LLMProviderHolder
         if not isinstance(provider, LLMProviderHolder):
@@ -52,7 +54,27 @@ class CoreAgent:
         self._cost_router = cost_router
         self._tools = tool_registry
         self._guard = safety_guard
-        self._tool_executor = ToolExecutor(tool_registry, safety_guard, tool_timeout)
+
+        # Episodic memory recorder hooks (Phase 1).
+        # ``signal_detector`` is cheap to construct, so default-create one.
+        # ``episodic_recorder`` / ``episodic_store`` may stay None — hooks
+        # become no-ops then. We must resolve these BEFORE constructing
+        # ``ToolExecutor`` so the executor receives the same instances.
+        if signal_detector is None:
+            from breadmind.memory.signals import SignalDetector as _SD
+            signal_detector = _SD()
+        self._signal_detector = signal_detector
+        self._episodic_recorder = episodic_recorder
+        self._episodic_store = episodic_store
+
+        self._tool_executor = ToolExecutor(
+            tool_registry,
+            safety_guard,
+            tool_timeout,
+            episodic_store=episodic_store,
+            episodic_recorder=episodic_recorder,
+            signal_detector=signal_detector,
+        )
         self._system_prompt = system_prompt
         self._max_turns = max_turns
         self._working_memory = working_memory
@@ -74,15 +96,6 @@ class CoreAgent:
         self._persona: str = "professional"
         self._role: str | None = None
         self._prompt_context: object | None = None
-
-        # Episodic memory recorder hooks (Phase 1).
-        # ``signal_detector`` is cheap to construct, so default-create one.
-        # ``episodic_recorder`` may stay None — hook becomes a no-op then.
-        if signal_detector is None:
-            from breadmind.memory.signals import SignalDetector as _SD
-            signal_detector = _SD()
-        self._signal_detector = signal_detector
-        self._episodic_recorder = episodic_recorder
 
         # If behavior_prompt provided, rebuild system_prompt with it
         if behavior_prompt is not None:

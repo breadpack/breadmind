@@ -32,7 +32,7 @@ def make_agent():
     so `handle_message` returns immediately after the user-signal hook fires.
     """
 
-    def _factory(*, recorder=None, signal_detector=None):
+    def _factory(*, recorder=None, signal_detector=None, episodic_store=None):
         registry = ToolRegistry()
         registry.register(_mem_test_tool)
 
@@ -56,6 +56,7 @@ def make_agent():
             working_memory=memory,
             signal_detector=signal_detector or SignalDetector(),
             episodic_recorder=recorder,
+            episodic_store=episodic_store,
         )
 
     return _factory
