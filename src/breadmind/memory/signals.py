@@ -1,10 +1,22 @@
 from __future__ import annotations
 
+import logging
 import re
 import uuid
 from dataclasses import dataclass
 
 from breadmind.memory.event_types import SignalEvent, SignalKind
+from breadmind.memory.metrics import memory_signal_detected_total
+
+logger = logging.getLogger(__name__)
+
+
+def _bump_signal_metric(evt: SignalEvent) -> None:
+    """Best-effort metric increment — never raises into call sites."""
+    try:
+        memory_signal_detected_total.labels(kind=evt.kind.value).inc()
+    except Exception:  # pragma: no cover - defensive
+        logger.debug("memory_signal_detected_total inc failed", exc_info=True)
 
 # Correction lexicon (token-level partial match, lower-cased)
 _CORRECTION_KO = {"아니", "아니야", "다시", "잘못", "틀렸", "다른", "그게 아니라"}
@@ -49,7 +61,7 @@ class SignalDetector:
         result_text: str,
     ) -> SignalEvent:
         kind = SignalKind.TOOL_EXECUTED if ok else SignalKind.TOOL_FAILED
-        return SignalEvent(
+        evt = SignalEvent(
             kind=kind,
             user_id=snap.user_id,
             session_id=snap.session_id,
@@ -59,9 +71,11 @@ class SignalDetector:
             tool_result_text=result_text,
             prior_turn_summary=snap.prior_turn_summary,
         )
+        _bump_signal_metric(evt)
+        return evt
 
     def on_reflexion(self, snap: TurnSnapshot, *, reflexion_text: str) -> SignalEvent:
-        return SignalEvent(
+        evt = SignalEvent(
             kind=SignalKind.REFLEXION,
             user_id=snap.user_id,
             session_id=snap.session_id,
@@ -71,6 +85,8 @@ class SignalDetector:
             tool_result_text=None,
             prior_turn_summary=snap.prior_turn_summary,
         )
+        _bump_signal_metric(evt)
+        return evt
 
     def on_user_message(self, snap: TurnSnapshot) -> SignalEvent | None:
         msg = snap.user_message or ""
@@ -78,7 +94,7 @@ class SignalDetector:
             return None
         # 1. Explicit pin
         if any(p.search(msg) for p in _PIN_PATTERNS):
-            return SignalEvent(
+            evt = SignalEvent(
                 kind=SignalKind.EXPLICIT_PIN,
                 user_id=snap.user_id,
                 session_id=snap.session_id,
@@ -88,11 +104,13 @@ class SignalDetector:
                 tool_result_text=None,
                 prior_turn_summary=snap.prior_turn_summary,
             )
+            _bump_signal_metric(evt)
+            return evt
         # 2. User correction (requires prior tool turn)
         if snap.last_tool_name and (
             _matches_any(msg, _CORRECTION_KO) or _matches_any(msg, _CORRECTION_EN)
         ):
-            return SignalEvent(
+            evt = SignalEvent(
                 kind=SignalKind.USER_CORRECTION,
                 user_id=snap.user_id,
                 session_id=snap.session_id,
@@ -102,4 +120,6 @@ class SignalDetector:
                 tool_result_text=None,
                 prior_turn_summary=snap.prior_turn_summary,
             )
+            _bump_signal_metric(evt)
+            return evt
         return None

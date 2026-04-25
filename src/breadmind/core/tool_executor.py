@@ -199,6 +199,16 @@ class ToolExecutor:
         if self._episodic_store is None:
             self._last_recall_notes = []
             return
+        # T13: trigger counter fires once per attempt; the hit-count histogram
+        # observation happens after search returns (or with 0 on failure).
+        from breadmind.memory.metrics import (
+            memory_recall_hit_count,
+            memory_recall_total,
+        )
+        try:
+            memory_recall_total.labels(trigger="tool").inc()
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("memory_recall_total inc failed", exc_info=True)
         try:
             from breadmind.memory.episodic_store import EpisodicFilter
             from breadmind.memory.event_types import (
@@ -222,9 +232,17 @@ class ToolExecutor:
                 limit=limit,
             )
             self._last_recall_notes = list(notes or [])
+            try:
+                memory_recall_hit_count.observe(float(len(self._last_recall_notes)))
+            except Exception:  # pragma: no cover - defensive
+                logger.debug("recall_hit_count observe failed", exc_info=True)
         except Exception:
             logger.warning("episodic recall failed", exc_info=True)
             self._last_recall_notes = []
+            try:
+                memory_recall_hit_count.observe(0.0)
+            except Exception:  # pragma: no cover - defensive
+                logger.debug("recall_hit_count observe failed", exc_info=True)
 
     def _emit_tool_signal(
         self,

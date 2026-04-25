@@ -9,6 +9,10 @@ from typing import TYPE_CHECKING, Any
 
 from breadmind.llm.base import LLMMessage
 from breadmind.memory.episodic_store import EpisodicFilter
+from breadmind.memory.metrics import (
+    memory_recall_hit_count,
+    memory_recall_total,
+)
 from breadmind.memory.recall_render import render_recalled_episodes
 from breadmind.storage.models import EpisodicNote, KGEntity, KGRelation
 
@@ -96,6 +100,12 @@ class ContextBuilder:
         """
         if self.episodic_store is None:
             return None
+        # Trigger counter fires once per attempt regardless of outcome so the
+        # metric reflects how often per-turn recall is exercised in production.
+        try:
+            memory_recall_total.labels(trigger="turn").inc()
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("memory_recall_total inc failed", exc_info=True)
         try:
             k = int(os.getenv("BREADMIND_EPISODIC_RECALL_TURN_K", "5"))
             notes = await self.episodic_store.search(
@@ -108,7 +118,15 @@ class ContextBuilder:
             logger.warning(
                 "ContextBuilder per-turn recall failed: %s", e, exc_info=True,
             )
+            try:
+                memory_recall_hit_count.observe(0.0)
+            except Exception:  # pragma: no cover - defensive
+                logger.debug("recall_hit_count observe failed", exc_info=True)
             return None
+        try:
+            memory_recall_hit_count.observe(float(len(notes or [])))
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("recall_hit_count observe failed", exc_info=True)
         return render_recalled_episodes(notes)
 
     def register_provider(self, provider: ContextProvider) -> None:

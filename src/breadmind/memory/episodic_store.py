@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Protocol
 
+from breadmind.core.otel import with_span
 from breadmind.memory.event_types import SignalKind, keyword_extract
 from breadmind.storage.database import Database
 from breadmind.storage.models import EpisodicNote
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -103,6 +107,10 @@ class PostgresEpisodicStore:
             ORDER BY {order_clause}
             LIMIT {_p(limit)}
         """
-        async with self.db.acquire() as conn:
-            rows = await conn.fetch(sql, *params)
-        return [self.db._row_to_note(r) for r in rows]
+        with with_span(
+            "memory.episodic.search",
+            attributes={"limit": str(limit)},
+        ):
+            async with self.db.acquire() as conn:
+                rows = await conn.fetch(sql, *params)
+            return [self.db._row_to_note(r) for r in rows]

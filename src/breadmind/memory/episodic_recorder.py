@@ -9,9 +9,14 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from breadmind.core.otel import with_span
 from breadmind.memory.episodic_store import EpisodicStore
 from breadmind.memory.event_types import (
     SignalEvent, SignalKind, keyword_extract, stable_hash,
+)
+from breadmind.memory.metrics import (
+    memory_normalize_latency_seconds,
+    memory_normalize_total,
 )
 from breadmind.storage.models import EpisodicNote
 
@@ -49,6 +54,7 @@ class EpisodicRecorder:
         try:
             note = await self._build_note(event)
         except _SkipRecording:
+            self._bump_outcome("skipped_by_llm")
             return
         except Exception:
             logger.exception("EpisodicRecorder.record build failed")
@@ -58,20 +64,33 @@ class EpisodicRecorder:
         except Exception:
             logger.exception("EpisodicRecorder.record store.write failed")
 
+    @staticmethod
+    def _bump_outcome(outcome: str) -> None:
+        """Best-effort metric increment — never raises."""
+        try:
+            memory_normalize_total.labels(outcome=outcome).inc()
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("memory_normalize_total inc failed", exc_info=True)
+
     async def _build_note(self, event: SignalEvent) -> EpisodicNote:
         if not self.config.normalize:
+            self._bump_outcome("raw_fallback")
             return self._raw_note(event)
         async with self._sem:
             try:
-                payload = await asyncio.wait_for(
-                    self._normalize_with_llm(event),
-                    timeout=self.config.timeout_sec,
-                )
+                with memory_normalize_latency_seconds.time():
+                    payload = await asyncio.wait_for(
+                        self._normalize_with_llm(event),
+                        timeout=self.config.timeout_sec,
+                    )
             except Exception:
                 logger.warning("episodic normalize failed; falling back to raw", exc_info=True)
+                self._bump_outcome("llm_failed")
+                self._bump_outcome("raw_fallback")
                 return self._raw_note(event)
         if not payload.get("should_record", True):
             raise _SkipRecording()
+        self._bump_outcome("recorded")
         return EpisodicNote(
             content=self._raw_content(event),
             keywords=list(payload.get("keywords") or []) or keyword_extract(self._raw_content(event)),
@@ -90,7 +109,11 @@ class EpisodicRecorder:
     async def _normalize_with_llm(self, event: SignalEvent) -> dict:
         tmpl = _jinja.get_template("episodic_normalize.j2")
         prompt = tmpl.render(event=event)
-        return await self.llm.complete_json(prompt)
+        with with_span(
+            "memory.recorder.normalize",
+            attributes={"signal.kind": event.kind.value},
+        ):
+            return await self.llm.complete_json(prompt)
 
     def _raw_note(self, event: SignalEvent) -> EpisodicNote:
         return EpisodicNote(
