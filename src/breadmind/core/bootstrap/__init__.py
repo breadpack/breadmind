@@ -43,6 +43,45 @@ def _detect_package_managers() -> list[str]:
     return [pm for pm in candidates if shutil.which(pm)]
 
 
+def build_episodic_circuit(db, provider):
+    """Construct (store, recorder, signal_detector) for the episodic circuit.
+
+    Returns ``(None, None, None)`` when ``db`` is missing or does not look
+    like a Postgres-backed handle (file-based settings store keeps the
+    circuit dormant). All construction errors are logged and swallowed so
+    bootstrap remains resilient.
+    """
+    if db is None or not hasattr(db, "fetch") or not hasattr(db, "execute"):
+        logger.info("Episodic recorder dormant (db is file-based / lacks fetch/execute)")
+        return None, None, None
+
+    try:
+        from breadmind.memory.episodic_store import PostgresEpisodicStore
+        from breadmind.memory.episodic_recorder import EpisodicRecorder, RecorderConfig
+        from breadmind.memory.signals import SignalDetector
+    except Exception:
+        logger.exception("Episodic recorder imports unavailable; staying dormant")
+        return None, None, None
+
+    try:
+        store = PostgresEpisodicStore(db)
+        recorder = EpisodicRecorder(
+            store=store,
+            llm=provider,
+            config=RecorderConfig.from_env(),
+        )
+        detector = SignalDetector()
+        logger.info(
+            "Episodic recorder wired (normalize=%s, queue_max=%d)",
+            recorder.config.normalize,
+            recorder.config.queue_max,
+        )
+        return store, recorder, detector
+    except Exception:
+        logger.exception("Episodic recorder wiring failed; staying dormant")
+        return None, None, None
+
+
 # ── Phase 1: Database ───────────────────────────────────────────────────
 
 async def init_database(config, config_dir: str):
@@ -190,6 +229,15 @@ async def init_core_services(config, db, provider, safety_cfg, vault=None):
     container.register("episodic_memory", episodic_memory)
     container.register("semantic_memory", semantic_memory)
 
+    # ── Episodic Recorder Phase 1 wiring ────────────────────────
+    episodic_store, episodic_recorder, signal_detector = build_episodic_circuit(db, provider)
+    if episodic_store is not None:
+        container.register("episodic_store", episodic_store)
+    if episodic_recorder is not None:
+        container.register("episodic_recorder", episodic_recorder)
+    if signal_detector is not None:
+        container.register("signal_detector", signal_detector)
+
     # Embedding service
     emb_cfg = config.embedding if hasattr(config, 'embedding') else None
     if emb_cfg:
@@ -252,6 +300,7 @@ async def init_core_services(config, db, provider, safety_cfg, vault=None):
             max_context_tokens=4000,
             skill_store=skill_store,
             smart_retriever=smart_retriever,
+            episodic_store=episodic_store,
         )
     except (ImportError, Exception):
         pass
@@ -337,6 +386,9 @@ async def init_core_services(config, db, provider, safety_cfg, vault=None):
         "smart_retriever": smart_retriever,
         "profiler": profiler,
         "context_builder": context_builder,
+        "episodic_store": episodic_store,
+        "episodic_recorder": episodic_recorder,
+        "signal_detector": signal_detector,
         "mcp_store": mcp_store,
         "adapter_registry": adapter_registry,
         "oauth_manager": oauth_manager,
@@ -481,6 +533,9 @@ async def init_agent(config, provider, registry, guard, db, memory_components, o
         behavior_prompt=saved_behavior_prompt,
         profiler=memory_components.get("profiler"),
         prompt_builder=prompt_builder,
+        episodic_store=memory_components.get("episodic_store"),
+        episodic_recorder=memory_components.get("episodic_recorder"),
+        signal_detector=memory_components.get("signal_detector"),
     )
     if audit_logger is not None:
         agent_kwargs["audit_logger"] = audit_logger
@@ -849,6 +904,7 @@ async def init_memory(db, provider, config, registry, mcp_manager, search_engine
             max_context_tokens=4000,
             skill_store=skill_store,
             smart_retriever=smart_retriever,
+            episodic_store=None,  # deprecated path: recorder wired only in init_core_services
         )
     except (ImportError, Exception):
         pass

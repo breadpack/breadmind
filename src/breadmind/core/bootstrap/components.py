@@ -38,6 +38,9 @@ class MemoryComponents:
     smart_retriever: Any = None
     profiler: Any = None
     context_builder: Any = None
+    episodic_store: Any = None
+    episodic_recorder: Any = None
+    signal_detector: Any = None
 
 
 @dataclass
@@ -190,6 +193,30 @@ class AppComponents:
     @context_builder.setter
     def context_builder(self, value: Any) -> None:
         self.memory.context_builder = value
+
+    @property
+    def episodic_store(self) -> Any:
+        return self.memory.episodic_store
+
+    @episodic_store.setter
+    def episodic_store(self, value: Any) -> None:
+        self.memory.episodic_store = value
+
+    @property
+    def episodic_recorder(self) -> Any:
+        return self.memory.episodic_recorder
+
+    @episodic_recorder.setter
+    def episodic_recorder(self, value: Any) -> None:
+        self.memory.episodic_recorder = value
+
+    @property
+    def signal_detector(self) -> Any:
+        return self.memory.signal_detector
+
+    @signal_detector.setter
+    def signal_detector(self, value: Any) -> None:
+        self.memory.signal_detector = value
 
     # ── Backward-compatible properties: Tools ──────────────────────────
 
