@@ -6,8 +6,6 @@ these assertions run the 008 migration has already been applied.
 """
 from __future__ import annotations
 
-import pytest
-
 
 async def test_migration_008_adds_columns_and_indexes(test_db):
     async with test_db.acquire() as conn:

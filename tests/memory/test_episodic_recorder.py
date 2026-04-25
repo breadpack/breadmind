@@ -1,4 +1,3 @@
-import json
 import uuid
 from unittest.mock import AsyncMock
 
@@ -79,7 +78,8 @@ async def test_normalize_off_writes_raw_directly():
 
 @pytest.mark.asyncio
 async def test_recorder_does_not_raise_on_store_failure():
-    store = AsyncMock(); store.write.side_effect = RuntimeError("db down")
+    store = AsyncMock()
+    store.write.side_effect = RuntimeError("db down")
     llm = AsyncMock()
     rec = EpisodicRecorder(store=store, llm=llm, config=RecorderConfig(normalize=False))
     # Must not raise — Recorder failures are isolated from the agent loop.

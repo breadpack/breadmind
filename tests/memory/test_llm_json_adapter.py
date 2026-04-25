@@ -23,7 +23,8 @@ async def test_extracts_json_block_from_chatter():
 
 @pytest.mark.asyncio
 async def test_invalid_json_raises():
-    base = AsyncMock(); base.complete.return_value = "not json at all"
+    base = AsyncMock()
+    base.complete.return_value = "not json at all"
     adapter = LLMJsonAdapter(base)
     with pytest.raises(ValueError):
         await adapter.complete_json("prompt")
