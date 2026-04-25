@@ -1,3 +1,4 @@
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -26,9 +27,17 @@ class EpisodicNote:
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     id: int | None = None
     decay_weight: float = 1.0
-    access_count: int = 0          # How many times this note was retrieved
-    last_accessed: datetime | None = None  # Last retrieval time
-    pinned: bool = False           # If True, exempt from decay/cleanup
+    access_count: int = 0
+    last_accessed: datetime | None = None
+    pinned: bool = False
+    # --- Phase 1 recorder fields ---
+    kind: str = "neutral"
+    tool_name: str | None = None
+    tool_args_digest: str | None = None
+    outcome: str = "neutral"
+    session_id: uuid.UUID | None = None
+    user_id: str | None = None
+    summary: str = ""
 
 
 @dataclass
