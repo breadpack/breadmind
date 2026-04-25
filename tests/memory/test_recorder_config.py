@@ -44,5 +44,9 @@ def test_from_env_numeric_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_from_env_invalid_numeric_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BREADMIND_EPISODIC_QUEUE_MAX", "not-a-number")
+    monkeypatch.setenv("BREADMIND_EPISODIC_NORMALIZE_TIMEOUT_SEC", "huh")
+    monkeypatch.setenv("BREADMIND_EPISODIC_SEMAPHORE_SIZE", "x")
     cfg = RecorderConfig.from_env()
     assert cfg.queue_max == 200  # default preserved
+    assert cfg.timeout_sec == 8.0
+    assert cfg.semaphore_size == 8
