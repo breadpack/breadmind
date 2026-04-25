@@ -1,0 +1,60 @@
+"""Shared fixtures for tests/memory/."""
+from __future__ import annotations
+
+from unittest.mock import AsyncMock
+
+import pytest
+
+from breadmind.core.agent import CoreAgent
+from breadmind.core.safety import SafetyGuard
+from breadmind.llm.base import LLMResponse, TokenUsage
+from breadmind.memory.signals import SignalDetector
+from breadmind.memory.working import WorkingMemory
+from breadmind.tools.registry import ToolRegistry, tool
+
+
+@tool(description="Memory test tool")
+async def _mem_test_tool(input: str = "") -> str:  # pragma: no cover - rarely run
+    return f"result: {input}"
+
+
+_mem_test_tool._tool_definition.name = "test_tool"
+
+
+@pytest.fixture
+def make_agent():
+    """Build a CoreAgent with mocked LLM/tools and a WorkingMemory.
+
+    Accepts an optional `recorder` kwarg (AsyncMock or real EpisodicRecorder)
+    that will be passed in as `episodic_recorder`. The returned agent has its
+    `_provider.chat` stubbed to return an empty assistant turn (no tool calls)
+    so `handle_message` returns immediately after the user-signal hook fires.
+    """
+
+    def _factory(*, recorder=None, signal_detector=None):
+        registry = ToolRegistry()
+        registry.register(_mem_test_tool)
+
+        provider = AsyncMock()
+        provider.chat = AsyncMock(
+            return_value=LLMResponse(
+                content="ok",
+                tool_calls=[],
+                usage=TokenUsage(input_tokens=1, output_tokens=1),
+                stop_reason="end_turn",
+            )
+        )
+
+        guard = SafetyGuard()
+        memory = WorkingMemory()
+
+        return CoreAgent(
+            provider=provider,
+            tool_registry=registry,
+            safety_guard=guard,
+            working_memory=memory,
+            signal_detector=signal_detector or SignalDetector(),
+            episodic_recorder=recorder,
+        )
+
+    return _factory

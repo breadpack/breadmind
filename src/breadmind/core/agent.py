@@ -17,6 +17,8 @@ if TYPE_CHECKING:
     from breadmind.memory.working import WorkingMemory
     from breadmind.core.tool_gap import ToolGapDetector
     from breadmind.llm.cost_router import CostRouter
+    from breadmind.memory.episodic_recorder import EpisodicRecorder
+    from breadmind.memory.signals import SignalDetector
 
 logger = logging.getLogger("breadmind.agent")
 
@@ -40,6 +42,8 @@ class CoreAgent:
         profiler: object | None = None,
         prompt_builder: object | None = None,
         cost_router: CostRouter | None = None,
+        signal_detector: SignalDetector | None = None,
+        episodic_recorder: EpisodicRecorder | None = None,
     ):
         from breadmind.settings.llm_holder import LLMProviderHolder
         if not isinstance(provider, LLMProviderHolder):
@@ -70,6 +74,15 @@ class CoreAgent:
         self._persona: str = "professional"
         self._role: str | None = None
         self._prompt_context: object | None = None
+
+        # Episodic memory recorder hooks (Phase 1).
+        # ``signal_detector`` is cheap to construct, so default-create one.
+        # ``episodic_recorder`` may stay None — hook becomes a no-op then.
+        if signal_detector is None:
+            from breadmind.memory.signals import SignalDetector as _SD
+            signal_detector = _SD()
+        self._signal_detector = signal_detector
+        self._episodic_recorder = episodic_recorder
 
         # If behavior_prompt provided, rebuild system_prompt with it
         if behavior_prompt is not None:
@@ -231,6 +244,57 @@ class CoreAgent:
                 await self._progress_callback(status, detail)
             except Exception:
                 pass
+
+    async def _emit_user_signal(
+        self, user_message: str, session_id: str, user: str,
+    ) -> None:
+        """Run the SignalDetector against the incoming user message and, if it
+        classifies as a USER_CORRECTION / EXPLICIT_PIN / ROLLBACK_REQUEST,
+        fire-and-forget the resulting SignalEvent into the EpisodicRecorder.
+
+        Recorder failures must NEVER bubble into the user's turn — both this
+        method and the spawned task swallow exceptions defensively.
+        """
+        if self._episodic_recorder is None:
+            return
+        try:
+            from breadmind.memory.signals import TurnSnapshot
+
+            last_tool = None
+            prior_summary = None
+            if self._working_memory is not None:
+                try:
+                    last_tool = self._working_memory.last_tool_name(session_id)
+                    prior_summary = self._working_memory.last_turn_summary(session_id)
+                except Exception:
+                    logger.debug("working_memory accessor failed", exc_info=True)
+
+            snap = TurnSnapshot(
+                user_id=user,
+                session_id=None,  # CoreAgent uses string session ids; recorder accepts UUID|None
+                user_message=user_message,
+                last_tool_name=last_tool,
+                prior_turn_summary=prior_summary,
+            )
+            evt = self._signal_detector.on_user_message(snap)
+            if evt is None:
+                return
+
+            recorder = self._episodic_recorder
+
+            async def _safe_record():
+                try:
+                    await recorder.record(evt)
+                except Exception:
+                    logger.debug("episodic recorder failed", exc_info=True)
+
+            try:
+                asyncio.create_task(_safe_record())
+            except RuntimeError:
+                # No running loop (e.g. called from sync context) — skip.
+                logger.debug("could not schedule recorder task", exc_info=True)
+        except Exception:
+            logger.debug("_emit_user_signal swallowed exception", exc_info=True)
 
     async def _emit_hook(self, event, data):
         """Publish a hook event through the shared EventBus chain.
@@ -484,8 +548,14 @@ class CoreAgent:
             from breadmind.storage.credential_vault import CredentialVault
             clean_content = CredentialVault.sanitize_text(message)
             stored_user_msg = LLMMessage(role="user", content=clean_content)
+            # Run the episodic-memory user-signal hook BEFORE storing the new
+            # user message, so `last_tool_name` / `last_turn_summary` reflect
+            # the previous (pre-current-turn) conversation state.
+            await self._emit_user_signal(message, session_id, user)
             self._working_memory.add_message(session_id, stored_user_msg)
         else:
+            # No working memory — still emit the signal so explicit pins land.
+            await self._emit_user_signal(message, session_id, user)
             messages = [system_msg, user_msg]
 
         # Step 2: Enrich context with intent-aware memory retrieval
