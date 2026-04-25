@@ -43,6 +43,45 @@ def _detect_package_managers() -> list[str]:
     return [pm for pm in candidates if shutil.which(pm)]
 
 
+def build_episodic_circuit(db, provider):
+    """Construct (store, recorder, signal_detector) for the episodic circuit.
+
+    Returns ``(None, None, None)`` when ``db`` is missing or does not look
+    like a Postgres-backed handle (file-based settings store keeps the
+    circuit dormant). All construction errors are logged and swallowed so
+    bootstrap remains resilient.
+    """
+    if db is None or not hasattr(db, "fetch") or not hasattr(db, "execute"):
+        logger.info("Episodic recorder dormant (db is file-based / lacks fetch/execute)")
+        return None, None, None
+
+    try:
+        from breadmind.memory.episodic_store import PostgresEpisodicStore
+        from breadmind.memory.episodic_recorder import EpisodicRecorder, RecorderConfig
+        from breadmind.memory.signals import SignalDetector
+    except Exception:
+        logger.exception("Episodic recorder imports unavailable; staying dormant")
+        return None, None, None
+
+    try:
+        store = PostgresEpisodicStore(db)
+        recorder = EpisodicRecorder(
+            store=store,
+            llm=provider,
+            config=RecorderConfig.from_env(),
+        )
+        detector = SignalDetector()
+        logger.info(
+            "Episodic recorder wired (normalize=%s, queue_max=%d)",
+            recorder.config.normalize,
+            recorder.config.queue_max,
+        )
+        return store, recorder, detector
+    except Exception:
+        logger.exception("Episodic recorder wiring failed; staying dormant")
+        return None, None, None
+
+
 # ── Phase 1: Database ───────────────────────────────────────────────────
 
 async def init_database(config, config_dir: str):
@@ -191,37 +230,13 @@ async def init_core_services(config, db, provider, safety_cfg, vault=None):
     container.register("semantic_memory", semantic_memory)
 
     # ── Episodic Recorder Phase 1 wiring ────────────────────────
-    episodic_store = None
-    episodic_recorder = None
-    signal_detector = None
-    if db is not None and hasattr(db, "fetch") and hasattr(db, "execute"):
-        try:
-            from breadmind.memory.episodic_store import PostgresEpisodicStore
-            from breadmind.memory.episodic_recorder import EpisodicRecorder, RecorderConfig
-            from breadmind.memory.signals import SignalDetector
-
-            episodic_store = PostgresEpisodicStore(db)
-            episodic_recorder = EpisodicRecorder(
-                store=episodic_store,
-                llm=provider,
-                config=RecorderConfig.from_env(),
-            )
-            signal_detector = SignalDetector()
-            container.register("episodic_store", episodic_store)
-            container.register("episodic_recorder", episodic_recorder)
-            container.register("signal_detector", signal_detector)
-            logger.info(
-                "Episodic recorder wired (normalize=%s, queue_max=%d)",
-                episodic_recorder.config.normalize,
-                episodic_recorder.config.queue_max,
-            )
-        except Exception:
-            logger.exception("Episodic recorder wiring failed; continuing dormant")
-            episodic_store = None
-            episodic_recorder = None
-            signal_detector = None
-    else:
-        logger.info("Episodic recorder dormant (db is file-based / lacks fetch/execute)")
+    episodic_store, episodic_recorder, signal_detector = build_episodic_circuit(db, provider)
+    if episodic_store is not None:
+        container.register("episodic_store", episodic_store)
+    if episodic_recorder is not None:
+        container.register("episodic_recorder", episodic_recorder)
+    if signal_detector is not None:
+        container.register("signal_detector", signal_detector)
 
     # Embedding service
     emb_cfg = config.embedding if hasattr(config, 'embedding') else None
