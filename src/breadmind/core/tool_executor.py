@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -23,6 +24,9 @@ if TYPE_CHECKING:
     from breadmind.core.sandbox_executor import SandboxExecutor
     from breadmind.core.tool_gap import ToolGapDetector
     from breadmind.core.tool_hooks import ToolHookRunner
+    from breadmind.memory.episodic_recorder import EpisodicRecorder
+    from breadmind.memory.episodic_store import EpisodicStore
+    from breadmind.memory.signals import SignalDetector
     from breadmind.tools.schema_validator import SchemaValidator
 
 logger = logging.getLogger("breadmind.agent")
@@ -55,6 +59,10 @@ class ToolExecutor:
         sandbox_executor: SandboxExecutor | None = None,
         hook_runner: ToolHookRunner | None = None,
         schema_validator: SchemaValidator | None = None,
+        *,
+        episodic_store: EpisodicStore | None = None,
+        episodic_recorder: EpisodicRecorder | None = None,
+        signal_detector: SignalDetector | None = None,
     ):
         self._tools = tool_registry
         self._guard = safety_guard
@@ -62,6 +70,21 @@ class ToolExecutor:
         self._sandbox = sandbox_executor
         self._hook_runner = hook_runner
         self._validator = schema_validator
+
+        # Episodic memory wiring (Phase 1, T9). All optional — when both store
+        # and recorder are absent, the no-memory hot path is zero-cost.
+        self._episodic_store = episodic_store
+        self._episodic_recorder = episodic_recorder
+        if signal_detector is None and (episodic_store is not None or episodic_recorder is not None):
+            from breadmind.memory.signals import SignalDetector as _SD
+            signal_detector = _SD()
+        self._signal_detector = signal_detector
+
+        # Last pre-call recall results, exposed for ContextBuilder to render
+        # into the next LLM prompt. T11/T12 wires this into the actual prompt
+        # template; for now ToolExecutor only stores the raw notes list so the
+        # caller (CoreAgent / context layer) can pick it up.
+        self._last_recall_notes: list = []
 
     @property
     def tool_timeout(self) -> int:
@@ -96,6 +119,123 @@ class ToolExecutor:
         # Execute allowed tool calls in parallel
         if executable_calls:
             await self._execute_calls(executable_calls, messages, ctx)
+
+    async def execute(
+        self,
+        *,
+        tool_name: str,
+        args: dict | None,
+        user_id: str | None = None,
+        session_id: uuid.UUID | None = None,
+    ) -> str:
+        """Lightweight per-tool entry point with episodic recall + signal hook.
+
+        Used by callers that want pre-call recall of prior runs of the same
+        tool and a post-call SignalEvent emitted to ``EpisodicRecorder``.
+
+        Returns the raw tool output string (with the same ``[success=...]``
+        prefix produced elsewhere in this module). Recall failures are logged
+        and swallowed — they MUST NEVER block tool execution. Recorder calls
+        are fire-and-forget.
+
+        Note: ``self._last_recall_notes`` is populated as a list of
+        ``EpisodicNote`` objects. T11 will introduce the rendering partial
+        (``render_previous_runs_for_tool``) that feeds these into the prompt;
+        until then, callers should treat this as opaque state.
+        """
+        args = args or {}
+
+        # ── Pre-call recall ─────────────────────────────────────────
+        if self._episodic_store is not None:
+            try:
+                from breadmind.memory.episodic_store import EpisodicFilter
+                from breadmind.memory.event_types import (
+                    SignalKind,
+                    keyword_extract,
+                    stable_hash,
+                )
+
+                limit = int(os.getenv("BREADMIND_EPISODIC_RECALL_TOOL_K", "3"))
+                kw = keyword_extract(args) if args else []
+                flt = EpisodicFilter(
+                    kinds=[SignalKind.TOOL_EXECUTED, SignalKind.TOOL_FAILED],
+                    tool_name=tool_name,
+                    tool_args_digest=stable_hash(args),
+                    keywords=kw or None,
+                )
+                notes = await self._episodic_store.search(
+                    user_id=user_id,
+                    query=None,
+                    filters=flt,
+                    limit=limit,
+                )
+                self._last_recall_notes = list(notes or [])
+            except Exception:
+                logger.warning("episodic recall failed", exc_info=True)
+                self._last_recall_notes = []
+        else:
+            self._last_recall_notes = []
+
+        # ── Tool execution ──────────────────────────────────────────
+        t_start = time.monotonic()
+        ok = True
+        try:
+            result = await asyncio.wait_for(
+                self._tools.execute(tool_name, args),
+                timeout=self._tool_timeout,
+            )
+            ok = bool(getattr(result, "success", True))
+            output_body = getattr(result, "output", str(result))
+            output = f"[success={ok}] {output_body}"
+        except asyncio.TimeoutError:
+            ok = False
+            output = f"[success=False] Tool execution timed out after {self._tool_timeout}s."
+        except Exception as e:
+            ok = False
+            output = f"[success=False] Tool execution error: {e}"
+        elapsed = (time.monotonic() - t_start) * 1000
+        logger.debug(
+            "ToolExecutor.execute %s ok=%s elapsed_ms=%.2f", tool_name, ok, elapsed,
+        )
+
+        # ── Post-call signal + fire-and-forget record ───────────────
+        if self._signal_detector is not None and self._episodic_recorder is not None:
+            try:
+                from breadmind.memory.signals import TurnSnapshot
+
+                snap = TurnSnapshot(
+                    user_id=user_id or "",
+                    session_id=session_id,
+                    user_message="",
+                    last_tool_name=tool_name,
+                    prior_turn_summary=None,
+                )
+                evt = self._signal_detector.on_tool_finished(
+                    snap,
+                    tool_name=tool_name,
+                    tool_args=args,
+                    ok=ok,
+                    result_text=output,
+                )
+                recorder = self._episodic_recorder
+
+                async def _safe_record():
+                    try:
+                        await recorder.record(evt)
+                    except Exception:
+                        logger.debug("episodic recorder failed", exc_info=True)
+
+                try:
+                    asyncio.create_task(_safe_record())
+                except RuntimeError:
+                    # No running loop (sync context) — drop silently.
+                    logger.debug("could not schedule recorder task", exc_info=True)
+            except Exception:
+                logger.debug(
+                    "ToolExecutor.execute post-call signal swallowed", exc_info=True,
+                )
+
+        return output
 
     def _check_tool_call(
         self, tc: ToolCall, ctx: ToolExecutionContext,
