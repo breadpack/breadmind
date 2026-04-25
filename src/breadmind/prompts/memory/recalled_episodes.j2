@@ -1,0 +1,6 @@
+{# recalled_episodes.j2 #}
+<recalled_episodes>
+{% for n in notes %}
+- [{{ n.outcome }}] {{ n.summary }}{% if n.tool_name %} (tool: {{ n.tool_name }}){% endif %}
+{% endfor %}
+</recalled_episodes>
