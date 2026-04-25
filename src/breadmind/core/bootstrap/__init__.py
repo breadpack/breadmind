@@ -518,6 +518,9 @@ async def init_agent(config, provider, registry, guard, db, memory_components, o
         behavior_prompt=saved_behavior_prompt,
         profiler=memory_components.get("profiler"),
         prompt_builder=prompt_builder,
+        episodic_store=memory_components.get("episodic_store"),
+        episodic_recorder=memory_components.get("episodic_recorder"),
+        signal_detector=memory_components.get("signal_detector"),
     )
     if audit_logger is not None:
         agent_kwargs["audit_logger"] = audit_logger
