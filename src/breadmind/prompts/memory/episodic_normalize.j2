@@ -1,0 +1,24 @@
+{# src/breadmind/prompts/memory/episodic_normalize.j2 #}
+당신은 에이전트 행동 로그 정규화기다. 주어진 신호 이벤트를 1~3문장 한국어 요약으로 압축하고 검색 키워드를 추출하라.
+
+**규칙:**
+- summary는 자연스러운 한국어 1~3문장. 결과 수치/식별자는 보존.
+- keywords는 3~7개. 도구명, 자원 종류, 핵심 인자, 에러 키워드 우선.
+- outcome ∈ {success, failure, neutral}. TOOL_FAILED/REFLEXION에 대한 negative report는 failure.
+- should_record가 false면 저장하지 않는다. 반복적·잡담성 이벤트만 false로.
+
+**이벤트:**
+- kind: {{ event.kind.value }}
+- tool_name: {{ event.tool_name or "(none)" }}
+- tool_args: {{ event.tool_args | tojson if event.tool_args else "(none)" }}
+- tool_result: {{ event.tool_result_text or "(none)" }}
+- user_message: {{ event.user_message or "(none)" }}
+- prior_turn_summary: {{ event.prior_turn_summary or "(none)" }}
+
+**출력 형식 (반드시 JSON):**
+{
+  "summary": "...",
+  "keywords": ["...","..."],
+  "outcome": "success|failure|neutral",
+  "should_record": true
+}
