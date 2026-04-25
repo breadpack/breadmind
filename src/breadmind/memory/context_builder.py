@@ -1,18 +1,29 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 import re
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
 from breadmind.llm.base import LLMMessage
+from breadmind.memory.episodic_store import EpisodicFilter
+from breadmind.memory.metrics import (
+    memory_recall_hit_count,
+    memory_recall_total,
+)
+from breadmind.memory.recall_render import render_recalled_episodes
 from breadmind.storage.models import EpisodicNote, KGEntity, KGRelation
 
 if TYPE_CHECKING:
     from breadmind.memory.episodic import EpisodicMemory
+    from breadmind.memory.episodic_store import EpisodicStore
     from breadmind.memory.profiler import UserProfiler
     from breadmind.memory.semantic import SemanticMemory
     from breadmind.memory.working import WorkingMemory
+
+logger = logging.getLogger(__name__)
 
 # Common English stopwords for keyword extraction
 _STOPWORDS = frozenset({
@@ -62,6 +73,7 @@ class ContextBuilder:
         max_context_tokens: int = 4000,
         skill_store=None,
         smart_retriever=None,
+        episodic_store: EpisodicStore | None = None,
     ):
         self._working = working_memory
         self._episodic = episodic_memory
@@ -70,7 +82,52 @@ class ContextBuilder:
         self._max_context_tokens = max_context_tokens
         self._skill_store = skill_store
         self._smart_retriever = smart_retriever
+        self.episodic_store = episodic_store
         self._context_providers: list[ContextProvider] = []
+
+    async def build_recalled_episodes(
+        self, *, user_id: str | None, message: str,
+    ) -> dict | None:
+        """Per-turn weighted recall (T12).
+
+        Looks up the top-K most relevant episodic notes for ``message`` and
+        returns a Jinja2-rendered system message dict. Returns ``None`` when
+        no store is configured, no notes match, or the store raises.
+
+        ``K`` is read from ``BREADMIND_EPISODIC_RECALL_TURN_K`` (default 5).
+        Failures are logged at warning level and swallowed so a recall miss
+        never blocks the main LLM turn.
+        """
+        if self.episodic_store is None:
+            return None
+        # Trigger counter fires once per attempt regardless of outcome so the
+        # metric reflects how often per-turn recall is exercised in production.
+        try:
+            memory_recall_total.labels(trigger="turn").inc()
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("memory_recall_total inc failed", exc_info=True)
+        try:
+            k = int(os.getenv("BREADMIND_EPISODIC_RECALL_TURN_K", "5"))
+            notes = await self.episodic_store.search(
+                user_id=user_id,
+                query=message,
+                filters=EpisodicFilter(),
+                limit=k,
+            )
+        except Exception as e:
+            logger.warning(
+                "ContextBuilder per-turn recall failed: %s", e, exc_info=True,
+            )
+            try:
+                memory_recall_hit_count.observe(0.0)
+            except Exception:  # pragma: no cover - defensive
+                logger.debug("recall_hit_count observe failed", exc_info=True)
+            return None
+        try:
+            memory_recall_hit_count.observe(float(len(notes or [])))
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("recall_hit_count observe failed", exc_info=True)
+        return render_recalled_episodes(notes)
 
     def register_provider(self, provider: ContextProvider) -> None:
         self._context_providers.append(provider)
@@ -115,6 +172,17 @@ class ContextBuilder:
                 messages.append(
                     LLMMessage(role="system", content=f"User profile:\n{profile_ctx}")
                 )
+
+        # 1.5 Per-turn weighted recall (T12). Sits between the system prompt and
+        # any history/context blocks so the LLM sees recalled facts before it
+        # sees the conversation transcript.
+        recalled = await self.build_recalled_episodes(
+            user_id=user or None, message=current_message,
+        )
+        if recalled is not None:
+            messages.append(
+                LLMMessage(role=recalled["role"], content=recalled["content"])
+            )
 
         # 2. Relevant context via SmartRetriever (semantic search) or fallback to keyword
         context_retrieved = False

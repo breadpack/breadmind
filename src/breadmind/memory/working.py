@@ -89,6 +89,37 @@ class WorkingMemory:
         session = self._sessions.get(session_id)
         return session.messages if session else []
 
+    def last_tool_name(self, session_id: str) -> str | None:
+        """Return the name of the most recent tool that ran in this session.
+
+        Tool messages (``role == "tool"``) carry the executed tool name in
+        ``LLMMessage.name``. As a fallback, we look at the most recent
+        assistant turn that issued tool_calls and return the last call's name.
+        Returns None when no tool has run yet in the session.
+        """
+        msgs = self.get_messages(session_id) or []
+        for m in reversed(msgs):
+            if m.role == "tool" and getattr(m, "name", None):
+                return m.name
+            if m.role == "assistant" and getattr(m, "tool_calls", None):
+                last = m.tool_calls[-1]
+                return getattr(last, "name", None)
+        return None
+
+    def last_turn_summary(self, session_id: str) -> str | None:
+        """Return a short string summarising the previous user/assistant pair.
+
+        Used as ``prior_turn_summary`` when building TurnSnapshots for the
+        EpisodicRecorder. Truncated to 200 characters total.
+        """
+        msgs = self.get_messages(session_id) or []
+        if not msgs:
+            return None
+        tail = " | ".join(
+            str(m.content)[:120] for m in msgs[-2:] if m.content
+        )
+        return tail[:200] if tail else None
+
     def clear_session(self, session_id: str):
         self._sessions.pop(session_id, None)
         # Also delete from DB so it doesn't reappear on restart

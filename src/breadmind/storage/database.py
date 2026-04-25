@@ -310,17 +310,21 @@ class Database:
 
     async def save_note(self, note: EpisodicNote) -> int:
         async with self.acquire() as conn:
-            note_id = await conn.fetchval("""
+            return await conn.fetchval("""
                 INSERT INTO episodic_notes
                     (content, keywords, tags, context_description, embedding,
-                     linked_note_ids, decay_weight, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                     linked_note_ids, decay_weight, created_at, updated_at,
+                     kind, tool_name, tool_args_digest, outcome,
+                     session_id, user_id, summary, pinned)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
                 RETURNING id
-            """, note.content, note.keywords, note.tags,
-                note.context_description, note.embedding,
-                note.linked_note_ids, note.decay_weight,
-                note.created_at, note.updated_at)
-            return note_id
+            """,
+                note.content, note.keywords, note.tags, note.context_description,
+                note.embedding, note.linked_note_ids, note.decay_weight,
+                note.created_at, note.updated_at,
+                note.kind, note.tool_name, note.tool_args_digest, note.outcome,
+                note.session_id, note.user_id, note.summary, note.pinned,
+            )
 
     async def search_notes_by_keywords(
         self, keywords: list[str], limit: int = 5
@@ -392,14 +396,22 @@ class Database:
         return EpisodicNote(
             id=row["id"],
             content=row["content"],
-            keywords=list(row["keywords"]) if row["keywords"] else [],
-            tags=list(row["tags"]) if row["tags"] else [],
-            context_description=row["context_description"],
+            keywords=list(row["keywords"] or []),
+            tags=list(row["tags"] or []),
+            context_description=row["context_description"] or "",
             embedding=list(row["embedding"]) if row["embedding"] else None,
-            linked_note_ids=list(row["linked_note_ids"]) if row["linked_note_ids"] else [],
+            linked_note_ids=list(row["linked_note_ids"] or []),
             decay_weight=row["decay_weight"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            kind=row["kind"],
+            tool_name=row["tool_name"],
+            tool_args_digest=row["tool_args_digest"],
+            outcome=row["outcome"],
+            session_id=row["session_id"],
+            user_id=row["user_id"],
+            summary=row["summary"] or "",
+            pinned=row["pinned"],
         )
 
     # --- pgvector ---

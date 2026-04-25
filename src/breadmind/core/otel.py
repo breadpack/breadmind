@@ -157,3 +157,54 @@ def init_otel(config: OTelConfig) -> OTelIntegration:
     global _instance
     _instance = OTelIntegration(config)
     return _instance
+
+
+# ---------------------------------------------------------------------------
+# Lightweight span helper (T13)
+#
+# ``OTelIntegration.trace_span`` requires an initialized integration instance;
+# the recorder/store call sites prefer a free function so they don't have to
+# carry a config-aware singleton around. This helper mirrors the pattern in
+# :mod:`breadmind.metrics`: it asks opentelemetry-api for a tracer (which
+# returns a no-op tracer when no provider is configured, the default state)
+# and falls back to a synchronous no-op context manager when the package
+# is missing entirely. Safe to call from anywhere; never raises.
+# ---------------------------------------------------------------------------
+
+
+class _NoopSpan:
+    def __enter__(self) -> "_NoopSpan":
+        return self
+
+    def __exit__(self, *exc_info: Any) -> None:
+        return None
+
+    def set_attribute(self, key: str, value: Any) -> None:  # noqa: D401
+        return None
+
+    def record_exception(self, exc: BaseException) -> None:  # noqa: D401
+        return None
+
+
+class _NoopTracer:
+    def start_as_current_span(self, name: str, *args: Any, **kwargs: Any) -> _NoopSpan:
+        return _NoopSpan()
+
+
+try:  # pragma: no cover - exercised whenever opentelemetry-api is installed
+    from opentelemetry import trace as _otel_trace
+
+    _memory_tracer: Any = _otel_trace.get_tracer("breadmind.memory")
+except Exception:  # pragma: no cover - defensive stub path
+    _memory_tracer = _NoopTracer()
+
+
+def with_span(name: str, attributes: dict[str, str] | None = None):
+    """Return a context manager that opens an OTel span named ``name``.
+
+    Falls back to a no-op span when opentelemetry-api is not installed or
+    no TracerProvider is configured. The returned object always supports
+    ``__enter__``/``__exit__``, ``set_attribute``, and ``record_exception``.
+    """
+    return _memory_tracer.start_as_current_span(name, attributes=attributes or {})
+

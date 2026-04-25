@@ -1,0 +1,6 @@
+{# previous_runs_for_tool.j2 #}
+<previous_runs_for_{{ tool_name }}>
+{% for n in notes %}
+- [{{ n.outcome }}] {{ n.summary }}
+{% endfor %}
+</previous_runs_for_{{ tool_name }}>
