@@ -15,3 +15,5 @@ def install_exception_handlers(app):
 # Register sub-routers
 from breadmind.messenger.api.v1 import workspaces  # noqa: E402
 router.include_router(workspaces.router)
+from breadmind.messenger.api.v1 import users  # noqa: E402
+router.include_router(users.router)
