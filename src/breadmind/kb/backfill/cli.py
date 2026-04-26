@@ -174,6 +174,7 @@ async def _run_slack(
 ) -> int:
     """Construct adapter + runner, run the job, render dry-run output."""
     from breadmind.kb.backfill.budget import OrgMonthlyBudget
+    from breadmind.kb.backfill.checkpoint import JobCheckpointer
     from breadmind.kb.backfill.runner import BackfillRunner
     from breadmind.kb.backfill.slack import SlackBackfillAdapter
 
@@ -206,6 +207,7 @@ async def _run_slack(
     budget = OrgMonthlyBudget(db=db, ceiling=monthly_ceiling)
     runner = BackfillRunner(
         db=db, redactor=redactor, embedder=embedder, org_budget=budget,
+        checkpointer=JobCheckpointer(db=db),
     )
     report = await runner.run(job)
     if args.dry_run:
@@ -248,6 +250,7 @@ async def _run_resume(
     if row["dry_run"]:
         print("dry-run resume is a no-op")
         return 0
+    from breadmind.kb.backfill.checkpoint import JobCheckpointer
     from breadmind.kb.backfill.runner import BackfillRunner
     from breadmind.kb.backfill.slack import SlackBackfillAdapter
 
@@ -270,6 +273,7 @@ async def _run_resume(
     job._resume_cursor = row["last_cursor"]
     await BackfillRunner(
         db=db, redactor=redactor, embedder=embedder,
+        checkpointer=JobCheckpointer(db=db),
     ).run(job)
     return 0
 
