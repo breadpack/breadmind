@@ -1,10 +1,11 @@
-"""CLI entrypoint: breadmind kb backfill <slack|confluence|resume|list|cancel>."""
+"""CLI entrypoint: breadmind kb backfill <slack|confluence|notion|redmine|resume|list|cancel>."""
 from __future__ import annotations
 import argparse
 import uuid
 from datetime import date, datetime, timezone
 
 from breadmind.kb.backfill.base import JobReport
+from breadmind.kb.backfill.cli_redmine import run_redmine
 
 
 def _iso_date(s: str) -> datetime:
@@ -57,6 +58,26 @@ def build_parser() -> argparse.ArgumentParser:
     cancel.add_argument("job_id", type=uuid.UUID)
 
     _add_notion_subparser(sub)
+
+    redmine = sub.add_parser("redmine", help="Redmine backfill")
+    redmine.add_argument("--org", required=True, type=uuid.UUID)
+    redmine.add_argument("--project", required=True)
+    redmine.add_argument("--instance", default=None)
+    redmine.add_argument("--since", required=False, type=_iso_date, default=None)
+    redmine.add_argument(
+        "--until", required=False, type=_iso_date,
+        default=None,
+    )
+    redmine.add_argument(
+        "--include", default="issues,wiki",
+        help="Comma-separated list of: issues, wiki, attachments",
+    )
+    redmine.add_argument("--token-budget", dest="token_budget",
+                         type=int, default=500_000)
+    redmine.add_argument("--resume", default=None, type=uuid.UUID)
+    redmine_mode = redmine.add_mutually_exclusive_group(required=True)
+    redmine_mode.add_argument("--dry-run", action="store_true")
+    redmine_mode.add_argument("--confirm", action="store_true")
 
     return p
 
@@ -226,6 +247,11 @@ async def main_async(
         return await _run_list(args, db=db)
     if args.subcommand == "cancel":
         return await _run_cancel(args.job_id, db=db)
+    if args.subcommand == "redmine":
+        return await run_redmine(
+            args, db=db, redactor=redactor, embedder=embedder,
+            vault=vault, monthly_ceiling=monthly_ceiling,
+            _monthly_remaining_fn=_monthly_remaining)
     return 2
 
 
