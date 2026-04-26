@@ -71,6 +71,112 @@ class SlackBackfillAdapter(BackfillJob):
         return True
 
     async def discover(self) -> AsyncIterator[BackfillItem]:
-        # Stub — implementation in Task 11.
-        if False:
-            yield  # type: ignore[unreachable]
+        since_ts = self.since.timestamp()
+        until_ts = self.until.timestamp()
+        include_threads = self.source_filter.get("include_threads", True)
+        for cid in self.source_filter["channels"]:
+            cursor: str | None = None
+            while True:
+                params: dict[str, Any] = {
+                    "channel": cid, "limit": 200,
+                    "oldest": str(since_ts), "latest": str(until_ts),
+                }
+                if cursor:
+                    params["cursor"] = cursor
+                payload = await self._call_with_retry(
+                    "conversations.history", **params)
+                for msg in payload.get("messages", []):
+                    ts = float(msg["ts"])
+                    if ts < since_ts or ts >= until_ts:
+                        continue
+                    if include_threads and msg.get("thread_ts") == msg["ts"] \
+                            and (msg.get("reply_count") or 0) > 0:
+                        yield await self._build_thread_item(cid, msg)
+                    else:
+                        yield self._build_top_level_item(cid, msg)
+                if not payload.get("has_more"):
+                    break
+                cursor = (payload.get("response_metadata") or {}).get(
+                    "next_cursor")
+                if not cursor:
+                    break
+
+    async def _call_with_retry(self, method: str, **params):
+        backoffs = list(_BACKOFF_SECONDS)
+        while True:
+            payload = await self._session.call(method, **params)
+            if payload.get("_status") == 429 or (
+                    payload.get("error") == "ratelimited"):
+                import asyncio
+                wait = int(payload.get("_retry_after") or
+                           (backoffs.pop(0) if backoffs else _BACKOFF_SECONDS[-1]))
+                await asyncio.sleep(wait)
+                continue
+            return payload
+
+    def _build_top_level_item(self, cid: str, msg: dict) -> BackfillItem:
+        ts = float(msg["ts"])
+        created = datetime.fromtimestamp(ts, tz=timezone.utc)
+        return BackfillItem(
+            source_kind="slack_msg",
+            source_native_id=f"{cid}:{msg['ts']}",
+            source_uri=msg.get("permalink", f"slack://msg/{cid}/{msg['ts']}"),
+            source_created_at=created,
+            source_updated_at=datetime.fromtimestamp(
+                float(msg.get("edited", {}).get("ts", msg["ts"])), tz=timezone.utc),
+            title=f"[#{self._channel_names.get(cid, cid)}] "
+                  f"{(msg.get('text') or '')[:80]}",
+            body=msg.get("text", ""),
+            author=msg.get("user") or msg.get("bot_id"),
+            parent_ref=None,
+            extra={"subtype": msg.get("subtype"),
+                   "reaction_count": sum(r.get("count", 0)
+                                         for r in msg.get("reactions", []) or []),
+                   "reply_count": msg.get("reply_count", 0)},
+        )
+
+    async def _build_thread_item(self, cid: str, parent: dict) -> BackfillItem:
+        thread_ts = parent["ts"]
+        bodies: list[str] = [parent.get("text", "")]
+        latest_edit_ts = float(parent["ts"])
+        cursor = None
+        char_budget = 4000
+        while True:
+            rp = await self._call_with_retry(
+                "conversations.replies", channel=cid,
+                ts=thread_ts, limit=200, cursor=cursor)
+            for r in rp.get("messages", []):
+                if r["ts"] == thread_ts:
+                    continue
+                ts = float(r["ts"])
+                # client-side cut: replies API ignores oldest/latest
+                if ts < self.since.timestamp() or ts >= self.until.timestamp():
+                    continue
+                text = r.get("text", "")
+                if sum(len(b) for b in bodies) + len(text) > char_budget:
+                    break
+                bodies.append(text)
+                latest_edit_ts = max(latest_edit_ts, ts)
+            if not rp.get("has_more"):
+                break
+            cursor = (rp.get("response_metadata") or {}).get("next_cursor")
+            if not cursor:
+                break
+        return BackfillItem(
+            source_kind="slack_msg",
+            source_native_id=f"{cid}:{thread_ts}:thread",
+            source_uri=parent.get("permalink",
+                                  f"slack://msg/{cid}/{thread_ts}"),
+            source_created_at=datetime.fromtimestamp(
+                float(thread_ts), tz=timezone.utc),
+            source_updated_at=datetime.fromtimestamp(
+                latest_edit_ts, tz=timezone.utc),
+            title=f"[#{self._channel_names.get(cid, cid)}] "
+                  f"{(parent.get('text') or '')[:80]}",
+            body="\n\n".join(bodies),
+            author=parent.get("user"),
+            parent_ref=None,  # this IS the parent
+            extra={"reaction_count": sum(r.get("count", 0)
+                                         for r in parent.get("reactions", []) or []),
+                   "reply_count": parent.get("reply_count", 0)},
+        )
