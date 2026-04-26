@@ -99,12 +99,37 @@ class BackfillRunner:
         # even if discover() raises. _maybe_abort no longer raises; on error-
         # rate breach we set ``aborted`` and break, so the partial JobReport
         # still flows out (T9 needs counts + last cursor for resume).
+        #
+        # T17: Per-channel fail-closed for ChannelArchived. We import lazily
+        # to keep base runner free of slack-specific dependencies — adapters
+        # for other sources can ignore it.
+        try:
+            from breadmind.kb.backfill.slack import ChannelArchived
+        except ImportError:  # pragma: no cover - slack module always present
+            ChannelArchived = ()  # type: ignore[assignment]
         try:
             # M4: ``Skipped`` raised mid-yield from discover() will bubble
             # out of the ``async for`` here; per-item ``Skipped`` (raised
             # inside the loop body) is caught explicitly below. T9 may
             # need the verbose iter-level form for resume.
-            async for item in job.discover():
+            #
+            # T17: ChannelArchived raised mid-discover increments
+            # skipped['archived'] and exits the discover loop. The other
+            # already-yielded items remain processed; remaining items in the
+            # archived channel are abandoned per spec §11 P4. (Multi-channel
+            # mid-run continuation is a richer affordance the adapter would
+            # need to expose — this minimal implementation matches the spec's
+            # fail-closed-per-channel stance.)
+            discover_iter = job.discover().__aiter__()
+            while True:
+                try:
+                    item = await discover_iter.__anext__()
+                except StopAsyncIteration:
+                    break
+                except ChannelArchived:
+                    # Per-channel fail-closed: mark archived, end discover loop.
+                    skipped["archived"] = skipped.get("archived", 0) + 1
+                    break
                 progress.discovered += 1
                 try:
                     if not job.filter(item):

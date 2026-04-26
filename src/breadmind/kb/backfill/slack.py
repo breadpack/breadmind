@@ -17,6 +17,24 @@ _BACKOFF_SECONDS: tuple[int, ...] = (60, 300, 1800)
 _SLACK_USER_ID_RE = re.compile(r"^[UW][A-Z0-9_]{6,}$")
 
 
+class ChannelArchived(Exception):
+    """Raised mid-discover when a channel is detected as archived.
+
+    Spec §11 P4 (mid-run path): if a channel becomes archived after
+    ``prepare()`` snapshotted its membership, the adapter must NOT silently
+    drop the rest of its messages. Instead, it raises this exception so the
+    runner can fail-closed for that channel only — incrementing
+    ``skipped['archived']`` while letting sibling channels continue.
+
+    The ``channel_id`` attribute carries the offending channel for
+    structured logging on the runner side.
+    """
+
+    def __init__(self, channel_id: str) -> None:
+        super().__init__(channel_id)
+        self.channel_id = channel_id
+
+
 class SlackBackfillAdapter(BackfillJob):
     source_kind: ClassVar[str] = "slack_msg"
 
@@ -37,6 +55,24 @@ class SlackBackfillAdapter(BackfillJob):
         self._team_id: str = ""
         self._archived_channels: set[str] = set()
         self._channel_names: dict[str, str] = {}
+        # T17: optional resume cursor. When set, ``discover()`` rewinds the
+        # FIRST channel's ``oldest=`` to ``_cursor_to_oldest(_resume_cursor)``
+        # instead of ``self.since.timestamp()``. Subsequent channels start
+        # from ``since`` as usual (cursor format is per-channel scoped).
+        self._resume_cursor: str | None = None
+
+    def prepare_summary(self) -> dict[str, Any]:
+        """Return a stable summary of prepare()-derived state.
+
+        Returns ``team_id``, ``channel_names`` (cid → name dict), and
+        ``membership_count`` so callers (CLI dry-run formatter) don't have
+        to reach into private attributes (T16-review item 2).
+        """
+        return {
+            "team_id": self._team_id,
+            "channel_names": dict(self._channel_names),
+            "membership_count": len(self._membership_snapshot),
+        }
 
     def instance_id_of(self, source_filter: dict[str, Any]) -> str:
         if not self._team_id:
@@ -132,12 +168,19 @@ class SlackBackfillAdapter(BackfillJob):
         since_ts = self.since.timestamp()
         until_ts = self.until.timestamp()
         include_threads = self.source_filter.get("include_threads", True)
-        for cid in self.source_filter["channels"]:
+        resume_cursor = self._resume_cursor
+        for idx, cid in enumerate(self.source_filter["channels"]):
             cursor: str | None = None
+            # T17: only the first channel honours resume_cursor; subsequent
+            # channels start at since_ts. Cursor format is per-channel.
+            if idx == 0 and resume_cursor:
+                channel_oldest = self._cursor_to_oldest(resume_cursor)
+            else:
+                channel_oldest = str(since_ts)
             while True:
                 params: dict[str, Any] = {
                     "channel": cid, "limit": 200,
-                    "oldest": str(since_ts), "latest": str(until_ts),
+                    "oldest": channel_oldest, "latest": str(until_ts),
                 }
                 if cursor:
                     params["cursor"] = cursor

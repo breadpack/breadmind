@@ -21,6 +21,10 @@ def build_parser() -> argparse.ArgumentParser:
     slack.add_argument("--since", required=True, type=_iso_date)
     slack.add_argument("--until", required=True, type=_iso_date)
     slack.add_argument("--token-budget", type=int, default=500_000)
+    # T16 review #1: project-name surfaces honestly in dry-run output. Until
+    # we have an org→project lookup wired, accept it as a CLI flag so the
+    # formatter doesn't always print "(unset)".
+    slack.add_argument("--project-name", dest="project_name", default="(unset)")
     slack.add_argument(
         "--include-threads", dest="include_threads",
         action="store_true", default=True)
@@ -219,18 +223,95 @@ async def _run_slack(
 async def _run_resume(
     job_id, *, db, redactor, embedder, slack_session, vault,
 ) -> int:
-    """Resume a paused/failed job. Implemented in T17."""
-    raise NotImplementedError("Resume is implemented in T17")
+    """Resume a paused/failed Slack backfill job from its last cursor.
+
+    Reads the kb_backfill_jobs row, reconstructs the SlackBackfillAdapter
+    with the same source_filter / window / token_budget, primes
+    ``adapter._resume_cursor`` so ``discover()`` rewinds the first channel's
+    ``oldest=`` to the persisted cursor, and re-invokes the runner.
+
+    Returns:
+        - 0 on successful resume completion
+        - 0 (no-op print) when row is dry-run (resume of a dry-run is meaningless)
+        - 4 when row is missing
+    """
+    import json
+    row = await db.fetchrow(
+        "SELECT id, org_id, source_kind, source_filter, instance_id, "
+        "since_ts, until_ts, dry_run, token_budget, last_cursor "
+        "FROM kb_backfill_jobs WHERE id=$1",
+        job_id,
+    )
+    if row is None:
+        print(f"job {job_id} not found")
+        return 4
+    if row["dry_run"]:
+        print("dry-run resume is a no-op")
+        return 0
+    from breadmind.kb.backfill.runner import BackfillRunner
+    from breadmind.kb.backfill.slack import SlackBackfillAdapter
+
+    sf = row["source_filter"]
+    if isinstance(sf, str):
+        sf = json.loads(sf)
+    job = SlackBackfillAdapter(
+        org_id=row["org_id"],
+        source_filter=sf,
+        since=row["since_ts"],
+        until=row["until_ts"],
+        dry_run=False,
+        token_budget=row["token_budget"],
+        vault=vault,
+        credentials_ref=f"slack:org:{row['org_id']}",
+        session=slack_session,
+    )
+    # Adapter honours this in discover(): first channel uses
+    # _cursor_to_oldest(_resume_cursor) instead of since_ts.
+    job._resume_cursor = row["last_cursor"]
+    await BackfillRunner(
+        db=db, redactor=redactor, embedder=embedder,
+    ).run(job)
+    return 0
 
 
 async def _run_list(args, *, db) -> int:
-    """List recent backfill jobs. Implemented in T17."""
-    raise NotImplementedError("List is implemented in T17")
+    """Print the 50 most-recent kb_backfill_jobs rows for ``--org``.
+
+    Optional ``--status`` filters by terminal status. Output is a fixed-
+    column ASCII table (no JSON / no rich formatting) so operators can
+    grep / awk it the same way as `kubectl get`.
+    """
+    sql = (
+        "SELECT id, source_kind, status, started_at "
+        "FROM kb_backfill_jobs WHERE org_id=$1"
+    )
+    params: list = [args.org]
+    if args.status:
+        sql += " AND status=$2"
+        params.append(args.status)
+    sql += " ORDER BY created_at DESC LIMIT 50"
+    rows = await db.fetch(sql, *params)
+    for row in rows:
+        print(
+            f"{row['id']}  {row['source_kind']:<12}  "
+            f"{row['status']:<10}  {row['started_at']}"
+        )
+    return 0
 
 
 async def _run_cancel(job_id, *, db) -> int:
-    """Cancel a running job. Implemented in T17."""
-    raise NotImplementedError("Cancel is implemented in T17")
+    """Mark a running/paused job as cancelled and stamp finished_at.
+
+    The WHERE clause is permissive (running OR paused) so this is a
+    no-op against already-terminal rows — useful for idempotent retries
+    from operators.
+    """
+    await db.execute(
+        "UPDATE kb_backfill_jobs SET status='cancelled', finished_at=now() "
+        "WHERE id=$1 AND status IN ('running','paused')",
+        job_id,
+    )
+    return 0
 
 
 async def _build_dry_run_ctx(
@@ -238,23 +319,30 @@ async def _build_dry_run_ctx(
 ) -> dict:
     """Best-effort context for the dry-run formatter.
 
-    T16 wires what is reachable from prepare()/runner state. T17 may enrich
-    (e.g., split top_level vs thread_root counts properly).
+    T16 wires what is reachable from prepare()/runner state. T17:
+      - read job state via :meth:`SlackBackfillAdapter.prepare_summary`
+        instead of poking private attrs (review item 2)
+      - use ``args.project_name`` honestly (review item 1)
+      - top_level / thread_root split is still rough; left for T18 e2e.
     """
     snapshot_at = report.started_at or datetime.now(timezone.utc)
+    summary = job.prepare_summary() if hasattr(job, "prepare_summary") else {}
+    team_id = summary.get("team_id") or "(unset)"
+    channel_names: dict = summary.get("channel_names") or {}
+    membership_count = summary.get("membership_count", 0)
     return {
         "project_name": getattr(args, "project_name", "(unset)"),
-        "team_id": job._team_id or "(unset)",
+        "team_id": team_id,
         "team_name": "(unset)",
         "channels": [
-            (cid, job._channel_names.get(cid, cid)) for cid in args.channel
+            (cid, channel_names.get(cid, cid)) for cid in args.channel
         ],
         "since": args.since,
         "until": args.until,
         "token_budget": args.token_budget,
         "monthly_remaining": remaining,
         "monthly_ceiling": monthly_ceiling,
-        "membership_count": len(job._membership_snapshot),
+        "membership_count": membership_count,
         "membership_snapshotted_at": snapshot_at,
         "thread_root_count": 0,
         "top_level_count": report.progress.discovered,
