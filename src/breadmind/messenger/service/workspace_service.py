@@ -7,6 +7,7 @@ import asyncpg
 
 from breadmind.messenger.errors import NotFound, Conflict, ValidationFailed
 from breadmind.messenger.service.audit_service import write_audit
+from breadmind.messenger.service.bootstrap_service import bootstrap_default_agent
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +39,7 @@ async def create_workspace(
         )
     except asyncpg.UniqueViolationError as e:
         raise Conflict(f"slug '{slug}' already taken") from e
+    await bootstrap_default_agent(db, workspace_id=wid)
     await write_audit(
         db, workspace_id=wid, entity_kind="workspace",
         action="create", actor_user_id=created_by,
