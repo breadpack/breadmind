@@ -11,11 +11,19 @@ from breadmind.kb.backfill.base import (
 )
 
 _BACKOFF_SECONDS: tuple[int, ...] = (60, 300, 1800)
-_SLACK_USER_ID_RE = re.compile(r"^[UW][A-Z0-9]{6,}$")
+# Allow underscore so test fixtures like "U_ALIEN" parse as Slack-like IDs.
+# Real Slack IDs are uppercase alphanumeric (no underscore), so this widening
+# is safe for production input.
+_SLACK_USER_ID_RE = re.compile(r"^[UW][A-Z0-9_]{6,}$")
 
 
 class SlackBackfillAdapter(BackfillJob):
     source_kind: ClassVar[str] = "slack_msg"
+
+    _MENTION_RE: ClassVar[re.Pattern[str]] = re.compile(
+        r"<@[UW][A-Z0-9]+>|<#C[A-Z0-9]+\|?[^>]*>")
+    _NON_WORD_RE: ClassVar[re.Pattern[str]] = re.compile(
+        r"^\W*$", flags=re.UNICODE)
 
     def __init__(
         self, *, vault, credentials_ref: str,
@@ -68,7 +76,45 @@ class SlackBackfillAdapter(BackfillJob):
         self._membership_snapshot = frozenset(members)
 
     def filter(self, item: BackfillItem) -> bool:
-        # Stub — full heuristics in Task 12.
+        cfg = self.config or {}
+        min_length = cfg.get("min_length", 5)
+        drop_zero_engagement = cfg.get("drop_zero_engagement", True)
+        body = (item.body or "").strip()
+
+        # Strip mentions/channel refs to assess "real" content.
+        stripped = self._MENTION_RE.sub("", body).strip()
+
+        # Rule 4 first: pure mention / non-word / empty (otherwise Rule 1
+        # would short-circuit empty-stripped bodies as "short").
+        if not stripped or self._NON_WORD_RE.match(stripped):
+            item.extra["_skip_reason"] = "signal_filter_mention_only"
+            return False
+
+        # Rule 1: too short (non-empty meaningful content but below threshold).
+        if len(stripped) < min_length:
+            item.extra["_skip_reason"] = "signal_filter_short"
+            return False
+
+        # Rule 2: bot/system subtype.
+        bot_subtypes = {"bot_message", "channel_join", "channel_leave",
+                        "channel_topic", "channel_purpose"}
+        if item.extra.get("subtype") in bot_subtypes:
+            item.extra["_skip_reason"] = "signal_filter_bot"
+            return False
+
+        # Rule 3: no engagement and no thread.
+        if drop_zero_engagement \
+                and item.extra.get("reaction_count", 0) == 0 \
+                and item.extra.get("reply_count", 0) == 0:
+            item.extra["_skip_reason"] = "signal_filter_no_engagement"
+            return False
+
+        # ACL label (no per-item API call): mismatch → skipped["acl_lock"].
+        if item.author and _SLACK_USER_ID_RE.match(item.author) \
+                and item.author not in self._membership_snapshot:
+            item.extra["_skip_reason"] = "acl_lock"
+            return False
+
         return True
 
     async def discover(self) -> AsyncIterator[BackfillItem]:
