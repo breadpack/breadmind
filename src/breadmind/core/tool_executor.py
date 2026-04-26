@@ -85,6 +85,9 @@ class ToolExecutor:
         # template; for now ToolExecutor only stores the raw notes list so the
         # caller (CoreAgent / context layer) can pick it up.
         self._last_recall_notes: list = []
+        # P1: rendered prior_runs system messages buffered between recalls
+        # and the next CoreAgent LLM turn (drained via ``drain_recall_messages``).
+        self._recall_messages: list[LLMMessage] = []
 
     @property
     def tool_timeout(self) -> int:
@@ -232,6 +235,14 @@ class ToolExecutor:
                 limit=limit,
             )
             self._last_recall_notes = list(notes or [])
+            if self._last_recall_notes:
+                from breadmind.memory.recall_render import render_previous_runs_for_tool
+
+                rendered = render_previous_runs_for_tool(tool_name, self._last_recall_notes)
+                for entry in rendered:
+                    self._recall_messages.append(
+                        LLMMessage(role=entry["role"], content=entry["content"])
+                    )
             try:
                 memory_recall_hit_count.observe(float(len(self._last_recall_notes)))
             except Exception:  # pragma: no cover - defensive
@@ -243,6 +254,19 @@ class ToolExecutor:
                 memory_recall_hit_count.observe(0.0)
             except Exception:  # pragma: no cover - defensive
                 logger.debug("recall_hit_count observe failed", exc_info=True)
+
+    def drain_recall_messages(self) -> list[LLMMessage]:
+        """Pop accumulated tool-level recall messages.
+
+        Returns the list of system messages produced by ``_do_recall`` since
+        the last drain, then clears the buffer. Safe to call when the buffer
+        is empty.
+        """
+        if not self._recall_messages:
+            return []
+        msgs = self._recall_messages
+        self._recall_messages = []
+        return msgs
 
     def _emit_tool_signal(
         self,

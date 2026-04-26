@@ -238,3 +238,91 @@ async def test_production_path_recall_failure_does_not_break_tool(make_agent):
     # Even though recall failed, the post-call signal must still fire.
     kinds = [c.args[0].kind for c in rec.record.await_args_list]
     assert SignalKind.TOOL_EXECUTED in kinds
+
+
+# ── P1: drain_recall_messages — render prior_runs as system messages ───
+
+
+def _make_note(*, summary: str, tool_name: str, outcome: str = "neutral") -> "EpisodicNote":  # noqa: F821
+    """Helper: build an EpisodicNote with the fields the recall template uses."""
+    from breadmind.storage.models import EpisodicNote
+
+    return EpisodicNote(
+        content=summary,
+        keywords=[],
+        tags=[],
+        context_description="",
+        summary=summary,
+        tool_name=tool_name,
+        outcome=outcome,
+        kind="tool_executed",
+    )
+
+
+@pytest.mark.asyncio
+async def test_drain_recall_messages_returns_rendered_system_message(tool_executor_factory):
+    """After _do_recall finds notes, drain returns one system message with the rendered prior_runs."""
+    notes = [_make_note(summary="kubectl-prior-A", tool_name="kubectl_run", outcome="ok")]
+    store = AsyncMock()
+    store.search.return_value = notes
+    ex = tool_executor_factory(store=store, recorder=AsyncMock())
+
+    await ex._do_recall(tool_name="kubectl_run", args={"cmd": "get pods"}, user_id="alice")
+    msgs = ex.drain_recall_messages()
+
+    assert len(msgs) == 1
+    assert msgs[0].role == "system"
+    assert "kubectl_run" in msgs[0].content
+    assert "kubectl-prior-A" in msgs[0].content
+    # Buffer is now empty.
+    assert ex.drain_recall_messages() == []
+
+
+@pytest.mark.asyncio
+async def test_drain_recall_messages_accumulates_across_recalls(tool_executor_factory):
+    """Two _do_recall calls produce two system messages (one per tool_name)."""
+    note_a = [_make_note(summary="a-prior", tool_name="echo", outcome="ok")]
+    note_b = [_make_note(summary="b-prior", tool_name="aws_vpc_create", outcome="failed")]
+    store = AsyncMock()
+    store.search.side_effect = [note_a, note_b]
+    ex = tool_executor_factory(store=store, recorder=AsyncMock())
+
+    await ex._do_recall(tool_name="echo", args={"x": "1"}, user_id="alice")
+    await ex._do_recall(tool_name="aws_vpc_create", args={"region": "x"}, user_id="alice")
+    msgs = ex.drain_recall_messages()
+
+    assert len(msgs) == 2
+    contents = "\n".join(m.content for m in msgs)
+    assert "echo" in contents and "a-prior" in contents
+    assert "aws_vpc_create" in contents and "b-prior" in contents
+
+
+@pytest.mark.asyncio
+async def test_drain_recall_messages_empty_when_no_notes(tool_executor_factory):
+    """Empty notes from store → drain returns []."""
+    store = AsyncMock()
+    store.search.return_value = []
+    ex = tool_executor_factory(store=store, recorder=AsyncMock())
+
+    await ex._do_recall(tool_name="echo", args={}, user_id=None)
+    assert ex.drain_recall_messages() == []
+
+
+@pytest.mark.asyncio
+async def test_drain_recall_messages_empty_when_episodic_store_missing(tool_executor_factory):
+    """Without episodic_store, drain returns []."""
+    ex = tool_executor_factory(store=None, recorder=AsyncMock())
+
+    await ex._do_recall(tool_name="echo", args={}, user_id=None)
+    assert ex.drain_recall_messages() == []
+
+
+@pytest.mark.asyncio
+async def test_drain_recall_messages_empty_when_recall_raises(tool_executor_factory):
+    """If recall raises, no message is buffered."""
+    store = AsyncMock()
+    store.search.side_effect = RuntimeError("oh no")
+    ex = tool_executor_factory(store=store, recorder=AsyncMock())
+
+    await ex._do_recall(tool_name="echo", args={}, user_id=None)
+    assert ex.drain_recall_messages() == []
