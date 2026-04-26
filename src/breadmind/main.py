@@ -216,6 +216,18 @@ def _build_parser() -> argparse.ArgumentParser:
     j_logs.add_argument("--lines", type=int, default=200)
     j_logs.add_argument("--plain", action="store_true")
 
+    # breadmind kb backfill <slack|resume|list|cancel> ...
+    # The actual subcommand parsing is delegated to
+    # ``breadmind.kb.backfill.cli.build_parser`` so the kb-backfill module
+    # owns its own argument schema. We capture the rest of argv with
+    # REMAINDER and pass it through during dispatch.
+    kb_parser = sub.add_parser("kb", help="Knowledge base operations")
+    kb_sub = kb_parser.add_subparsers(dest="kb_command")
+    bf_parser = kb_sub.add_parser(
+        "backfill",
+        help="Bulk history backfill (run `... backfill <subcommand> --help` for options)")
+    bf_parser.add_argument("rest", nargs=argparse.REMAINDER)
+
     return parser
 
 
@@ -661,6 +673,78 @@ async def run(args: argparse.Namespace | None = None):
     if args.command == "setup":
         from breadmind.cli.setup import run_setup
         await run_setup(args)
+        return
+
+    if args.command == "kb":
+        kb_command = getattr(args, "kb_command", None)
+        if kb_command == "backfill":
+            # T19 (review fix): delegate to ``cli.main_async`` so subcommands
+            # (slack/resume/list/cancel) actually run instead of just echoing
+            # the parsed namespace. We bootstrap a lightweight stack
+            # (config + .env + DB + CredentialVault) — same pattern as the
+            # ``smoke`` branch — without dragging in the agent/tools graph
+            # the web/chat paths need.
+            from breadmind.kb.backfill.cli import main_async as bf_main_async
+            from breadmind.kb.redactor import Redactor
+            from breadmind.memory.embedding import EmbeddingService
+            from breadmind.storage.credential_vault import CredentialVault
+            from breadmind.storage.database import Database as _KbDatabase
+
+            # Resolve config dir using the same fall-through used by smoke /
+            # the main bootstrap so users don't get surprised by .env/config
+            # mismatches between commands.
+            kb_config_dir = getattr(args, "config_dir", None) or get_default_config_dir()
+            if os.path.isdir(kb_config_dir) and os.path.exists(
+                os.path.join(kb_config_dir, "config.yaml")
+            ):
+                kb_config = load_config(kb_config_dir)
+            elif os.path.isdir("config"):
+                kb_config = load_config("config")
+                kb_config_dir = "config"
+            else:
+                kb_config = load_config(kb_config_dir)
+            kb_env_file = os.path.join(kb_config_dir, ".env")
+            set_env_file_path(kb_env_file)
+            load_env_file(kb_env_file)
+
+            kb_db_cfg = kb_config.database
+            kb_dsn = (
+                f"postgresql://{kb_db_cfg.user}:{kb_db_cfg.password}"
+                f"@{kb_db_cfg.host}:{kb_db_cfg.port}/{kb_db_cfg.name}"
+            )
+            kb_db = _KbDatabase(kb_dsn)
+            try:
+                await kb_db.connect()
+            except Exception as exc:
+                print(f"  kb backfill: database connect failed ({exc})")
+                sys.exit(2)
+
+            kb_vault = CredentialVault(kb_db)
+            kb_redactor = Redactor.default()
+            kb_embedder = EmbeddingService(provider="fastembed")
+            # TODO(kb-backfill-followup): no production-grade Slack web-API
+            # session class exists yet — the SlackBackfillAdapter expects
+            # ``session.call(method, **kwargs)`` (slack-sdk-shaped). Until a
+            # real session is wired, slack/resume runs will fail at
+            # ``auth.test`` with a clear AttributeError. ``list`` and
+            # ``cancel`` work today (they only touch DB).
+            kb_slack_session = None
+            try:
+                rc = await bf_main_async(
+                    args.rest,
+                    db=kb_db,
+                    redactor=kb_redactor,
+                    embedder=kb_embedder,
+                    slack_session=kb_slack_session,
+                    vault=kb_vault,
+                )
+            finally:
+                try:
+                    await kb_db.disconnect()
+                except Exception:
+                    pass
+            sys.exit(rc)
+        print("Usage: breadmind kb <backfill> ...")
         return
 
     config_dir = args.config_dir or get_default_config_dir()

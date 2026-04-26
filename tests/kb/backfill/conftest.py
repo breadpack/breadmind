@@ -1,6 +1,7 @@
 """Backfill-test fixtures: fake redactor and fake/exploding embedder."""
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 
 import pytest
@@ -56,3 +57,39 @@ def fake_embedder() -> FakeEmbedder:
 @pytest.fixture
 def exploding_embedder() -> ExplodingEmbedder:
     return ExplodingEmbedder()
+
+
+# ---------------------------------------------------------------------------
+# CLI dispatch fixtures (T16) — minimal stubs for tests that monkeypatch
+# the runner / budget so they never actually touch a database.
+# ---------------------------------------------------------------------------
+
+
+class _MemBackfillDB:
+    """Stub Database for CLI dispatch tests.
+
+    The two T16 tests monkeypatch ``BackfillRunner.run`` and the
+    ``_monthly_remaining`` helper, so neither test reaches a real DB call.
+    This stub exists only to be passed through ``main_async`` argument
+    forwarding without raising.
+    """
+
+    async def fetchrow(self, *_a, **_kw):  # pragma: no cover - safety net
+        return None
+
+    async def fetch(self, *_a, **_kw):  # pragma: no cover - safety net
+        return []
+
+    async def execute(self, *_a, **_kw):  # pragma: no cover - safety net
+        return None
+
+
+@pytest.fixture
+def mem_backfill_db() -> _MemBackfillDB:
+    return _MemBackfillDB()
+
+
+@pytest.fixture
+def seeded_org() -> uuid.UUID:
+    """Stable org UUID for CLI dispatch tests (no DB write side-effect)."""
+    return uuid.UUID("00000000-0000-0000-0000-0000000000aa")

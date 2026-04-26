@@ -9,6 +9,7 @@ from breadmind.kb.backfill.budget import (
     OrgMonthlyBudget,
     OrgMonthlyBudgetExceeded,
 )
+from breadmind.kb.backfill.slack import SlackBackfillAdapter
 
 __all__ = [
     "BackfillItem",
@@ -17,5 +18,6 @@ __all__ = [
     "JobReport",
     "OrgMonthlyBudget",
     "OrgMonthlyBudgetExceeded",
+    "SlackBackfillAdapter",
     "Skipped",
 ]
