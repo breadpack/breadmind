@@ -421,18 +421,30 @@ class Database:
         return getattr(self, '_has_pgvector', False)
 
     async def save_note_with_vector(self, note: EpisodicNote, embedding: list[float]) -> int:
-        """Save note with both FLOAT8[] embedding and vector(384) embedding_vec."""
+        """Save note with both FLOAT8[] embedding and vector(384) embedding_vec.
+
+        Mirrors :meth:`save_note` for Phase 1 recorder fields so the recall
+        store stays consistent regardless of which write path is used.
+        """
         async with self.acquire() as conn:
             row = await conn.fetchrow("""
                 INSERT INTO episodic_notes
                     (content, keywords, tags, context_description, embedding,
-                     linked_note_ids, decay_weight, embedding_vec)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8::vector)
+                     linked_note_ids, decay_weight, created_at, updated_at,
+                     kind, tool_name, tool_args_digest, outcome,
+                     session_id, user_id, summary, pinned,
+                     embedding_vec)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+                        $10, $11, $12, $13, $14, $15, $16, $17,
+                        $18::vector)
                 RETURNING id
             """,
                 note.content, note.keywords, note.tags,
                 note.context_description, embedding,
                 note.linked_note_ids, note.decay_weight,
+                note.created_at, note.updated_at,
+                note.kind, note.tool_name, note.tool_args_digest, note.outcome,
+                note.session_id, note.user_id, note.summary, note.pinned,
                 str(embedding),  # pgvector accepts string format '[0.1,0.2,...]'
             )
             return row["id"]
