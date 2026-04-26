@@ -47,7 +47,32 @@ def build_parser() -> argparse.ArgumentParser:
     cancel = sub.add_parser("cancel", help="Cancel a running job")
     cancel.add_argument("job_id", type=uuid.UUID)
 
+    _add_notion_subparser(sub)
+
     return p
+
+
+def _iso_date_optional(s: str) -> datetime:
+    return datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+
+
+def _add_notion_subparser(sub: argparse._SubParsersAction) -> None:  # type: ignore[name-defined]
+    """Register the ``notion`` sub-command under ``breadmind kb backfill``."""
+    notion = sub.add_parser("notion", help="Notion workspace KB backfill")
+    notion.add_argument("--org", required=True, type=uuid.UUID)
+    notion.add_argument("--workspace", required=True)
+    notion.add_argument(
+        "--since",
+        type=_iso_date_optional,
+        default=datetime(1970, 1, 1, tzinfo=timezone.utc),
+    )
+    notion.add_argument(
+        "--until",
+        type=_iso_date_optional,
+        default=None,
+    )
+    notion.add_argument("--token-budget", dest="token_budget", type=int, default=2_000_000)
+    notion.add_argument("--dry-run", dest="dry_run", action="store_true", default=False)
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -351,3 +376,13 @@ async def _build_dry_run_ctx(
         "thread_root_count": 0,
         "top_level_count": report.progress.discovered,
     }
+
+
+# ---------------------------------------------------------------------------
+# Notion subcommand — dry-run formatter + dispatcher (Tasks 11-13)
+# ---------------------------------------------------------------------------
+# Notion-specific functions live in cli_notion.py to keep this file ≤ 500 LOC.
+from breadmind.kb.backfill.cli_notion import (  # noqa: E402,F401  (re-export)
+    format_notion_dry_run,  # noqa: F401
+    main_async_notion,  # noqa: F401
+)
