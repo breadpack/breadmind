@@ -27,10 +27,15 @@ class _Window:
 
 @dataclass
 class HourlyPageBudget:
-    """Sliding-hour page budget keyed by project id.
+    """Sliding-hour page budget keyed by ``(project_id, instance_id)``.
+
+    Keys are ``(project_id, instance_id)`` so a single project can run
+    independent budgets per source instance (e.g., two Slack workspaces).
+    Callers that don't need the second dimension simply omit ``instance_id``;
+    the default ``None`` makes ``(project_id, None)`` the legacy key.
 
     The window is reset lazily when ``now() - window.start >= 3600`` on the
-    next :meth:`consume` call for that project — there is no background timer.
+    next :meth:`consume` call for that key — there is no background timer.
 
     .. warning::
        **Single-process only.** State lives in a process-local ``dict``; it
@@ -46,20 +51,27 @@ class HourlyPageBudget:
 
     limit: int = 1000
     now: Callable[[], float] = field(default_factory=lambda: time.monotonic)
-    _windows: dict[uuid.UUID, _Window] = field(default_factory=dict)
+    _windows: dict[tuple[uuid.UUID, str | None], _Window] = field(default_factory=dict)
 
-    async def consume(self, project_id: uuid.UUID, count: int = 1) -> None:
+    async def consume(
+        self,
+        project_id: uuid.UUID,
+        count: int = 1,
+        *,
+        instance_id: str | None = None,
+    ) -> None:
         t = self.now()
-        window = self._windows.get(project_id)
+        key = (project_id, instance_id)
+        window = self._windows.get(key)
         if window is None or t - window.start >= 3600.0:
             window = _Window(start=t, count=0)
-            self._windows[project_id] = window
+            self._windows[key] = window
         if window.count + count > self.limit:
             raise BudgetExceeded(
-                f"project {project_id} exceeded hourly page budget "
-                f"({window.count}+{count} > {self.limit})"
+                f"project {project_id} (instance={instance_id}) exceeded hourly "
+                f"page budget ({window.count}+{count} > {self.limit})"
             )
         window.count += count
 
-    def reset(self, project_id: uuid.UUID) -> None:
-        self._windows.pop(project_id, None)
+    def reset(self, project_id: uuid.UUID, instance_id: str | None = None) -> None:
+        self._windows.pop((project_id, instance_id), None)
