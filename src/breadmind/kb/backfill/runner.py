@@ -1,6 +1,8 @@
 """Backfill pipeline orchestrator."""
 from __future__ import annotations
 
+import dataclasses
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -14,6 +16,7 @@ from breadmind.kb.backfill.base import (
     Skipped,
 )
 from breadmind.kb.backfill.budget import OrgMonthlyBudget
+from breadmind.kb.backfill.checkpoint import JobCheckpointer
 from breadmind.kb.redactor import SecretDetected
 from breadmind.storage.database import Database
 
@@ -51,6 +54,8 @@ class BackfillRunner:
     redactor: object | None
     embedder: object | None
     org_budget: OrgMonthlyBudget | None = None
+    checkpointer: JobCheckpointer | None = None
+    created_by: str = "system"
     checkpoint_every_n: int = 50
     checkpoint_every_seconds: float = 30.0
     error_ratio_threshold: float = 0.10
@@ -66,6 +71,29 @@ class BackfillRunner:
         aborted = False
         error_message: str | None = None
         last_item: BackfillItem | None = None
+
+        # T9: insert kb_backfill_jobs row (status='running') so the row exists
+        # before we touch any items. Stays None when no checkpointer was wired
+        # (existing T7/T8 dry-run/unit tests still work without DB writes).
+        job_id: uuid.UUID | None = None
+        if self.checkpointer is not None:
+            job_id = await self.checkpointer.start(
+                org_id=job.org_id,
+                source_kind=job.source_kind,
+                source_filter=job.source_filter,
+                instance_id=job.instance_id_of(job.source_filter),
+                since=job.since,
+                until=job.until,
+                dry_run=job.dry_run,
+                token_budget=job.token_budget,
+                created_by=self.created_by,
+            )
+
+        # T9: cadence locals — checkpoint every N discovered items OR every
+        # checkpoint_every_seconds (whichever fires first). monotonic time
+        # so we are immune to wall-clock jumps.
+        last_cp_count = 0
+        last_cp_time = time.monotonic()
 
         # M3: wrap the discover loop in try/finally so teardown always runs,
         # even if discover() raises. _maybe_abort no longer raises; on error-
@@ -83,6 +111,11 @@ class BackfillRunner:
                         reason = item.extra.get("_skip_reason", "filtered")
                         skipped[reason] = skipped.get(reason, 0) + 1
                         progress.filtered_out += 1
+                        last_cp_count, last_cp_time = await self._maybe_checkpoint(
+                            job_id, progress, skipped,
+                            job.cursor_of(last_item) if last_item else None,
+                            last_cp_count, last_cp_time,
+                        )
                         continue
 
                     if len(sample_titles) < _SAMPLE_LIMIT:
@@ -94,6 +127,11 @@ class BackfillRunner:
                         # step exists. Real-run charges post-redact (I2).
                         progress.tokens_consumed += len(item.body) // 4
                         last_item = item
+                        last_cp_count, last_cp_time = await self._maybe_checkpoint(
+                            job_id, progress, skipped,
+                            job.cursor_of(last_item),
+                            last_cp_count, last_cp_time,
+                        )
                         continue
 
                     outcome = await self._process_item(
@@ -108,17 +146,66 @@ class BackfillRunner:
                             aborted = True
                             error_message = msg
                             break
+                        # T9: still checkpoint by discovered-count even on
+                        # individual item failures so resume cursor advances
+                        # past the failed run if abort threshold is not yet
+                        # breached.
+                        last_cp_count, last_cp_time = await self._maybe_checkpoint(
+                            job_id, progress, skipped,
+                            job.cursor_of(last_item) if last_item else None,
+                            last_cp_count, last_cp_time,
+                        )
                         continue
                     if outcome is _Outcome.STORED:
                         last_item = item
+                    # T9: checkpoint after every item (STORED or DROPPED) by
+                    # discovered count; cadence gating lives in the helper.
+                    last_cp_count, last_cp_time = await self._maybe_checkpoint(
+                        job_id, progress, skipped,
+                        job.cursor_of(last_item) if last_item else None,
+                        last_cp_count, last_cp_time,
+                    )
                 except Skipped as e:
                     # M4: per-item Skipped (raised by filter/transform inside
                     # the loop body) becomes a counted skip and we continue.
                     skipped[e.reason] = skipped.get(e.reason, 0) + 1
                     progress.filtered_out += 1
+                    last_cp_count, last_cp_time = await self._maybe_checkpoint(
+                        job_id, progress, skipped,
+                        job.cursor_of(last_item) if last_item else None,
+                        last_cp_count, last_cp_time,
+                    )
                     continue
         finally:
             await job.teardown()
+            # T9: finalize the kb_backfill_jobs row even on abort/exception.
+            # Final checkpoint write captures the latest cursor + counts so
+            # a resumer reads the truth, then finish() stamps terminal state.
+            if self.checkpointer is not None and job_id is not None:
+                await self.checkpointer.checkpoint(
+                    job_id=job_id,
+                    cursor=job.cursor_of(last_item) if last_item else None,
+                    progress=dataclasses.asdict(progress),
+                    skipped=skipped,
+                )
+                if aborted:
+                    await self.checkpointer.finish(
+                        job_id=job_id,
+                        status="failed",
+                        error=error_message,
+                    )
+                elif budget_hit:
+                    await self.checkpointer.finish(
+                        job_id=job_id,
+                        status="paused",
+                        error=None,
+                    )
+                else:
+                    await self.checkpointer.finish(
+                        job_id=job_id,
+                        status="completed",
+                        error=None,
+                    )
 
         finished_at = datetime.now(timezone.utc)
 
@@ -238,6 +325,40 @@ class BackfillRunner:
             return _Outcome.ERRORED
 
         return _Outcome.STORED
+
+    async def _maybe_checkpoint(
+        self,
+        job_id: uuid.UUID | None,
+        progress: JobProgress,
+        skipped: dict[str, int],
+        cursor: str | None,
+        last_cp_count: int,
+        last_cp_time: float,
+    ) -> tuple[int, float]:
+        """Write a checkpoint row if the N-item or T-second cadence fired.
+
+        Returns updated ``(last_cp_count, last_cp_time)`` so the caller can
+        rebind its cadence locals. No-op (returns inputs) when the
+        checkpointer is unwired or the cadence thresholds have not been
+        crossed since the previous write.
+        """
+        if self.checkpointer is None or job_id is None:
+            return last_cp_count, last_cp_time
+        now = time.monotonic()
+        delta_n = progress.discovered - last_cp_count
+        delta_t = now - last_cp_time
+        if (
+            delta_n < self.checkpoint_every_n
+            and delta_t < self.checkpoint_every_seconds
+        ):
+            return last_cp_count, last_cp_time
+        await self.checkpointer.checkpoint(
+            job_id=job_id,
+            cursor=cursor,
+            progress=dataclasses.asdict(progress),
+            skipped=skipped,
+        )
+        return progress.discovered, now
 
     def _maybe_abort(
         self, progress: JobProgress
