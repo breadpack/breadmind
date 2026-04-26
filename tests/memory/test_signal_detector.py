@@ -5,12 +5,14 @@ from breadmind.memory.signals import SignalDetector, TurnSnapshot
 
 
 SID = uuid.uuid4()
+OID = uuid.uuid4()
 
 
 def _snap(**kw) -> TurnSnapshot:
     base = dict(
         user_id="alice",
         session_id=SID,
+        org_id=None,
         user_message="",
         last_tool_name=None,
         prior_turn_summary=None,
@@ -125,3 +127,55 @@ def test_ko_correction_unaffected_by_en_word_boundary_change():
     ))
     assert e is not None
     assert e.kind is SignalKind.USER_CORRECTION
+
+
+# ── org_id propagation from TurnSnapshot → SignalEvent ──
+
+
+def test_org_id_propagates_on_tool_finished():
+    d = SignalDetector()
+    snap = _snap(org_id=OID)
+    e = d.on_tool_finished(
+        snap,
+        tool_name="aws_vpc_create",
+        tool_args={"region": "us-east-1"},
+        ok=True,
+        result_text="vpc-456 created",
+    )
+    assert e.org_id == OID
+
+
+def test_org_id_propagates_on_reflexion():
+    d = SignalDetector()
+    snap = _snap(org_id=OID)
+    e = d.on_reflexion(snap, reflexion_text="learned: use smaller timeout")
+    assert e.org_id == OID
+
+
+def test_org_id_propagates_on_user_message_pin():
+    d = SignalDetector()
+    snap = _snap(org_id=OID, user_message="remember this: staging DB host is db-stg")
+    e = d.on_user_message(snap)
+    assert e is not None
+    assert e.org_id == OID
+
+
+def test_org_id_propagates_on_user_correction():
+    d = SignalDetector()
+    snap = _snap(
+        org_id=OID,
+        user_message="no, that's wrong",
+        last_tool_name="aws_vpc_create",
+    )
+    e = d.on_user_message(snap)
+    assert e is not None
+    assert e.org_id == OID
+
+
+def test_org_id_none_when_not_set():
+    d = SignalDetector()
+    snap = _snap(org_id=None)
+    e = d.on_tool_finished(
+        snap, tool_name="x", tool_args={}, ok=True, result_text="ok"
+    )
+    assert e.org_id is None

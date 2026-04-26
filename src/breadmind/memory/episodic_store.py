@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import uuid
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -19,6 +21,7 @@ class EpisodicFilter:
     tool_args_digest: str | None = None
     keywords: list[str] | None = None
     pinned_only: bool = False
+    org_id: uuid.UUID | None = None
 
 
 class EpisodicStore(Protocol):
@@ -62,6 +65,14 @@ class PostgresEpisodicStore:
 
         if user_id is not None:
             clauses.append(f"(user_id IS NULL OR user_id = {_p(user_id)})")
+        if filters.org_id is not None:
+            _strict = os.environ.get("BREADMIND_EPISODIC_STRICT_ORG", "").strip().lower() in {
+                "1", "true", "yes", "on"
+            }
+            if _strict:
+                clauses.append(f"org_id = {_p(filters.org_id)}")
+            else:
+                clauses.append(f"(org_id IS NULL OR org_id = {_p(filters.org_id)})")
         if filters.kinds:
             clauses.append(f"kind = ANY({_p([k.value for k in filters.kinds])}::text[])")
         if filters.tool_name:

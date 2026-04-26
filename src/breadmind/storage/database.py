@@ -1,5 +1,6 @@
 import json
 import logging
+import uuid
 
 import asyncpg
 from contextlib import asynccontextmanager
@@ -302,8 +303,8 @@ class Database:
                     (content, keywords, tags, context_description, embedding,
                      linked_note_ids, decay_weight, created_at, updated_at,
                      kind, tool_name, tool_args_digest, outcome,
-                     session_id, user_id, summary, pinned)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+                     session_id, user_id, summary, pinned, org_id)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
                 RETURNING id
             """,
                 note.content, note.keywords, note.tags, note.context_description,
@@ -311,30 +312,51 @@ class Database:
                 note.created_at, note.updated_at,
                 note.kind, note.tool_name, note.tool_args_digest, note.outcome,
                 note.session_id, note.user_id, note.summary, note.pinned,
+                note.org_id,
             )
 
     async def search_notes_by_keywords(
-        self, keywords: list[str], limit: int = 5
+        self, keywords: list[str], limit: int = 5,
+        org_id: uuid.UUID | None = None,
     ) -> list[EpisodicNote]:
         async with self.acquire() as conn:
-            rows = await conn.fetch("""
-                SELECT * FROM episodic_notes
-                WHERE keywords && $1::TEXT[]
-                ORDER BY decay_weight DESC, created_at DESC
-                LIMIT $2
-            """, keywords, limit)
+            if org_id is None:
+                rows = await conn.fetch("""
+                    SELECT * FROM episodic_notes
+                    WHERE keywords && $1::TEXT[]
+                    ORDER BY decay_weight DESC, created_at DESC
+                    LIMIT $2
+                """, keywords, limit)
+            else:
+                rows = await conn.fetch("""
+                    SELECT * FROM episodic_notes
+                    WHERE keywords && $1::TEXT[]
+                      AND (org_id IS NULL OR org_id = $3)
+                    ORDER BY decay_weight DESC, created_at DESC
+                    LIMIT $2
+                """, keywords, limit, org_id)
             return [self._row_to_note(r) for r in rows]
 
     async def search_notes_by_tags(
-        self, tags: list[str], limit: int = 5
+        self, tags: list[str], limit: int = 5,
+        org_id: uuid.UUID | None = None,
     ) -> list[EpisodicNote]:
         async with self.acquire() as conn:
-            rows = await conn.fetch("""
-                SELECT * FROM episodic_notes
-                WHERE tags && $1::TEXT[]
-                ORDER BY decay_weight DESC, created_at DESC
-                LIMIT $2
-            """, tags, limit)
+            if org_id is None:
+                rows = await conn.fetch("""
+                    SELECT * FROM episodic_notes
+                    WHERE tags && $1::TEXT[]
+                    ORDER BY decay_weight DESC, created_at DESC
+                    LIMIT $2
+                """, tags, limit)
+            else:
+                rows = await conn.fetch("""
+                    SELECT * FROM episodic_notes
+                    WHERE tags && $1::TEXT[]
+                      AND (org_id IS NULL OR org_id = $3)
+                    ORDER BY decay_weight DESC, created_at DESC
+                    LIMIT $2
+                """, tags, limit, org_id)
             return [self._row_to_note(r) for r in rows]
 
     async def delete_note(self, note_id: int) -> bool:
@@ -399,6 +421,7 @@ class Database:
             user_id=row["user_id"],
             summary=row["summary"] or "",
             pinned=row["pinned"],
+            org_id=row["org_id"],
         )
 
     # --- pgvector ---
@@ -419,11 +442,11 @@ class Database:
                     (content, keywords, tags, context_description, embedding,
                      linked_note_ids, decay_weight, created_at, updated_at,
                      kind, tool_name, tool_args_digest, outcome,
-                     session_id, user_id, summary, pinned,
+                     session_id, user_id, summary, pinned, org_id,
                      embedding_vec)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
-                        $10, $11, $12, $13, $14, $15, $16, $17,
-                        $18::vector)
+                        $10, $11, $12, $13, $14, $15, $16, $17, $18,
+                        $19::vector)
                 RETURNING id
             """,
                 note.content, note.keywords, note.tags,
@@ -432,6 +455,7 @@ class Database:
                 note.created_at, note.updated_at,
                 note.kind, note.tool_name, note.tool_args_digest, note.outcome,
                 note.session_id, note.user_id, note.summary, note.pinned,
+                note.org_id,
                 str(embedding),  # pgvector accepts string format '[0.1,0.2,...]'
             )
             return row["id"]

@@ -1,3 +1,5 @@
+import uuid
+
 from breadmind.memory.event_types import (
     SignalKind, SignalEvent, stable_hash, keyword_extract,
 )
@@ -43,3 +45,19 @@ def test_signal_event_minimal_fields():
     )
     assert e.kind is SignalKind.TOOL_EXECUTED
     assert e.tool_args["region"] == "ap-northeast-2"
+
+
+def test_signal_event_org_id_frozen_roundtrip():
+    oid = uuid.uuid4()
+    e = SignalEvent(
+        kind=SignalKind.REFLEXION,
+        user_id="bob",
+        session_id=None,
+        org_id=oid,
+        user_message="learned something",
+        tool_name=None,
+        tool_args=None,
+        tool_result_text=None,
+        prior_turn_summary=None,
+    )
+    assert e.org_id == oid

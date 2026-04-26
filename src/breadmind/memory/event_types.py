@@ -42,11 +42,12 @@ class SignalEvent:
     kind: SignalKind
     user_id: str
     session_id: uuid.UUID | None
-    user_message: str | None
-    tool_name: str | None
-    tool_args: dict | None
-    tool_result_text: str | None
-    prior_turn_summary: str | None
+    org_id: uuid.UUID | None = None
+    user_message: str | None = None
+    tool_name: str | None = None
+    tool_args: dict | None = None
+    tool_result_text: str | None = None
+    prior_turn_summary: str | None = None
 
 
 def stable_hash(args: dict | None) -> str | None:

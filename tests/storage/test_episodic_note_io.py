@@ -114,3 +114,97 @@ async def test_save_note_with_vector_legacy_defaults(test_db):
     assert saved.tool_name is None
     assert saved.summary == ""
     assert saved.pinned is False
+
+
+# ── T3: org_id round-trip ─────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_save_note_persists_org_id(test_db, insert_org):
+    """org_id is stored and reloaded intact via save_note."""
+    oid = uuid.uuid4()
+    await insert_org(oid)
+    note = EpisodicNote(
+        content="org-id test note",
+        keywords=["orgidtest"],
+        tags=[],
+        context_description="",
+        org_id=oid,
+    )
+    note_id = await test_db.save_note(note)
+    rows = await test_db.search_notes_by_keywords(["orgidtest"], limit=5)
+    saved = next(r for r in rows if r.id == note_id)
+    assert saved.org_id == oid
+
+
+@pytest.mark.asyncio
+async def test_save_note_org_id_none_regression(test_db):
+    """org_id=None (legacy) saves and reads back as None without error."""
+    note = EpisodicNote(
+        content="legacy no org",
+        keywords=["orgnulltest"],
+        tags=[],
+        context_description="",
+        org_id=None,
+    )
+    note_id = await test_db.save_note(note)
+    rows = await test_db.search_notes_by_keywords(["orgnulltest"], limit=5)
+    saved = next(r for r in rows if r.id == note_id)
+    assert saved.org_id is None
+
+
+@pytest.mark.asyncio
+async def test_save_note_with_vector_persists_org_id(test_db, insert_org):
+    """org_id is stored and reloaded intact via save_note_with_vector."""
+    try:
+        await test_db.setup_pgvector(384)
+    except Exception as exc:
+        pytest.skip(f"pgvector unavailable: {exc}")
+
+    oid = uuid.uuid4()
+    await insert_org(oid)
+    note = EpisodicNote(
+        content="org-id vec test",
+        keywords=["orgidvectest"],
+        tags=[],
+        context_description="",
+        org_id=oid,
+    )
+    embedding = [0.0] * 384
+
+    note_id = await test_db.save_note_with_vector(note, embedding)
+    rows = await test_db.search_notes_by_keywords(["orgidvectest"], limit=5)
+    saved = next(r for r in rows if r.id == note_id)
+    assert saved.org_id == oid
+
+
+@pytest.mark.asyncio
+async def test_search_notes_by_keywords_org_id_isolation(test_db, insert_org):
+    """search_notes_by_keywords with org_id returns only that org's notes (plus NULL-org)."""
+    org_a = uuid.uuid4()
+    org_b = uuid.uuid4()
+
+    kw = "orgisokw"
+
+    await insert_org(org_a)
+    await insert_org(org_b)
+
+    note_a = EpisodicNote(
+        content="note for org A", keywords=[kw], tags=[], context_description="", org_id=org_a
+    )
+    note_b = EpisodicNote(
+        content="note for org B", keywords=[kw], tags=[], context_description="", org_id=org_b
+    )
+    note_null = EpisodicNote(
+        content="note no org", keywords=[kw], tags=[], context_description="", org_id=None
+    )
+
+    id_a = await test_db.save_note(note_a)
+    id_b = await test_db.save_note(note_b)
+    id_null = await test_db.save_note(note_null)
+
+    rows = await test_db.search_notes_by_keywords([kw], limit=10, org_id=org_a)
+    ids = {r.id for r in rows}
+    assert id_a in ids
+    assert id_null in ids
+    assert id_b not in ids

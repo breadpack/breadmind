@@ -86,6 +86,69 @@ async def test_recorder_does_not_raise_on_store_failure():
     await rec.record(_evt())
 
 
+# ── T5: org_id propagation ───────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_records_org_id_via_llm_normalize_path():
+    """LLM normalize path: recorded EpisodicNote.org_id must match event.org_id."""
+    store = AsyncMock()
+    llm = AsyncMock()
+    org_id = uuid.uuid4()
+    llm.complete_json.return_value = {
+        "summary": "tool ran",
+        "keywords": ["vpc"],
+        "outcome": "success",
+        "should_record": True,
+    }
+    rec = EpisodicRecorder(store=store, llm=llm, config=RecorderConfig(normalize=True))
+    await rec.record(_evt(org_id=org_id))
+    note = store.write.await_args.args[0]
+    assert note.org_id == org_id
+
+
+@pytest.mark.asyncio
+async def test_records_org_id_via_raw_fallback_path():
+    """Raw fallback path (normalize=False): recorded EpisodicNote.org_id must match event.org_id."""
+    store = AsyncMock()
+    llm = AsyncMock()
+    org_id = uuid.uuid4()
+    rec = EpisodicRecorder(store=store, llm=llm, config=RecorderConfig(normalize=False))
+    await rec.record(_evt(org_id=org_id))
+    note = store.write.await_args.args[0]
+    assert note.org_id == org_id
+
+
+@pytest.mark.asyncio
+async def test_records_org_id_via_llm_failure_raw_fallback():
+    """LLM failure raw fallback: org_id must still be propagated."""
+    store = AsyncMock()
+    llm = AsyncMock()
+    llm.complete_json.side_effect = RuntimeError("llm down")
+    org_id = uuid.uuid4()
+    rec = EpisodicRecorder(store=store, llm=llm, config=RecorderConfig(normalize=True))
+    await rec.record(_evt(org_id=org_id))
+    note = store.write.await_args.args[0]
+    assert note.org_id == org_id
+
+
+@pytest.mark.asyncio
+async def test_records_org_id_none_when_not_set():
+    """org_id=None (legacy events without an org) propagates as None."""
+    store = AsyncMock()
+    llm = AsyncMock()
+    llm.complete_json.return_value = {
+        "summary": "no org",
+        "keywords": [],
+        "outcome": "neutral",
+        "should_record": True,
+    }
+    rec = EpisodicRecorder(store=store, llm=llm, config=RecorderConfig(normalize=True))
+    await rec.record(_evt(org_id=None))
+    note = store.write.await_args.args[0]
+    assert note.org_id is None
+
+
 @pytest.mark.asyncio
 async def test_recorder_redacts_pii_before_llm_prompt():
     """Section 13: emails / JWTs in tool_result_text must be masked in the

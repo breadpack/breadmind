@@ -6,6 +6,7 @@ that both fixtures and test files can use them.
 from __future__ import annotations
 
 import os
+import uuid as _uuid
 from typing import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock
 
@@ -119,6 +120,26 @@ async def test_db() -> AsyncIterator[Database]:
         yield db
     finally:
         await db.disconnect()
+
+
+@pytest_asyncio.fixture
+async def insert_org(test_db):
+    """Return an async callable that inserts a minimal org_projects row.
+
+    Usage::
+
+        async def test_foo(insert_org):
+            org_id = uuid.uuid4()
+            await insert_org(org_id)
+    """
+    async def _insert(org_id: _uuid.UUID) -> None:
+        async with test_db.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO org_projects (id, name, slack_team_id) VALUES ($1, $2, $3) "
+                "ON CONFLICT (id) DO NOTHING",
+                org_id, f"test-org-{org_id}", f"T{str(org_id)[:8]}",
+            )
+    return _insert
 
 
 @pytest.fixture

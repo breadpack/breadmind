@@ -36,6 +36,7 @@ class EpisodicNote:
     tool_args_digest: str | None = None
     outcome: str = "neutral"
     session_id: uuid.UUID | None = None
+    org_id: uuid.UUID | None = None
     user_id: str | None = None
     summary: str = ""
 

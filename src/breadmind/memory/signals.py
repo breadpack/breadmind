@@ -46,6 +46,7 @@ class TurnSnapshot:
     user_message: str
     last_tool_name: str | None
     prior_turn_summary: str | None
+    org_id: uuid.UUID | None = None
 
 
 def _matches_any(haystack: str, needles: set[str]) -> bool:
@@ -74,6 +75,7 @@ class SignalDetector:
             kind=kind,
             user_id=snap.user_id,
             session_id=snap.session_id,
+            org_id=snap.org_id,
             user_message=None,
             tool_name=tool_name,
             tool_args=tool_args,
@@ -88,6 +90,7 @@ class SignalDetector:
             kind=SignalKind.REFLEXION,
             user_id=snap.user_id,
             session_id=snap.session_id,
+            org_id=snap.org_id,
             user_message=reflexion_text,
             tool_name=None,
             tool_args=None,
@@ -107,6 +110,7 @@ class SignalDetector:
                 kind=SignalKind.EXPLICIT_PIN,
                 user_id=snap.user_id,
                 session_id=snap.session_id,
+                org_id=snap.org_id,
                 user_message=msg,
                 tool_name=None,
                 tool_args=None,
@@ -124,6 +128,7 @@ class SignalDetector:
                 kind=SignalKind.USER_CORRECTION,
                 user_id=snap.user_id,
                 session_id=snap.session_id,
+                org_id=snap.org_id,
                 user_message=msg,
                 tool_name=snap.last_tool_name,
                 tool_args=None,
