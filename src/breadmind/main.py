@@ -216,6 +216,16 @@ def _build_parser() -> argparse.ArgumentParser:
     j_logs.add_argument("--lines", type=int, default=200)
     j_logs.add_argument("--plain", action="store_true")
 
+    # breadmind kb backfill <slack|resume|list|cancel> ...
+    # The actual subcommand parsing is delegated to
+    # ``breadmind.kb.backfill.cli.build_parser`` so the kb-backfill module
+    # owns its own argument schema. We capture the rest of argv with
+    # REMAINDER and pass it through during dispatch.
+    kb_parser = sub.add_parser("kb", help="Knowledge base operations")
+    kb_sub = kb_parser.add_subparsers(dest="kb_command")
+    bf_parser = kb_sub.add_parser("backfill", help="Bulk history backfill")
+    bf_parser.add_argument("rest", nargs=argparse.REMAINDER)
+
     return parser
 
 
@@ -661,6 +671,24 @@ async def run(args: argparse.Namespace | None = None):
     if args.command == "setup":
         from breadmind.cli.setup import run_setup
         await run_setup(args)
+        return
+
+    if args.command == "kb":
+        kb_command = getattr(args, "kb_command", None)
+        if kb_command == "backfill":
+            # Delegate to kb.backfill.cli for full subcommand parsing.
+            # T14 wires the parser only; T15-T17 implement dry-run output,
+            # real-run execution, and resume/list/cancel handlers.
+            from breadmind.kb.backfill.cli import build_parser as bf_build
+            bf_args = bf_build().parse_args(args.rest)
+            # TODO(T15-T17): dispatch on bf_args.subcommand to actual
+            # SlackBackfillRunner / JobCheckpointer / job registry calls.
+            print(
+                "  kb backfill: parsed subcommand="
+                f"{bf_args.subcommand} (executor not yet wired — T15-T17)"
+            )
+            return
+        print("Usage: breadmind kb <backfill> ...")
         return
 
     config_dir = args.config_dir or get_default_config_dir()
