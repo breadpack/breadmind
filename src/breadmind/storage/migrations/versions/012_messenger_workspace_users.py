@@ -12,6 +12,11 @@ Changes:
 - New columns added to org_projects: name (already existed, kept as-is),
   slug, domain, icon_url, plan, created_by, archived_at, default_channel_id.
 - New tables: workspace_users, user_groups, user_group_members.
+
+Note: This migration requires the database role to have permission to install
+the ``citext`` extension. On managed Postgres services (RDS, Cloud SQL, AlloyDB)
+this typically requires ``rds_superuser`` or equivalent. The deployment baseline
+(``pgvector/pgvector:pg17`` Docker image) grants this by default.
 """
 from alembic import op
 
@@ -128,14 +133,26 @@ def downgrade() -> None:
           DROP COLUMN IF EXISTS slug;
     """)
     # Restore the NOT NULL constraint on slack_team_id.
-    # Rows without a slack_team_id (native workspaces added during 012 window)
-    # are backfilled with a placeholder so the constraint can be restored.
+    # Fail loudly if any messenger-native workspaces (slack_team_id IS NULL)
+    # still exist — silently backfilling synthetic values would corrupt those
+    # rows and make them undetectable as native workspaces on re-upgrade.
+    # The operator must resolve them (delete or supply a real Slack team_id)
+    # before retrying the downgrade.
     op.execute("""
-        UPDATE org_projects
-           SET slack_team_id = 'MIGRATED-' || id::text
-         WHERE slack_team_id IS NULL;
+        DO $$
+        DECLARE
+            null_count integer;
+        BEGIN
+            SELECT count(*) INTO null_count FROM org_projects WHERE slack_team_id IS NULL;
+            IF null_count > 0 THEN
+                RAISE EXCEPTION
+                  'Cannot downgrade migration 012: % org_projects rows have NULL slack_team_id '
+                  '(messenger-native workspaces). Resolve by deleting these workspaces '
+                  '(DELETE FROM org_projects WHERE slack_team_id IS NULL) or backfilling '
+                  'a real Slack team_id, then retry the downgrade.', null_count;
+            END IF;
+        END
+        $$;
     """)
-    op.execute("""
-        ALTER TABLE org_projects
-          ALTER COLUMN slack_team_id SET NOT NULL;
-    """)
+    op.execute("ALTER TABLE org_projects ALTER COLUMN slack_team_id SET NOT NULL;")
+    op.execute("DROP EXTENSION IF EXISTS citext")
