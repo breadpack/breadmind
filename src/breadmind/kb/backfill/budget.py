@@ -11,6 +11,8 @@ import uuid
 from dataclasses import dataclass
 from datetime import date
 
+from breadmind.storage.database import Database
+
 
 class OrgMonthlyBudgetExceeded(Exception):
     """Raised when ``charge()`` would push tokens_used above tokens_ceiling."""
@@ -20,12 +22,12 @@ class OrgMonthlyBudgetExceeded(Exception):
 class OrgMonthlyBudget:
     """Per-org monthly token gate for KB backfill jobs.
 
-    ``db`` is a ``breadmind.storage.database.Database`` (or any object that
-    exposes asyncpg-style ``.fetchrow(query, *args)``). The default
+    ``db`` is the project's ``Database`` wrapper; ``charge`` and ``remaining``
+    use its ``fetchrow()`` for short single-statement queries. The default
     ``ceiling`` is used when seeding a new ``(org_id, period_month)`` row.
     """
 
-    db: object
+    db: Database
     ceiling: int
 
     async def charge(
