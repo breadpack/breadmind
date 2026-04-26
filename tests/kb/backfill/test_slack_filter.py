@@ -75,3 +75,26 @@ def test_filter_thresholds_tunable():
     j.config = {"min_length": 20, "drop_zero_engagement": False}
     it = _it("short but long enough?")  # 22 chars; reaction=0, reply=0
     assert j.filter(it) is True
+
+
+def test_cursor_of_top_level_format():
+    j = _job()
+    ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    item = BackfillItem(
+        source_kind="slack_msg", source_native_id="C1:1735689600.0",
+        source_uri="u", source_created_at=ts, source_updated_at=ts,
+        title="t", body="b", author="U1")
+    cur = j.cursor_of(item)
+    # f"{ts_ms}:{channel_id}:{message_ts}"
+    assert cur == f"{int(ts.timestamp() * 1000)}:C1:1735689600.0"
+
+
+def test_cursor_of_thread_format():
+    j = _job()
+    ts = datetime(2026, 2, 15, tzinfo=timezone.utc)
+    item = BackfillItem(
+        source_kind="slack_msg", source_native_id="C1:1.0:thread",
+        source_uri="u", source_created_at=ts, source_updated_at=ts,
+        title="t", body="b", author="U1")
+    cur = j.cursor_of(item)
+    assert cur.endswith(":C1:1.0:thread") or cur.endswith(":C1:1.0")

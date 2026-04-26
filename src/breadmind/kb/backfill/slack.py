@@ -43,6 +43,17 @@ class SlackBackfillAdapter(BackfillJob):
             raise RuntimeError("instance_id_of called before prepare()")
         return self._team_id
 
+    def cursor_of(self, item: BackfillItem) -> str:
+        # spec §6.6: f"{ts_ms}:{channel_id}:{message_ts}"
+        ts_ms = int(item.source_updated_at.timestamp() * 1000)
+        # source_native_id is "<channel_id>:<message_ts>[:thread]"
+        return f"{ts_ms}:{item.source_native_id}"
+
+    def _cursor_to_oldest(self, cursor: str) -> str:
+        """Reverse: cursor -> Slack `oldest=` (seconds float string)."""
+        ts_ms = int(cursor.split(":", 1)[0])
+        return f"{ts_ms / 1000:.6f}"
+
     async def prepare(self) -> None:
         channels = self.source_filter.get("channels") or []
         if not channels:
