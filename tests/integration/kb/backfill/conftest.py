@@ -64,51 +64,68 @@ def _docker_available() -> bool:
 
 @pytest.fixture(scope="session")
 def _pg_container():
-    """Session-scoped Postgres+pgvector container.
+    """Session-scoped Postgres+pgvector container with migrations applied.
 
     Skips the entire e2e module when Docker is unavailable. Image
     ``pgvector/pgvector:pg17`` matches the production migration assumption
     (extension ``vector`` available, Postgres 17).
+
+    The alembic upgrade runs **once** at container start (T18 review fix #1):
+    migrations are idempotent but the alembic invocation itself is slow,
+    so paying it once per session — instead of once per test — saves
+    seconds per e2e run. The per-test fixture only TRUNCATEs.
     """
     if not _docker_available():
         pytest.skip("Docker not available for testcontainers Postgres")
     from testcontainers.postgres import PostgresContainer
 
     with PostgresContainer(_PG_IMAGE) as pg:
+        raw_url = pg.get_connection_url()
+        # testcontainers returns SQLAlchemy-style; asyncpg wants plain postgresql://
+        dsn = raw_url.replace("postgresql+psycopg2://", "postgresql://")
+
+        # Run the pgvector probe once for the session via a one-off loop.
+        # ``asyncio.run`` creates and tears down its own loop, so
+        # pytest-asyncio's per-test loop is unaffected.
+        import asyncio
+
+        async def _setup() -> None:
+            # pgvector extension must exist before any vector(N) column is created.
+            probe = await asyncpg.connect(dsn)
+            await probe.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+            await probe.close()
+
+        asyncio.run(_setup())
+
+        # Run alembic migrations to head — covers 004 (org_knowledge with
+        # vector(1024)) and 010 (kb_backfill_jobs + uq_org_knowledge_source_native).
+        prev_db_url = os.environ.get("DATABASE_URL")
+        os.environ["DATABASE_URL"] = dsn
+        try:
+            migrator = Migrator(MigrationConfig(database_url=dsn))
+            migrator.upgrade("head")
+        finally:
+            if prev_db_url is None:
+                os.environ.pop("DATABASE_URL", None)
+            else:
+                os.environ["DATABASE_URL"] = prev_db_url
+
+        # Stash the resolved DSN on the container object so the per-test
+        # fixture doesn't have to re-derive it.
+        pg._breadmind_dsn = dsn  # type: ignore[attr-defined]
         yield pg
 
 
 @pytest_asyncio.fixture
 async def testcontainers_pg_with_010(_pg_container) -> AsyncIterator[Database]:
-    """Yield a connected ``Database`` with migrations applied to head.
+    """Yield a connected ``Database`` against the session-migrated container.
 
-    Per-test scope: each test gets a freshly migrated DB via TRUNCATE between
-    tests to keep ``org_knowledge`` / ``kb_backfill_jobs`` independent without
-    paying a fresh container start. The migrator runs against the container's
-    DSN; subsequent tests rely on idempotent ``IF NOT EXISTS`` migrations and
-    just truncate the rows.
+    Per-test scope: TRUNCATE the tables this suite writes to and yield a
+    fresh ``Database`` pool. Migrations were already applied at session
+    start (see ``_pg_container``), so this fixture is just connect +
+    truncate + yield + disconnect.
     """
-    raw_url = _pg_container.get_connection_url()
-    # testcontainers returns SQLAlchemy-style; asyncpg wants plain postgresql://
-    dsn = raw_url.replace("postgresql+psycopg2://", "postgresql://")
-
-    # pgvector extension must exist before any vector(N) column is created.
-    probe = await asyncpg.connect(dsn)
-    await probe.execute("CREATE EXTENSION IF NOT EXISTS vector;")
-    await probe.close()
-
-    # Run alembic migrations to head — covers 004 (org_knowledge with
-    # vector(1024)) and 010 (kb_backfill_jobs + uq_org_knowledge_source_native).
-    prev_db_url = os.environ.get("DATABASE_URL")
-    os.environ["DATABASE_URL"] = dsn
-    try:
-        migrator = Migrator(MigrationConfig(database_url=dsn))
-        migrator.upgrade("head")
-    finally:
-        if prev_db_url is None:
-            os.environ.pop("DATABASE_URL", None)
-        else:
-            os.environ["DATABASE_URL"] = prev_db_url
+    dsn = _pg_container._breadmind_dsn  # type: ignore[attr-defined]
 
     db = Database(dsn)
     db._pool = await asyncpg.create_pool(dsn, min_size=1, max_size=4)
@@ -195,13 +212,17 @@ class _PadEmbedder:
         return list(vec) + [0.0] * (_EMBED_DIM - len(vec))
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def real_embedder() -> _PadEmbedder:
     """Real fastembed-backed embedder padded to 1024 dims.
 
     The first call triggers the fastembed ONNX model load (~50MB, cached
-    under the user's hf-hub cache); subsequent calls are fast. Acceptable
-    for ``@pytest.mark.e2e`` which is excluded from the default test run.
+    under the user's hf-hub cache); subsequent calls are fast.
+
+    Session-scoped (T18 review fix #2): the underlying fastembed model is
+    stateless across calls and ``_PadEmbedder`` only stores the inner
+    service handle, so reusing the same instance across tests is safe and
+    avoids paying the ONNX load more than once per session.
     """
     inner = EmbeddingService(provider="fastembed")
     return _PadEmbedder(inner)
@@ -358,6 +379,17 @@ class FakeSlackSession:
             # Fresh copy each call so the ts list isn't drained between
             # the e2e test's first job.run() and the second job2.run().
             msgs = list(self._messages.get(cid, []))
+            # Honour ``oldest`` so resume_cursor actually filters out the
+            # already-indexed prefix (T18 review fix #4: required for the
+            # resume positive assertion). Slack's API treats ``oldest`` as
+            # an exclusive lower bound on ``ts``; mirror that here.
+            oldest = params.get("oldest")
+            if oldest is not None:
+                try:
+                    oldest_f = float(oldest)
+                except (TypeError, ValueError):
+                    oldest_f = 0.0
+                msgs = [m for m in msgs if float(m["ts"]) > oldest_f]
             return {"ok": True, "messages": msgs, "has_more": False}
         if method == "conversations.replies":
             # No threaded messages in the fixture mix; defensive return.

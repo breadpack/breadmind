@@ -149,8 +149,10 @@ async def test_e2e_resume_after_kill_no_duplicates(
     )
     # The runner now swallows per-item errors and returns a partial report
     # rather than raising (T9 review fix); a try/except is harmless.
+    report1_indexed_count = 0
     try:
-        await runner.run(job)
+        report1 = await runner.run(job)
+        report1_indexed_count = report1.indexed_count
     except Exception:
         pass
 
@@ -174,7 +176,33 @@ async def test_e2e_resume_after_kill_no_duplicates(
         embedder=real_embedder,
         checkpointer=cp2,
     )
-    await runner2.run(job2)
+    report2 = await runner2.run(job2)
+
+    # Positive resume assertion #1 (T18 review fix #4): the cursor was
+    # actually loaded from kb_backfill_jobs. A bug that silently failed
+    # to persist the checkpoint would surface as ``None`` here, and the
+    # dedup-only assertion below would still pass — so we lock in the
+    # cursor-load contract explicitly.
+    assert job2._resume_cursor is not None, (
+        "resume must load last_cursor from kb_backfill_jobs"
+    )
+
+    # Positive resume assertion #2: resume must do strictly less work
+    # than a from-scratch run. The fixture mix sends every other message
+    # to C1 and the C1-only job sees 25 signal-passing items (half of
+    # the 50 in the full mix; even-indexed slots in
+    # ``_build_messages``). A buggy resume that re-discovered everything
+    # and relied on ``ON CONFLICT DO NOTHING`` for dedup would end up
+    # indexing close to 25; a correct resume picks up where the failed
+    # first run left off and indexes the *remainder*, which is strictly
+    # fewer.
+    total_signal_passing_C1 = 25
+    assert report2.indexed_count < total_signal_passing_C1, (
+        f"resume should skip already-indexed items, "
+        f"got indexed_count={report2.indexed_count} "
+        f"(first run indexed {report1_indexed_count}); "
+        f"expected < {total_signal_passing_C1}"
+    )
 
     # Dedup contract: the unique index forbids duplicates regardless of
     # whether the resume cursor rewound past already-stored items.
