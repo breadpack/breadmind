@@ -9,9 +9,15 @@ import aiohttp
 
 from breadmind.personal.adapters.base import ServiceAdapter, SyncResult
 from breadmind.personal.models import Task
+from breadmind.kb.backfill.adapters.notion_common import (
+    BASE_URL as _BASE_URL,
+    NOTION_VERSION as _NOTION_VERSION,
+    parse_iso as _parse_iso,
+)
 
-_BASE_URL = "https://api.notion.com/v1"
-_NOTION_VERSION = "2022-06-28"
+# Module-level aliases preserved for external references.
+_BASE_URL = _BASE_URL  # noqa: PLW0127  (re-export for compat)
+_NOTION_VERSION = _NOTION_VERSION  # noqa: PLW0127
 
 # Mapping from Notion status names to internal status literals.
 _STATUS_FROM_NOTION: dict[str, str] = {
@@ -31,12 +37,6 @@ _PRIORITY_FROM_NOTION: dict[str, str] = {
 }
 
 _PRIORITY_TO_NOTION: dict[str, str] = {v: k for k, v in _PRIORITY_FROM_NOTION.items()}
-
-
-def _parse_iso(value: str | None) -> datetime | None:
-    if value is None:
-        return None
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 def _page_to_task(page: dict[str, Any]) -> Task:
