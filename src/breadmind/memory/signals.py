@@ -18,11 +18,16 @@ def _bump_signal_metric(evt: SignalEvent) -> None:
     except Exception:  # pragma: no cover - defensive
         logger.debug("memory_signal_detected_total inc failed", exc_info=True)
 
-# Correction lexicon (token-level partial match, lower-cased)
+# Correction lexicon. Korean uses substring matching (no \b boundaries fit
+# Hangul); English uses word-boundary regex so short tokens like "no" do not
+# false-positive on substrings inside "know", "nothing", "north", etc.
 _CORRECTION_KO = {"아니", "아니야", "다시", "잘못", "틀렸", "다른", "그게 아니라"}
-_CORRECTION_EN = {
-    "no", "wrong", "incorrect", "not that", "redo", "try again", "instead",
-}
+_CORRECTION_EN_PATTERNS = tuple(
+    re.compile(rf"\b{re.escape(s)}\b", re.IGNORECASE)
+    for s in (
+        "no", "wrong", "incorrect", "not that", "redo", "try again", "instead",
+    )
+)
 
 _PIN_PATTERNS = [
     re.compile(r"기억\s*해\s*(줘|둬|두)"),
@@ -46,6 +51,10 @@ class TurnSnapshot:
 def _matches_any(haystack: str, needles: set[str]) -> bool:
     h = haystack.lower()
     return any(n in h for n in needles)
+
+
+def _matches_any_re(haystack: str, patterns: tuple[re.Pattern, ...]) -> bool:
+    return any(p.search(haystack) for p in patterns)
 
 
 class SignalDetector:
@@ -108,7 +117,8 @@ class SignalDetector:
             return evt
         # 2. User correction (requires prior tool turn)
         if snap.last_tool_name and (
-            _matches_any(msg, _CORRECTION_KO) or _matches_any(msg, _CORRECTION_EN)
+            _matches_any(msg, _CORRECTION_KO)
+            or _matches_any_re(msg, _CORRECTION_EN_PATTERNS)
         ):
             evt = SignalEvent(
                 kind=SignalKind.USER_CORRECTION,
