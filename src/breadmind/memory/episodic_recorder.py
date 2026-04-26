@@ -18,6 +18,7 @@ from breadmind.memory.metrics import (
     memory_normalize_latency_seconds,
     memory_normalize_total,
 )
+from breadmind.memory.redactor import redact as _redact
 from breadmind.storage.models import EpisodicNote
 
 logger = logging.getLogger(__name__)
@@ -76,6 +77,45 @@ _jinja = Environment(
 
 class _SkipRecording(Exception):
     pass
+
+
+class _RedactedEventView:
+    """Read-only view over a ``SignalEvent`` that masks PII / credentials
+    on text-bearing fields before they're rendered into the LLM prompt.
+
+    ``SignalEvent`` is a frozen dataclass, so we wrap it instead of mutating.
+    Only the fields the Jinja template touches are redacted; deterministic
+    fields (``kind``, ``tool_name``, ``tool_args``) pass through unchanged.
+    """
+
+    __slots__ = ("_evt",)
+
+    def __init__(self, evt: SignalEvent):
+        self._evt = evt
+
+    @property
+    def kind(self) -> SignalKind:
+        return self._evt.kind
+
+    @property
+    def tool_name(self) -> str | None:
+        return self._evt.tool_name
+
+    @property
+    def tool_args(self) -> dict | None:
+        return self._evt.tool_args
+
+    @property
+    def user_message(self) -> str | None:
+        return _redact(self._evt.user_message) if self._evt.user_message else self._evt.user_message
+
+    @property
+    def tool_result_text(self) -> str | None:
+        return _redact(self._evt.tool_result_text) if self._evt.tool_result_text else self._evt.tool_result_text
+
+    @property
+    def prior_turn_summary(self) -> str | None:
+        return _redact(self._evt.prior_turn_summary) if self._evt.prior_turn_summary else self._evt.prior_turn_summary
 
 
 class EpisodicRecorder:
@@ -154,7 +194,13 @@ class EpisodicRecorder:
 
     async def _normalize_with_llm(self, event: SignalEvent) -> dict:
         tmpl = _jinja.get_template("episodic_normalize.j2")
-        prompt = tmpl.render(event=event)
+        # Defensive PII / credential redaction (Section 13). The Jinja
+        # template renders with autoescape OFF for LLM consumption, so we
+        # mask sensitive shapes on the text-bearing fields BEFORE render.
+        # Deterministic fields (kind, tool_name, tool_args, outcome) pass
+        # through unchanged.
+        redacted = _RedactedEventView(event)
+        prompt = tmpl.render(event=redacted)
         with with_span(
             "memory.recorder.normalize",
             attributes={"signal.kind": event.kind.value},
