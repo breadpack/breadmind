@@ -685,6 +685,7 @@ async def run(args: argparse.Namespace | None = None):
             # ``smoke`` branch — without dragging in the agent/tools graph
             # the web/chat paths need.
             from breadmind.kb.backfill.cli import main_async as bf_main_async
+            from breadmind.kb.embedding import KBEmbedder
             from breadmind.kb.redactor import Redactor
             from breadmind.memory.embedding import EmbeddingService
             from breadmind.storage.credential_vault import CredentialVault
@@ -721,7 +722,10 @@ async def run(args: argparse.Namespace | None = None):
 
             kb_vault = CredentialVault(kb_db)
             kb_redactor = Redactor.default()
-            kb_embedder = EmbeddingService(provider="fastembed")
+            # KBEmbedder right-pads/truncates to vector(1024) so any
+            # EmbeddingService backend (fastembed 384, ollama 768, etc.)
+            # can feed org_knowledge without a schema migration.
+            kb_embedder = KBEmbedder(EmbeddingService(provider="fastembed"))
             # ``cli.main_async`` builds a vault-backed SlackWebSession when
             # the explicit ``slack_session`` is None — needs the ``--org``
             # / resumed row's ``org_id`` to derive the credentials_ref so

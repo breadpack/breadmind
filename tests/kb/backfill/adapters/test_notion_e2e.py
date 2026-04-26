@@ -193,20 +193,10 @@ def real_notion_redactor():
 
 @pytest.fixture(scope="session")
 def real_notion_embedder():
+    from breadmind.kb.embedding import KBEmbedder
     from breadmind.memory.embedding import EmbeddingService
 
-    class _PadEmbedder:
-        """Wraps EmbeddingService and pads output to 1024 dims."""
-        def __init__(self):
-            self._svc = EmbeddingService(provider="fastembed")
-
-        async def encode(self, text: str) -> list[float]:
-            vec = await self._svc.encode(text)
-            if len(vec) < 1024:
-                vec = vec + [0.0] * (1024 - len(vec))
-            return vec[:1024]
-
-    return _PadEmbedder()
+    return KBEmbedder(EmbeddingService(provider="fastembed"))
 
 
 # ---------------------------------------------------------------------------

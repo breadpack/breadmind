@@ -32,6 +32,7 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
+from breadmind.kb.embedding import KBEmbedder
 from breadmind.kb.redactor import Redactor
 from breadmind.memory.embedding import EmbeddingService
 from breadmind.storage.database import Database
@@ -179,53 +180,19 @@ def real_redactor() -> Redactor:
     return Redactor.default()
 
 
-# pgvector dimension matches migration 004_org_kb (org_knowledge.embedding).
-_EMBED_DIM = 1024
-
-
-class _PadEmbedder:
-    """Wrap an :class:`EmbeddingService` and pad the 384-dim fastembed output
-    to the 1024 dimensions the ``org_knowledge.embedding`` column expects.
-
-    The plan (T18) calls for ``real_embedder`` to be a real fastembed-backed
-    embedder so the e2e suite exercises the real model load path. The
-    underlying schema is fixed at ``vector(1024)`` (migration 004), which
-    fastembed's default 384-dim model cannot satisfy directly. Padding is
-    deterministic and reversible enough for the cosine-similarity roundtrips
-    the suite asserts on; this is surfaced in the plan-gap notes.
-    """
-
-    def __init__(self, inner: EmbeddingService) -> None:
-        self._inner = inner
-
-    async def encode(self, text: str) -> list[float]:
-        vec = await self._inner.encode(text)
-        if vec is None:
-            # fastembed unavailable — fall back to a deterministic
-            # text-length-hash vector so the test still exercises storage.
-            base = (len(text) % 100) / 100.0
-            return [base] * _EMBED_DIM
-        if len(vec) >= _EMBED_DIM:
-            return vec[:_EMBED_DIM]
-        # Right-pad with zeros (cosine similarity preserved on the
-        # populated prefix, which is what the test cares about).
-        return list(vec) + [0.0] * (_EMBED_DIM - len(vec))
-
-
 @pytest.fixture(scope="session")
-def real_embedder() -> _PadEmbedder:
-    """Real fastembed-backed embedder padded to 1024 dims.
+def real_embedder() -> KBEmbedder:
+    """Real fastembed-backed embedder padded to 1024 dims via KBEmbedder.
 
     The first call triggers the fastembed ONNX model load (~50MB, cached
     under the user's hf-hub cache); subsequent calls are fast.
 
     Session-scoped (T18 review fix #2): the underlying fastembed model is
-    stateless across calls and ``_PadEmbedder`` only stores the inner
+    stateless across calls and ``KBEmbedder`` only stores the inner
     service handle, so reusing the same instance across tests is safe and
     avoids paying the ONNX load more than once per session.
     """
-    inner = EmbeddingService(provider="fastembed")
-    return _PadEmbedder(inner)
+    return KBEmbedder(EmbeddingService(provider="fastembed"))
 
 
 class _FlakyEmbedder:
@@ -256,7 +223,7 @@ class _FlakyEmbedder:
 
 
 @pytest.fixture
-def flaky_embedder_at_73(real_embedder: _PadEmbedder) -> _FlakyEmbedder:
+def flaky_embedder_at_73(real_embedder: KBEmbedder) -> _FlakyEmbedder:
     """Despite the name, fails on the 10th encode call.
 
     The plan-literal name picks 73 to imply "well into the run". The C1-only
