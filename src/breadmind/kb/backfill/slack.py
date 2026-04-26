@@ -18,16 +18,23 @@ _SLACK_USER_ID_RE = re.compile(r"^[UW][A-Z0-9_]{6,}$")
 
 
 class ChannelArchived(Exception):
-    """Raised mid-discover when a channel is detected as archived.
+    """Adapter-internal signal: a channel went archived mid-discover.
 
     Spec §11 P4 (mid-run path): if a channel becomes archived after
     ``prepare()`` snapshotted its membership, the adapter must NOT silently
-    drop the rest of its messages. Instead, it raises this exception so the
-    runner can fail-closed for that channel only — incrementing
-    ``skipped['archived']`` while letting sibling channels continue.
+    drop the rest of its messages. Instead, the inner per-channel iterator
+    raises this so the OUTER ``discover()`` catches it, records the channel
+    in ``self._archived_channels``, and continues with the next channel.
+
+    Important: this exception does NOT cross the adapter boundary. The runner
+    reads ``job._archived_channels`` after discover completes and folds the
+    count into ``report.skipped['archived']``. Subclasses or production code
+    paths (e.g. ``conversations.history`` returning
+    ``{"ok": False, "error": "is_archived"}``) raise it from inside
+    ``_discover_channel`` and are caught by the outer ``discover``.
 
     The ``channel_id`` attribute carries the offending channel for
-    structured logging on the runner side.
+    structured logging.
     """
 
     def __init__(self, channel_id: str) -> None:
@@ -165,42 +172,86 @@ class SlackBackfillAdapter(BackfillJob):
         return True
 
     async def discover(self) -> AsyncIterator[BackfillItem]:
+        """Yield items across all channels, fail-closed per-channel on archive.
+
+        Spec §11 P4 (mid-run path): if ``conversations.history`` returns
+        ``{"ok": False, "error": "is_archived"}`` partway through one channel,
+        we mark that channel in ``self._archived_channels``, drop the remaining
+        items in it, and CONTINUE to the next channel. Sibling channels keep
+        running; the runner reads ``self._archived_channels`` post-loop and
+        folds the count into ``skipped['archived']``.
+
+        ``ChannelArchived`` is intentionally adapter-internal: it never crosses
+        this method's boundary upward, so the runner doesn't need a special
+        catch (T17 review fix). Subclasses may also raise it from
+        ``_discover_channel`` to express the same condition.
+        """
         since_ts = self.since.timestamp()
         until_ts = self.until.timestamp()
         include_threads = self.source_filter.get("include_threads", True)
         resume_cursor = self._resume_cursor
         for idx, cid in enumerate(self.source_filter["channels"]):
-            cursor: str | None = None
             # T17: only the first channel honours resume_cursor; subsequent
             # channels start at since_ts. Cursor format is per-channel.
             if idx == 0 and resume_cursor:
                 channel_oldest = self._cursor_to_oldest(resume_cursor)
             else:
                 channel_oldest = str(since_ts)
-            while True:
-                params: dict[str, Any] = {
-                    "channel": cid, "limit": 200,
-                    "oldest": channel_oldest, "latest": str(until_ts),
-                }
-                if cursor:
-                    params["cursor"] = cursor
-                payload = await self._call_with_retry(
-                    "conversations.history", **params)
-                for msg in payload.get("messages", []):
-                    ts = float(msg["ts"])
-                    if ts < since_ts or ts >= until_ts:
-                        continue
-                    if include_threads and msg.get("thread_ts") == msg["ts"] \
-                            and (msg.get("reply_count") or 0) > 0:
-                        yield await self._build_thread_item(cid, msg)
-                    else:
-                        yield self._build_top_level_item(cid, msg)
-                if not payload.get("has_more"):
-                    break
-                cursor = (payload.get("response_metadata") or {}).get(
-                    "next_cursor")
-                if not cursor:
-                    break
+            try:
+                async for item in self._discover_channel(
+                    cid, channel_oldest, str(until_ts),
+                    since_ts, until_ts, include_threads,
+                ):
+                    yield item
+            except ChannelArchived as exc:
+                # Per-channel fail-closed: record and continue to siblings.
+                self._archived_channels.add(exc.channel_id)
+                continue
+
+    async def _discover_channel(
+        self,
+        cid: str,
+        channel_oldest: str,
+        until_str: str,
+        since_ts: float,
+        until_ts: float,
+        include_threads: bool,
+    ) -> AsyncIterator[BackfillItem]:
+        """Yield items for a single channel; raise ChannelArchived on archive.
+
+        Detection point: ``conversations.history`` returns
+        ``{"ok": False, "error": "is_archived"}``. We surface that to the
+        outer ``discover`` via ``ChannelArchived`` so it can mark the channel
+        and continue with siblings — the spec §11 P4 contract.
+        """
+        cursor: str | None = None
+        while True:
+            params: dict[str, Any] = {
+                "channel": cid, "limit": 200,
+                "oldest": channel_oldest, "latest": until_str,
+            }
+            if cursor:
+                params["cursor"] = cursor
+            payload = await self._call_with_retry(
+                "conversations.history", **params)
+            if (not payload.get("ok")
+                    and payload.get("error") == "is_archived"):
+                raise ChannelArchived(cid)
+            for msg in payload.get("messages", []):
+                ts = float(msg["ts"])
+                if ts < since_ts or ts >= until_ts:
+                    continue
+                if include_threads and msg.get("thread_ts") == msg["ts"] \
+                        and (msg.get("reply_count") or 0) > 0:
+                    yield await self._build_thread_item(cid, msg)
+                else:
+                    yield self._build_top_level_item(cid, msg)
+            if not payload.get("has_more"):
+                break
+            cursor = (payload.get("response_metadata") or {}).get(
+                "next_cursor")
+            if not cursor:
+                break
 
     async def _call_with_retry(self, method: str, **params):
         backoffs = list(_BACKOFF_SECONDS)

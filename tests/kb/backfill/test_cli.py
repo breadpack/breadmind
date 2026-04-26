@@ -406,71 +406,91 @@ async def test_cancel_marks_job_cancelled(test_db, insert_org):
 async def test_runner_marks_remaining_archived_midrun(
     test_db, insert_org, fake_redactor, fake_embedder,
 ):
-    """ChannelArchived raised mid-discover for one channel must:
+    """Live-adapter contract: when ``conversations.history`` returns
+    ``{"ok": False, "error": "is_archived"}`` mid-run for one channel,
+    ``SlackBackfillAdapter.discover()`` must:
 
-    - increment skipped['archived']
-    - NOT abort the whole job (other channels still produce items)
+    - record the channel in ``self._archived_channels``
+    - drop remaining items in that channel
+    - CONTINUE with sibling channels (spec §11 P4)
 
-    We use a minimal BackfillJob subclass that yields one item from C1, then
-    raises ChannelArchived for C2. The runner is expected to catch it,
-    record the skip, and continue (or simply finish the run — there are no
-    more channels after C2 in this test).
+    The runner reads ``_archived_channels`` post-discover and folds the
+    count into ``skipped['archived']``. No slack-specific exception crosses
+    the runner boundary (T17 review fix).
     """
     import uuid as _uuid
-    from collections.abc import AsyncIterator
 
-    from breadmind.kb.backfill.base import BackfillItem, BackfillJob
     from breadmind.kb.backfill.runner import BackfillRunner
-    from breadmind.kb.backfill.slack import ChannelArchived
+    from breadmind.kb.backfill.slack import SlackBackfillAdapter
 
     org_id = _uuid.uuid4()
     await insert_org(org_id)
 
-    def _mk_item(i: int) -> BackfillItem:
-        ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
-        return BackfillItem(
-            source_kind="slack_msg",
-            source_native_id=f"C1:{i}.0",
-            source_uri="u",
-            source_created_at=ts,
-            source_updated_at=ts,
-            title=f"t{i}",
-            body="hello world",
-            author="U1",
-        )
+    # FakeSlack with a multi-payload conversations.history queue: C1 returns
+    # one indexable message, C2 returns is_archived (channel was archived
+    # after dry-run snapshotted membership).
+    class _MultiSlack:
+        def __init__(self, payloads: dict[str, list[dict]]) -> None:
+            self._payloads = payloads
+            self.calls: list[tuple[str, dict]] = []
 
-    class _FlakyJob(BackfillJob):
-        source_kind = "slack_msg"
+        async def call(self, method: str, **params):
+            self.calls.append((method, params))
+            queue = self._payloads.get(method, [])
+            if queue:
+                return queue.pop(0)
+            return {"ok": True}
 
-        async def prepare(self) -> None:
-            return None
+    session = _MultiSlack({
+        "auth.test": [{"ok": True, "team_id": "T1"}],
+        "conversations.info": [
+            {"ok": True, "channel": {
+                "id": "C1", "is_archived": False, "name": "g1"}},
+            {"ok": True, "channel": {
+                "id": "C2", "is_archived": False, "name": "g2"}},
+        ],
+        "conversations.members": [
+            {"ok": True, "members": ["U1"], "response_metadata": {}},
+            {"ok": True, "members": ["U2"], "response_metadata": {}},
+        ],
+        "conversations.history": [
+            # C1: one indexable message (passes signal filters).
+            {"ok": True, "messages": [
+                {"ts": "1735689600.0", "user": "U1",
+                 "text": "long enough message body for filter",
+                 "reactions": [{"count": 2}]},
+            ], "has_more": False},
+            # C2: archived between dry-run prepare and now.
+            {"ok": False, "error": "is_archived"},
+        ],
+    })
 
-        async def discover(self) -> AsyncIterator[BackfillItem]:
-            # First channel: yield one item normally.
-            yield _mk_item(0)
-            # Second channel: raise ChannelArchived mid-run. Runner must
-            # catch this per-channel and record skipped['archived'].
-            raise ChannelArchived("C2")
+    class _FakeVault:
+        async def retrieve(self, ref: str) -> str | None:
+            return "xoxb-token"
 
-        def filter(self, item: BackfillItem) -> bool:
-            return True
-
-        def instance_id_of(self, source_filter):
-            return "T1"
-
-    job = _FlakyJob(
+    job = SlackBackfillAdapter(
         org_id=org_id,
-        source_filter={"channels": ["C1", "C2"]},
-        since=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        source_filter={"channels": ["C1", "C2"], "include_threads": True},
+        since=datetime(2025, 1, 1, tzinfo=timezone.utc),
         until=datetime(2026, 4, 1, tzinfo=timezone.utc),
         dry_run=False,
         token_budget=10**9,
+        vault=_FakeVault(),
+        credentials_ref="slack:test",
+        session=session,
     )
+
     runner = BackfillRunner(
         db=test_db, redactor=fake_redactor, embedder=fake_embedder,
     )
     report = await runner.run(job)
+
+    # Adapter recorded C2 as archived and continued to siblings.
+    assert "C2" in job._archived_channels
+    assert "C1" not in job._archived_channels
+    # Runner folded the count into skipped['archived'].
     assert report.skipped.get("archived", 0) >= 1
-    # Other items still made it through the pipeline.
+    # C1's item still indexed.
     assert report.indexed_count >= 1
     assert report.aborted is False

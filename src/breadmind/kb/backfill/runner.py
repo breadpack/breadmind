@@ -100,36 +100,16 @@ class BackfillRunner:
         # rate breach we set ``aborted`` and break, so the partial JobReport
         # still flows out (T9 needs counts + last cursor for resume).
         #
-        # T17: Per-channel fail-closed for ChannelArchived. We import lazily
-        # to keep base runner free of slack-specific dependencies — adapters
-        # for other sources can ignore it.
-        try:
-            from breadmind.kb.backfill.slack import ChannelArchived
-        except ImportError:  # pragma: no cover - slack module always present
-            ChannelArchived = ()  # type: ignore[assignment]
+        # T17 (review fix): per-channel fail-closed on archive lives INSIDE
+        # the adapter (spec §11 P4). The adapter records archived channel ids
+        # in ``job._archived_channels`` and continues with siblings. The
+        # runner just reads that set after discover finishes — no slack-
+        # specific exception needs to cross the runner boundary.
         try:
             # M4: ``Skipped`` raised mid-yield from discover() will bubble
             # out of the ``async for`` here; per-item ``Skipped`` (raised
-            # inside the loop body) is caught explicitly below. T9 may
-            # need the verbose iter-level form for resume.
-            #
-            # T17: ChannelArchived raised mid-discover increments
-            # skipped['archived'] and exits the discover loop. The other
-            # already-yielded items remain processed; remaining items in the
-            # archived channel are abandoned per spec §11 P4. (Multi-channel
-            # mid-run continuation is a richer affordance the adapter would
-            # need to expose — this minimal implementation matches the spec's
-            # fail-closed-per-channel stance.)
-            discover_iter = job.discover().__aiter__()
-            while True:
-                try:
-                    item = await discover_iter.__anext__()
-                except StopAsyncIteration:
-                    break
-                except ChannelArchived:
-                    # Per-channel fail-closed: mark archived, end discover loop.
-                    skipped["archived"] = skipped.get("archived", 0) + 1
-                    break
+            # inside the loop body) is caught explicitly below.
+            async for item in job.discover():
                 progress.discovered += 1
                 try:
                     if not job.filter(item):
@@ -202,6 +182,16 @@ class BackfillRunner:
                     )
                     continue
         finally:
+            # T17 (review fix): the adapter records mid-run archived channel
+            # ids in ``_archived_channels`` and keeps producing items from
+            # siblings. Fold the count into ``skipped['archived']`` here so
+            # the report (and persisted checkpoint below) reflect spec §11 P4
+            # semantics. Use ``max`` to merge with any prior value the adapter
+            # or earlier code path may have set.
+            archived_ids = getattr(job, "_archived_channels", set()) or set()
+            if archived_ids:
+                skipped["archived"] = max(
+                    skipped.get("archived", 0), len(archived_ids))
             # T9-review I1: capture but do NOT propagate teardown errors until
             # AFTER the kb_backfill_jobs row converges to a terminal status.
             # Otherwise a connector cleanup blip would leave the row stuck at
