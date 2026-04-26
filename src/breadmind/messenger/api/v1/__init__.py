@@ -17,3 +17,5 @@ from breadmind.messenger.api.v1 import workspaces  # noqa: E402
 router.include_router(workspaces.router)
 from breadmind.messenger.api.v1 import users  # noqa: E402
 router.include_router(users.router)
+from breadmind.messenger.api.v1 import user_groups  # noqa: E402
+router.include_router(user_groups.router)
