@@ -56,6 +56,8 @@ class JobReport:
     sample_titles: list[str] = field(default_factory=list)
     budget_hit: bool = False
     cursor: str | None = None
+    aborted: bool = False
+    error: str | None = None
 
 
 class Skipped(Exception):

@@ -5,8 +5,6 @@ import uuid
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 
-import pytest
-
 from breadmind.kb.backfill.base import BackfillItem, BackfillJob
 from breadmind.kb.backfill.runner import BackfillRunner
 
@@ -167,8 +165,16 @@ async def test_runner_aborts_on_10pct_error_rate(
     runner = BackfillRunner(
         db=test_db, redactor=fake_redactor, embedder=exploding_embedder
     )
-    with pytest.raises(RuntimeError, match="error rate"):
-        await runner.run(job)
+    # I1: abort no longer raises — the runner returns a partial JobReport
+    # with ``aborted=True`` so T9 can resume from ``report.cursor``.
+    report = await runner.run(job)
+    assert report.aborted is True
+    assert report.error is not None and "error rate" in report.error
+    # First item embedded successfully (ExplodingEmbedder.calls==1) so
+    # one row should be stored before the cascade of failures.
+    assert report.indexed_count >= 1
+    # Errors must exceed 10% of the items processed before abort.
+    assert report.errors > 0.10 * report.progress.discovered
 
 
 # ---------------------------------------------------------------------------
