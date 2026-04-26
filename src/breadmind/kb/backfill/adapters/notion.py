@@ -15,11 +15,10 @@ Architecture:
 """
 from __future__ import annotations
 
-import hashlib
 import logging
 import uuid
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 import aiohttp
@@ -27,204 +26,31 @@ import aiohttp
 from breadmind.kb.backfill.base import BackfillItem, BackfillJob
 from breadmind.kb.backfill.adapters.notion_common import parse_iso
 from breadmind.kb.backfill.adapters.notion_client import NotionClient
+from breadmind.kb.backfill.adapters.notion_blocks import (
+    _extract_title,
+    _make_parent_ref,
+    _flatten_blocks,
+    _render_block,
+    _MAX_DEPTH,
+    _DEPTH_TRUNCATION_MARKER,
+)
+from breadmind.kb.backfill.adapters.notion_database import (
+    emit_database,
+    emit_database_rows,
+)
+from breadmind.kb.backfill.adapters.notion_filter import apply_filter
 
 _log = logging.getLogger(__name__)
 
-# Block tree depth cap (§3.2).
-_MAX_DEPTH = 8
-_DEPTH_TRUNCATION_MARKER = "... [content truncated at depth limit]"
-
-# Signal filter thresholds (§4).
-_EMPTY_PAGE_MIN_CHARS = 120
-_OVERSIZED_MAX_CHARS = 200_000
-
-
-def _extract_rich_text(rich_text_list: list[dict[str, Any]]) -> str:
-    """Join plain_text from a Notion rich_text array."""
-    return "".join(t.get("plain_text", "") for t in rich_text_list)
-
-
-def _extract_title(page: dict[str, Any]) -> str:
-    """Extract plain-text title from a page or database object."""
-    props = page.get("properties", {})
-    for key in ("title", "Title", "Name"):
-        prop = props.get(key)
-        if prop and prop.get("type") == "title":
-            return _extract_rich_text(prop.get("title", []))
-        if prop and prop.get("title"):
-            return _extract_rich_text(prop["title"])
-    # Database objects expose title at top level
-    top_title = page.get("title")
-    if isinstance(top_title, list):
-        return _extract_rich_text(top_title)
-    return "(untitled)"
-
-
-def _make_parent_ref(parent: dict[str, Any]) -> str | None:
-    """Build parent_ref from a Notion page/block parent descriptor (D3)."""
-    ptype = parent.get("type")
-    if ptype == "workspace":
-        return None
-    if ptype == "page_id":
-        return f"notion_page:{parent['page_id']}"
-    if ptype == "database_id":
-        return f"notion_database:{parent['database_id']}"
-    return None
-
-
-# ---------------------------------------------------------------------------
-# Block-tree → markdown flattener
-# ---------------------------------------------------------------------------
-
-
-async def _flatten_blocks(
-    client: NotionClient,
-    root_block_id: str,
-    depth: int = 0,
-    *,
-    db_queue: list[str] | None = None,
-) -> str:
-    """Recursively fetch block children and render to markdown.
-
-    Args:
-        client: Notion API client.
-        root_block_id: Block or page ID whose children to flatten.
-        depth: Current recursion depth (0 = top level).
-        db_queue: Mutable list to append child_database IDs for later queuing.
-
-    Returns:
-        Markdown string representation of the block tree.
-    """
-    if depth >= _MAX_DEPTH:
-        return _DEPTH_TRUNCATION_MARKER + "\n"
-
-    lines: list[str] = []
-    start_cursor: str | None = None
-
-    while True:
-        resp = await client.list_block_children(root_block_id, start_cursor=start_cursor)
-        for block in resp.get("results", []):
-            text = await _render_block(client, block, depth, db_queue=db_queue)
-            if text:
-                lines.append(text)
-        if not resp.get("has_more"):
-            break
-        start_cursor = resp.get("next_cursor")
-
-    return "\n".join(lines)
-
-
-async def _render_block(
-    client: NotionClient,
-    block: dict[str, Any],
-    depth: int,
-    *,
-    db_queue: list[str] | None = None,
-) -> str:
-    """Render a single block to markdown text (§3.2 table)."""
-    btype = block.get("type", "")
-    data = block.get(btype, {})
-    indent = "  " * depth
-
-    # Rich-text types
-    if btype == "paragraph":
-        return indent + _extract_rich_text(data.get("rich_text", []))
-    if btype == "quote":
-        text = _extract_rich_text(data.get("rich_text", []))
-        return indent + f"> {text}"
-    if btype == "callout":
-        text = _extract_rich_text(data.get("rich_text", []))
-        icon = data.get("icon", {}).get("emoji", "")
-        return indent + f"{icon} {text}".strip()
-    if btype in ("heading_1", "heading_2", "heading_3"):
-        level = int(btype[-1])
-        text = _extract_rich_text(data.get("rich_text", []))
-        return indent + "#" * level + " " + text
-    if btype == "bulleted_list_item":
-        text = _extract_rich_text(data.get("rich_text", []))
-        children_text = ""
-        if block.get("has_children") and depth < _MAX_DEPTH:
-            children_text = "\n" + await _flatten_blocks(
-                client, block["id"], depth + 1, db_queue=db_queue
-            )
-        return indent + f"- {text}" + children_text
-    if btype == "numbered_list_item":
-        text = _extract_rich_text(data.get("rich_text", []))
-        children_text = ""
-        if block.get("has_children") and depth < _MAX_DEPTH:
-            children_text = "\n" + await _flatten_blocks(
-                client, block["id"], depth + 1, db_queue=db_queue
-            )
-        return indent + f"1. {text}" + children_text
-    if btype == "to_do":
-        checked = data.get("checked", False)
-        text = _extract_rich_text(data.get("rich_text", []))
-        checkbox = "[x]" if checked else "[ ]"
-        return indent + f"- {checkbox} {text}"
-    if btype == "code":
-        lang = data.get("language", "")
-        text = _extract_rich_text(data.get("rich_text", []))
-        return indent + f"```{lang}\n{text}\n```"
-    if btype == "toggle":
-        summary = _extract_rich_text(data.get("rich_text", []))
-        children_text = ""
-        if block.get("has_children") and depth < _MAX_DEPTH:
-            children_text = "\n" + await _flatten_blocks(
-                client, block["id"], depth + 1, db_queue=db_queue
-            )
-        return indent + summary + children_text
-    if btype == "equation":
-        expr = data.get("expression", "")
-        return indent + f"$${expr}$$"
-    if btype == "divider":
-        return ""  # drop
-    if btype in ("breadcrumb", "table_of_contents"):
-        return ""  # drop
-    if btype in ("image", "file", "pdf", "video", "audio", "bookmark"):
-        # P3 placeholder
-        caption = _extract_rich_text(data.get("caption", []))
-        name = caption or data.get("name", btype)
-        return indent + f"[file: {name}]"
-    if btype == "table":
-        # Table rows come as children
-        if block.get("has_children") and depth < _MAX_DEPTH:
-            rows_text = await _flatten_blocks(
-                client, block["id"], depth, db_queue=db_queue
-            )
-            return rows_text
-        return ""
-    if btype == "table_row":
-        cells = data.get("cells", [])
-        cell_texts = [_extract_rich_text(cell) for cell in cells]
-        return indent + "| " + " | ".join(cell_texts) + " |"
-    if btype == "synced_block":
-        # Render original only (spec §3.2: mirror is cross-ref only)
-        synced_from = data.get("synced_from")
-        if synced_from is None:
-            # This IS the original
-            if block.get("has_children") and depth < _MAX_DEPTH:
-                return await _flatten_blocks(
-                    client, block["id"], depth, db_queue=db_queue
-                )
-        return ""  # mirror — skip body
-    if btype in ("column_list", "column"):
-        # Flatten columns as simple concat (spec §3.2: column info loss OK)
-        if block.get("has_children") and depth < _MAX_DEPTH:
-            return await _flatten_blocks(
-                client, block["id"], depth, db_queue=db_queue
-            )
-        return ""
-    if btype == "child_page":
-        # Separate discover entry — do not recurse here (spec §3.2)
-        return ""
-    if btype == "child_database":
-        # Queue for separate DB enumeration (spec §3.2 / Task 6)
-        db_id = block.get("id", "")
-        if db_queue is not None and db_id:
-            db_queue.append(db_id)
-        return ""
-    # Unknown block types — drop silently
-    return ""
+# Re-export private symbols consumed by tests (import paths must stay stable).
+__all__ = [
+    "NotionBackfillAdapter",
+    "_cursor_to_iso",
+    "_flatten_blocks",
+    "_render_block",
+    "_DEPTH_TRUNCATION_MARKER",
+    "_MAX_DEPTH",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -356,7 +182,13 @@ class NotionBackfillAdapter(BackfillJob):
                 obj_type = obj.get("object")
                 if obj_type == "database":
                     # Emit a DB index page (Task 6)
-                    async for item in self._emit_database(obj):
+                    async for item in emit_database(
+                        obj,
+                        client=self._client,
+                        source_kind=self.source_kind,
+                        since=self.since,
+                        until=self.until,
+                    ):
                         yield item
                     continue
 
@@ -466,212 +298,26 @@ class NotionBackfillAdapter(BackfillJob):
 
         # Phase C: enumerate queued databases (inline child_database blocks)
         for db_id in db_queue:
-            async for item in self._emit_database_rows(db_id, parent_ref=None):
+            async for item in emit_database_rows(
+                db_id,
+                parent_ref=None,
+                client=self._client,
+                source_kind=self.source_kind,
+            ):
                 yield item
-
-    async def _emit_database(
-        self, db_obj: dict[str, Any]
-    ) -> AsyncIterator[BackfillItem]:
-        """Yield a DB index BackfillItem + all row items for a database object."""
-        db_id = db_obj["id"]
-        title = _extract_title(db_obj)
-        updated_at = parse_iso(db_obj.get("last_edited_time"))
-        created_at = parse_iso(db_obj.get("created_time"))
-        if updated_at is None:
-            updated_at = datetime.now(timezone.utc)
-        if created_at is None:
-            created_at = updated_at
-
-        # D4: since/until cut for DB itself
-        if updated_at < self.since or updated_at >= self.until:
-            return
-
-        # Build description from top-level description field if present
-        desc_parts = db_obj.get("description", [])
-        description = _extract_rich_text(desc_parts) if isinstance(desc_parts, list) else ""
-        # Properties schema summary
-        props = db_obj.get("properties", {})
-        prop_summary = ", ".join(props.keys()) if props else ""
-        body = f"Database: {title}\n{description}\nProperties: {prop_summary}".strip()
-
-        yield BackfillItem(
-            source_kind="notion_database",
-            source_native_id=db_id,
-            source_uri=db_obj.get("url", ""),
-            source_created_at=created_at,
-            source_updated_at=updated_at,
-            title=f"[DB] {title}",
-            body=body,
-            author=db_obj.get("created_by", {}).get("id"),
-            parent_ref=_make_parent_ref(db_obj.get("parent", {})),
-            extra={},
-        )
-
-        # Emit rows
-        async for item in self._emit_database_rows(db_id, parent_ref=f"notion_database:{db_id}"):
-            yield item
-
-    async def _emit_database_rows(
-        self, db_id: str, *, parent_ref: str | None
-    ) -> AsyncIterator[BackfillItem]:
-        """Paginate databases.query and yield each row as a BackfillItem."""
-        assert self._client is not None
-        cursor: str | None = None
-        while True:
-            resp = await self._client.query_database(db_id, start_cursor=cursor)
-            for row in resp.get("results", []):
-                row_id = row["id"]
-                updated_at = parse_iso(row.get("last_edited_time"))
-                created_at = parse_iso(row.get("created_time"))
-                if updated_at is None:
-                    continue
-                if created_at is None:
-                    created_at = updated_at
-
-                title = _extract_title(row)
-                row_parent_ref = parent_ref or f"notion_database:{db_id}"
-                author = row.get("created_by", {}).get("id")
-
-                try:
-                    body = await _flatten_blocks(
-                        self._client, row_id, db_queue=None
-                    )
-                except aiohttp.ClientResponseError as exc:
-                    if exc.status == 404:
-                        yield BackfillItem(
-                            source_kind=self.source_kind,
-                            source_native_id=row_id,
-                            source_uri=row.get("url", ""),
-                            source_created_at=created_at,
-                            source_updated_at=updated_at,
-                            title=title,
-                            body="",
-                            author=author,
-                            parent_ref=row_parent_ref,
-                            extra={"_skip_reason": "share_revoked"},
-                        )
-                        continue
-                    yield BackfillItem(
-                        source_kind=self.source_kind,
-                        source_native_id=row_id,
-                        source_uri=row.get("url", ""),
-                        source_created_at=created_at,
-                        source_updated_at=updated_at,
-                        title=title,
-                        body="",
-                        author=author,
-                        parent_ref=row_parent_ref,
-                        extra={"_fetch_error": str(exc)},
-                    )
-                    continue
-                except Exception as exc:
-                    yield BackfillItem(
-                        source_kind=self.source_kind,
-                        source_native_id=row_id,
-                        source_uri=row.get("url", ""),
-                        source_created_at=created_at,
-                        source_updated_at=updated_at,
-                        title=title,
-                        body="",
-                        author=author,
-                        parent_ref=row_parent_ref,
-                        extra={"_fetch_error": str(exc)},
-                    )
-                    continue
-
-                yield BackfillItem(
-                    source_kind=self.source_kind,
-                    source_native_id=row_id,
-                    source_uri=row.get("url", ""),
-                    source_created_at=created_at,
-                    source_updated_at=updated_at,
-                    title=title,
-                    body=body,
-                    author=author,
-                    parent_ref=row_parent_ref,
-                    extra={},
-                )
-
-            if not resp.get("has_more"):
-                break
-            cursor = resp.get("next_cursor")
 
     def filter(self, item: BackfillItem) -> bool:
         """Apply §4 signal filter rules in spec-defined order.
 
         Returns True if item should be ingested; False if it should be dropped.
         Sets item.extra["_skip_reason"] when dropping.
-
-        Rule evaluation order (spec §4):
-        archived → in_trash → template → acl_lock → share_revoked →
-        title_only → empty_page → oversized → duplicate_body → redact_dropped
         """
-        extra = item.extra
-
-        # Already marked by discover() (e.g. share_revoked from 404)
-        if extra.get("_skip_reason"):
-            return False
-
-        # 1. archived
-        # (BackfillItem doesn't carry raw page; we pass page flags via extra)
-        if extra.get("archived"):
-            extra["_skip_reason"] = "archived"
-            return False
-
-        # 2. in_trash
-        if extra.get("in_trash"):
-            extra["_skip_reason"] = "in_trash"
-            return False
-
-        # 3. template
-        if extra.get("template") or item.title.startswith("Template:"):
-            extra["_skip_reason"] = "template"
-            return False
-
-        # 4. acl_lock (page not in share-in snapshot)
-        if (
-            self._share_in_snapshot
-            and item.source_native_id not in self._share_in_snapshot
-            and item.source_kind == "notion_page"
-        ):
-            extra["_skip_reason"] = "acl_lock"
-            return False
-
-        # 5. share_revoked — handled above via pre-set _skip_reason
-
-        # 6. title_only (no body blocks)
-        if extra.get("_block_count", -1) == 0:
-            extra["_skip_reason"] = "title_only"
-            return False
-
-        # 7. empty_page
-        stripped_body = item.body.strip()
-        if len(stripped_body) < _EMPTY_PAGE_MIN_CHARS:
-            extra["_skip_reason"] = "empty_page"
-            return False
-
-        # 8. oversized
-        if len(item.body) > _OVERSIZED_MAX_CHARS:
-            _log.warning(
-                "notion page %s oversized (%d chars), marking for split audit",
-                item.source_native_id,
-                len(item.body),
-            )
-            extra["_skip_reason"] = "oversized"
-            return False
-
-        # 9. duplicate_body (in-run hash dedup — cross-run handled by DB UNIQUE)
-        body_hash = hashlib.sha256(item.body.encode()).hexdigest()
-        key = f"{self.org_id}:{item.title}:{body_hash}"
-        if key in self._seen_body_hashes:
-            extra["_skip_reason"] = "duplicate_body"
-            return False
-        self._seen_body_hashes.add(key)
-
-        # 10. redact_dropped — runner handles; adapter just registers the key
-        # (no evaluation here per spec §4 note)
-
-        return True
+        return apply_filter(
+            item,
+            org_id=self.org_id,
+            share_in_snapshot=self._share_in_snapshot,
+            seen_body_hashes=self._seen_body_hashes,
+        )
 
     def cursor_of(self, item: BackfillItem) -> str:
         """Encode cursor as last_edited_time:page_id (D2, opaque to backbone)."""
