@@ -205,6 +205,22 @@ def format_dry_run(report: JobReport, ctx: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _resolve_slack_session(provided, *, vault, org_id: uuid.UUID):
+    """Return ``provided`` or build a vault-backed :class:`SlackWebSession`.
+
+    main.py cannot construct the session itself because the vault key
+    (``slack:org:<org_uuid>``) needs ``args.org`` (slack subcommand) or the
+    resumed row's ``org_id`` (resume subcommand) — both only known here.
+    e2e tests bypass the vault by passing an explicit session.
+    """
+    if provided is not None:
+        return provided
+    from breadmind.connectors.slack_web import SlackWebSession  # noqa: PLC0415
+    return SlackWebSession(
+        vault=vault, credentials_ref=f"slack:org:{org_id}"
+    )
+
+
 async def _monthly_remaining(db, org_id: uuid.UUID, ceiling: int) -> int:
     """Return per-org remaining tokens for the current calendar month.
 
@@ -275,6 +291,8 @@ async def _run_slack(
         )
         return 3
 
+    slack_session = _resolve_slack_session(
+        slack_session, vault=vault, org_id=args.org)
     job = SlackBackfillAdapter(
         org_id=args.org,
         source_filter={
@@ -343,6 +361,8 @@ async def _run_resume(
     sf = row["source_filter"]
     if isinstance(sf, str):
         sf = json.loads(sf)
+    slack_session = _resolve_slack_session(
+        slack_session, vault=vault, org_id=row["org_id"])
     job = SlackBackfillAdapter(
         org_id=row["org_id"],
         source_filter=sf,

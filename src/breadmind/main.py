@@ -722,12 +722,11 @@ async def run(args: argparse.Namespace | None = None):
             kb_vault = CredentialVault(kb_db)
             kb_redactor = Redactor.default()
             kb_embedder = EmbeddingService(provider="fastembed")
-            # TODO(kb-backfill-followup): no production-grade Slack web-API
-            # session class exists yet — the SlackBackfillAdapter expects
-            # ``session.call(method, **kwargs)`` (slack-sdk-shaped). Until a
-            # real session is wired, slack/resume runs will fail at
-            # ``auth.test`` with a clear AttributeError. ``list`` and
-            # ``cancel`` work today (they only touch DB).
+            # ``cli.main_async`` builds a vault-backed SlackWebSession when
+            # the explicit ``slack_session`` is None — needs the ``--org``
+            # / resumed row's ``org_id`` to derive the credentials_ref so
+            # the construction lives there, not here. ``list`` / ``cancel``
+            # never touch a session.
             kb_slack_session = None
             try:
                 rc = await bf_main_async(
