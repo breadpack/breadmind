@@ -106,6 +106,23 @@ def owner_token(seed_workspace):
 
 
 @pytest_asyncio.fixture
+async def owner_channel(test_db, seed_workspace):
+    from uuid import uuid4
+    wid, owner_id = seed_workspace
+    cid = uuid4()
+    suffix = uuid4().hex[:8]
+    await test_db.execute(
+        "INSERT INTO channels (id, workspace_id, kind, name) "
+        "VALUES ($1, $2, 'public', $3)", cid, wid, f"general-{suffix}",
+    )
+    await test_db.execute(
+        "INSERT INTO channel_members (channel_id, user_id, role) "
+        "VALUES ($1, $2, 'admin')", cid, owner_id,
+    )
+    return cid
+
+
+@pytest_asyncio.fixture
 async def member_token(test_db, seed_workspace):
     from breadmind.messenger.auth.paseto import encode_access_token
     wid, _ = seed_workspace
