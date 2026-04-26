@@ -97,10 +97,74 @@ class CLIProvider(LLMProvider):
                 "If you need to use a tool, respond ONLY with JSON: "
                 '{"tool_calls": [{"name": "...", "arguments": {...}}]}\n'
             )
-        for msg in messages:
-            if msg.role != "system":
-                parts.append(f"{msg.role}: {msg.content}")
+        # Lead system messages become a single "system:" preamble. Mid-list
+        # system messages (e.g. P1 prior_runs recalls injected after a tool
+        # result) are converted to user turns prefixed with "[system-recall]"
+        # so the CLI subprocess still sees the content rather than dropping
+        # it entirely. Position in the conversation is preserved.
+        for msg in self._normalize_for_cli(messages):
+            parts.append(f"{msg.role}: {msg.content}")
         return "\n".join(parts)
+
+    @staticmethod
+    def _normalize_messages(messages: list[LLMMessage]) -> list[LLMMessage]:
+        """Merge leading system messages, convert mid-list to ``[system-recall]``.
+
+        - Consecutive ``role="system"`` messages at the start are merged into
+          one leading system message.
+        - Any ``role="system"`` message that appears after a non-system turn
+          is rewritten as a ``role="user"`` message whose content is prefixed
+          with ``[system-recall]`` so the CLI subprocess still receives it.
+        """
+        result: list[LLMMessage] = []
+        leading_system: list[str] = []
+        seen_non_system = False
+
+        for msg in messages:
+            if msg.role == "system":
+                if not seen_non_system:
+                    if msg.content:
+                        leading_system.append(msg.content)
+                    continue
+                # Mid-list system → demote to user with explicit prefix.
+                if msg.content:
+                    result.append(LLMMessage(
+                        role="user",
+                        content=f"[system-recall] {msg.content}",
+                    ))
+                continue
+            if not seen_non_system and leading_system:
+                result.append(LLMMessage(
+                    role="system",
+                    content="\n\n".join(leading_system),
+                ))
+                leading_system = []
+            seen_non_system = True
+            result.append(msg)
+
+        # Edge case: messages were system-only (no non-system turns).
+        if leading_system and not seen_non_system:
+            result.append(LLMMessage(
+                role="system",
+                content="\n\n".join(leading_system),
+            ))
+        return result
+
+    @classmethod
+    def _normalize_for_cli(
+        cls, messages: list[LLMMessage],
+    ) -> list[LLMMessage]:
+        """Backwards-compatible wrapper that drops the lead system message.
+
+        The original CLI implementation skipped ``role="system"`` entirely
+        on the assumption that the system prompt was passed via CLI flags.
+        We preserve that behaviour for the *leading* system message and
+        only surface mid-list system content (rewritten to user turns).
+        """
+        normalized = cls._normalize_messages(messages)
+        if normalized and normalized[0].role == "system":
+            return normalized[1:]
+        return normalized
 
     def _try_parse_tool_calls(self, output: str) -> list[ToolCall] | None:
         try:
