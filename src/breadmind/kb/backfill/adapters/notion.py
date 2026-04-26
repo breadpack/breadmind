@@ -273,6 +273,8 @@ class NotionBackfillAdapter(BackfillJob):
         self._share_in_snapshot: frozenset[str] = frozenset()
         # In-run duplicate body hash set (Task 8: same-run dedup only)
         self._seen_body_hashes: set[str] = set()
+        # Optional HourlyPageBudget (Task 14: instance-keyed D5)
+        self._budget: Any | None = None
 
     # ------------------------------------------------------------------
     # BackfillJob interface
@@ -438,6 +440,12 @@ class NotionBackfillAdapter(BackfillJob):
                         extra={"_fetch_error": str(exc)},
                     )
                     continue
+
+                # Task 14: per-page budget consume (D5 instance-keyed)
+                if self._budget is not None:
+                    await self._budget.consume(
+                        self.org_id, count=1, instance_id=self._workspace_id
+                    )
 
                 yield BackfillItem(
                     source_kind=self.source_kind,
