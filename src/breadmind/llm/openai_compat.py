@@ -163,6 +163,14 @@ class OpenAICompatibleProvider(LLMProvider):
     # -- conversion helpers --
 
     def _convert_messages(self, messages: list[LLMMessage]) -> list[dict]:
+        # Consolidate mid-list system messages to the lead system slot. Some
+        # OpenAI-compatible backends (xAI Grok, certain Azure deployments)
+        # reject system messages that appear after non-system turns. P1
+        # tool-recall wiring appends ``LLMMessage(role="system")`` after tool
+        # results, so we proactively merge them here to keep the payload
+        # shape uniform across all OpenAI-compat providers.
+        messages = self._normalize_messages(messages)
+
         result: list[dict] = []
         for msg in messages:
             if msg.role == "tool":
@@ -203,6 +211,32 @@ class OpenAICompatibleProvider(LLMProvider):
                 else:
                     result.append({"role": msg.role, "content": content})
         return result
+
+    @staticmethod
+    def _normalize_messages(messages: list[LLMMessage]) -> list[LLMMessage]:
+        """Collapse all ``role="system"`` messages into a single leading system.
+
+        Preserves order of the system fragments (joined with ``\\n\\n``) so
+        the original prompt remains first and any later P1 prior_runs
+        recalls follow it. Non-system messages keep their relative order.
+        """
+        system_fragments: list[str] = []
+        rest: list[LLMMessage] = []
+        for msg in messages:
+            if msg.role == "system":
+                if msg.content:
+                    system_fragments.append(msg.content)
+                continue
+            rest.append(msg)
+
+        if not system_fragments:
+            return rest
+
+        merged_system = LLMMessage(
+            role="system",
+            content="\n\n".join(system_fragments),
+        )
+        return [merged_system, *rest]
 
     @staticmethod
     def _convert_tools(tools: list[ToolDefinition]) -> list[dict]:
