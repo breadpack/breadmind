@@ -1,3 +1,4 @@
+import pytest
 import pytest_asyncio
 from uuid import uuid4
 
@@ -33,3 +34,16 @@ async def seed_channel(test_db, seed_workspace):
         cid, owner_id,
     )
     return wid, cid, owner_id
+
+
+@pytest.fixture
+def fake_smtp():
+    sent = []
+
+    class FakeSmtp:
+        def send(self, *, to: str, subject: str, body: str) -> None:
+            sent.append({"to": to, "subject": subject, "body": body})
+
+    smtp = FakeSmtp()
+    smtp.sent = sent
+    return smtp
