@@ -41,3 +41,5 @@ from breadmind.messenger.api.v1 import bookmarks  # noqa: E402
 router.include_router(bookmarks.router)
 from breadmind.messenger.api.v1 import audit  # noqa: E402
 router.include_router(audit.router)
+from breadmind.messenger.api.v1 import search as _search  # noqa: E402
+router.include_router(_search.router)
