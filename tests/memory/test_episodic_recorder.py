@@ -84,3 +84,36 @@ async def test_recorder_does_not_raise_on_store_failure():
     rec = EpisodicRecorder(store=store, llm=llm, config=RecorderConfig(normalize=False))
     # Must not raise — Recorder failures are isolated from the agent loop.
     await rec.record(_evt())
+
+
+@pytest.mark.asyncio
+async def test_recorder_redacts_pii_before_llm_prompt():
+    """Section 13: emails / JWTs in tool_result_text must be masked in the
+    rendered prompt fed to the normalization LLM."""
+    store = AsyncMock()
+    llm = AsyncMock()
+    llm.complete_json.return_value = {
+        "summary": "leak",
+        "keywords": ["leak"],
+        "outcome": "failure",
+        "should_record": True,
+    }
+    secret_email = "victim+leak@example.com"
+    secret_jwt = (
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+        ".eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkFsaWNlIn0"
+        ".SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+    )
+    leaked = f"error: user {secret_email} token={secret_jwt} denied"
+    rec = EpisodicRecorder(store=store, llm=llm, config=RecorderConfig(normalize=True))
+    await rec.record(_evt(tool_result_text=leaked))
+
+    assert llm.complete_json.await_count == 1
+    prompt = llm.complete_json.await_args.args[0]
+    assert isinstance(prompt, str)
+    # Originals must be gone
+    assert secret_email not in prompt
+    assert secret_jwt not in prompt
+    # Replacement tokens must be present
+    assert "[EMAIL]" in prompt
+    assert "[JWT]" in prompt
