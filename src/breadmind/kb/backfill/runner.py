@@ -326,34 +326,60 @@ class BackfillRunner:
             return _Outcome.ERRORED
 
         # Store.
+        # Postgres' partial-unique-index ``ON CONFLICT`` only fires for
+        # rows that satisfy the index predicate; on conflict ``DO NOTHING``
+        # returns no row (nothing was inserted), so we need a separate
+        # lookup before writing the kb_sources citation.
         try:
-            await self.db.execute(
+            row = await self.db.fetchrow(
                 """
                 INSERT INTO org_knowledge
-                    (project_id, title, body, category, embedding,
+                    (project_id, title, body, category, embedding, author,
                      source_kind, source_native_id,
                      source_created_at, source_updated_at,
                      parent_ref)
-                VALUES ($1, $2, $3, $4, $5::vector,
-                        $6, $7, $8, $9, $10)
+                VALUES ($1, $2, $3, $4, $5::vector, $6,
+                        $7, $8, $9, $10, $11)
                 ON CONFLICT (project_id, source_kind,
                              source_native_id)
                     WHERE source_native_id IS NOT NULL
                           AND superseded_by IS NULL
                     DO NOTHING
+                RETURNING id
                 """,
                 job.org_id,
                 item.title,
                 redacted_body,
                 item.source_kind,  # use source_kind as category for now
                 _vec_literal(vec),
+                item.author,
                 item.source_kind,
                 item.source_native_id,
                 item.source_created_at,
                 item.source_updated_at,
                 item.parent_ref,
             )
-            progress.stored += 1
+            if row is not None:
+                await self.db.execute(
+                    """
+                    INSERT INTO kb_sources
+                        (knowledge_id, source_type, source_uri, source_ref)
+                    VALUES ($1, $2, $3, $4)
+                    """,
+                    row["id"],
+                    item.source_kind,
+                    item.source_uri,
+                    item.source_native_id,
+                )
+                progress.stored += 1
+            else:
+                # Conflict-skipped: row already existed for this
+                # (project_id, source_kind, source_native_id). Treat as a
+                # successful idempotent re-run, not an error.
+                skipped["skipped_existing"] = (
+                    skipped.get("skipped_existing", 0) + 1
+                )
+                progress.skipped_existing += 1
         except Exception:
             progress.errors += 1
             return _Outcome.ERRORED

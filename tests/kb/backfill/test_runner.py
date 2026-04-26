@@ -210,3 +210,88 @@ async def test_runner_filter_false_accumulates_skipped(test_db, insert_org):
     assert report.skipped.get("filtered", 0) == 3
     # Dry-run estimated_count = discovered (6) - filtered_out (3) = 3.
     assert report.estimated_count == 3
+
+
+# ---------------------------------------------------------------------------
+# Migration 011 — org_knowledge.author + kb_sources writer wiring.
+# ---------------------------------------------------------------------------
+
+
+async def test_runner_persists_author_and_kb_sources(
+    test_db, insert_org, fake_redactor, fake_embedder
+):
+    org_id = uuid.uuid4()
+    await insert_org(org_id)
+    items = [_item(i) for i in range(2)]
+    job = _StubJob(
+        items,
+        org_id=org_id,
+        source_filter={},
+        since=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        until=datetime(2026, 4, 1, tzinfo=timezone.utc),
+        dry_run=False,
+        token_budget=10_000,
+    )
+    runner = BackfillRunner(
+        db=test_db, redactor=fake_redactor, embedder=fake_embedder
+    )
+    await runner.run(job)
+
+    rows = await test_db.fetch(
+        "SELECT id, author FROM org_knowledge "
+        "WHERE project_id=$1 ORDER BY source_native_id",
+        org_id,
+    )
+    assert [r["author"] for r in rows] == ["U1", "U1"]
+
+    knowledge_ids = [r["id"] for r in rows]
+    src_rows = await test_db.fetch(
+        "SELECT knowledge_id, source_type, source_uri, source_ref "
+        "FROM kb_sources WHERE knowledge_id = ANY($1::bigint[]) "
+        "ORDER BY knowledge_id",
+        knowledge_ids,
+    )
+    assert len(src_rows) == 2
+    for src, expected_native in zip(src_rows, ["x0", "x1"], strict=True):
+        assert src["source_type"] == "slack_msg"
+        assert src["source_uri"] == "u"
+        assert src["source_ref"] == expected_native
+
+
+async def test_runner_idempotent_rerun_counts_skipped_existing(
+    test_db, insert_org, fake_redactor, fake_embedder
+):
+    org_id = uuid.uuid4()
+    await insert_org(org_id)
+    items = [_item(i) for i in range(3)]
+
+    def _make_job():
+        return _StubJob(
+            items,
+            org_id=org_id,
+            source_filter={},
+            since=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            until=datetime(2026, 4, 1, tzinfo=timezone.utc),
+            dry_run=False,
+            token_budget=10_000,
+        )
+
+    runner = BackfillRunner(
+        db=test_db, redactor=fake_redactor, embedder=fake_embedder
+    )
+    first = await runner.run(_make_job())
+    assert first.indexed_count == 3
+
+    second = await runner.run(_make_job())
+    # All three items hit ON CONFLICT DO NOTHING and bump skipped_existing
+    # rather than getting double-stored or counted as errors.
+    assert second.errors == 0
+    assert second.indexed_count == 0
+    assert second.skipped.get("skipped_existing", 0) == 3
+    # No duplicate kb_sources rows were emitted by the no-op pass.
+    src_count = await test_db.fetchval(
+        "SELECT COUNT(*) FROM kb_sources WHERE knowledge_id IN "
+        "(SELECT id FROM org_knowledge WHERE project_id=$1)",
+        org_id,
+    )
+    assert src_count == 3

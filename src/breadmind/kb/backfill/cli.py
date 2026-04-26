@@ -181,7 +181,7 @@ def format_dry_run(report: JobReport, ctx: dict) -> str:
         f"   (within budget: {within})",
         f"Estimated embeddings:        {fmt_int(report.estimated_count)}",
         f"Estimated DB rows:           {fmt_int(report.estimated_count)} "
-        f"org_knowledge  (kb_sources rows deferred — schema/writer not yet wired)",
+        f"org_knowledge + {fmt_int(report.estimated_count)} kb_sources",
         "",
     ]
     shown_titles = report.sample_titles[:10]
