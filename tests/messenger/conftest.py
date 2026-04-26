@@ -1,4 +1,5 @@
 """Conftest for tests/messenger — provides DB seed fixtures."""
+import fakeredis.aioredis
 import pytest_asyncio
 from uuid import uuid4
 
@@ -33,3 +34,13 @@ async def seed_channel(test_db, seed_workspace):
         cid, owner_id,
     )
     return wid, cid, owner_id
+
+
+@pytest_asyncio.fixture
+async def redis_client():
+    r = fakeredis.aioredis.FakeRedis()
+    try:
+        yield r
+    finally:
+        await r.flushall()
+        await r.aclose()
