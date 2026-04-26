@@ -791,6 +791,15 @@ class CoreAgent:
                 response.tool_calls, messages, exec_ctx,
             )
 
+            # Episodic recall: inject any prior_runs system messages produced
+            # during _do_recall so the next LLM turn can see them.
+            recall_msgs = self._tool_executor.drain_recall_messages()
+            if recall_msgs:
+                messages.extend(recall_msgs)
+                if self._working_memory is not None:
+                    for m in recall_msgs:
+                        self._working_memory.add_message(session_id, m)
+
             # Inject Iron Laws tool reminder into the last new tool message (Claude only)
             if self._prompt_builder:
                 reminder = self._prompt_builder.render_tool_reminder(self._provider_name)
