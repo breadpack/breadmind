@@ -54,6 +54,7 @@ class SlackBackfillAdapter(BackfillJob):
                 raise PermissionError(
                     f"channel {cid} archived since dry-run; "
                     "re-run dry-run to refresh and try again.")
+            self._channel_names[cid] = ch.get("name", cid)
             # conversations.members pagination
             cursor: str | None = None
             while True:
@@ -103,16 +104,25 @@ class SlackBackfillAdapter(BackfillJob):
 
     async def _call_with_retry(self, method: str, **params):
         backoffs = list(_BACKOFF_SECONDS)
-        while True:
+        max_attempts = len(_BACKOFF_SECONDS) + 1  # 4 total tries
+        for attempt in range(max_attempts):
             payload = await self._session.call(method, **params)
             if payload.get("_status") == 429 or (
                     payload.get("error") == "ratelimited"):
+                if attempt == max_attempts - 1:
+                    raise RuntimeError(
+                        f"Slack {method} rate-limited after "
+                        f"{max_attempts} attempts")
                 import asyncio
-                wait = int(payload.get("_retry_after") or
-                           (backoffs.pop(0) if backoffs else _BACKOFF_SECONDS[-1]))
+                wait = int(payload["_retry_after"]
+                           if "_retry_after" in payload
+                           else (backoffs.pop(0) if backoffs
+                                 else _BACKOFF_SECONDS[-1]))
                 await asyncio.sleep(wait)
                 continue
             return payload
+        raise RuntimeError(
+            f"Slack {method} unreachable after {max_attempts} attempts")
 
     def _build_top_level_item(self, cid: str, msg: dict) -> BackfillItem:
         ts = float(msg["ts"])
@@ -138,9 +148,11 @@ class SlackBackfillAdapter(BackfillJob):
     async def _build_thread_item(self, cid: str, parent: dict) -> BackfillItem:
         thread_ts = parent["ts"]
         bodies: list[str] = [parent.get("text", "")]
-        latest_edit_ts = float(parent["ts"])
+        latest_edit_ts = float(
+            parent.get("edited", {}).get("ts", parent["ts"]))
         cursor = None
         char_budget = 4000
+        truncated = False
         while True:
             rp = await self._call_with_retry(
                 "conversations.replies", channel=cid,
@@ -154,9 +166,12 @@ class SlackBackfillAdapter(BackfillJob):
                     continue
                 text = r.get("text", "")
                 if sum(len(b) for b in bodies) + len(text) > char_budget:
+                    truncated = True
                     break
                 bodies.append(text)
                 latest_edit_ts = max(latest_edit_ts, ts)
+            if truncated:
+                break
             if not rp.get("has_more"):
                 break
             cursor = (rp.get("response_metadata") or {}).get("next_cursor")
@@ -178,5 +193,6 @@ class SlackBackfillAdapter(BackfillJob):
             parent_ref=None,  # this IS the parent
             extra={"reaction_count": sum(r.get("count", 0)
                                          for r in parent.get("reactions", []) or []),
-                   "reply_count": parent.get("reply_count", 0)},
+                   "reply_count": parent.get("reply_count", 0),
+                   "thread_truncated": truncated},
         )

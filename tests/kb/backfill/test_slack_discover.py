@@ -147,3 +147,94 @@ async def test_discover_retries_on_429_with_retry_after():
     _ = [it async for it in job.discover()]
     methods = [c[0] for c in session.calls]
     assert methods.count("conversations.history") == 2
+
+
+async def test_discover_paginates_history_via_next_cursor():
+    session = FakeSlackSession({
+        "auth.test": [{"ok": True, "team_id": "T1"}],
+        "conversations.info": [
+            {"ok": True, "channel": {"id": "C1", "is_archived": False, "name": "general"}}],
+        "conversations.members": [
+            {"ok": True, "members": ["U1"], "response_metadata": {}}],
+        "conversations.history": [
+            {"ok": True, "messages": [
+                {"ts": "1735689600.0", "user": "U1", "text": "page1"},
+            ], "has_more": True,
+             "response_metadata": {"next_cursor": "abc"}},
+            {"ok": True, "messages": [
+                {"ts": "1735776000.0", "user": "U1", "text": "page2"},
+            ], "has_more": False},
+        ],
+    })
+    job = SlackBackfillAdapter(
+        org_id=uuid.uuid4(), source_filter={"channels": ["C1"]},
+        since=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        until=datetime(2026, 4, 1, tzinfo=timezone.utc),
+        dry_run=True, token_budget=10**9, vault=FakeVault(),
+        credentials_ref="slack:o", session=session)
+    await job.prepare()
+    out = [it async for it in job.discover()]
+    assert len(out) == 2
+    history_calls = [c for c in session.calls if c[0] == "conversations.history"]
+    assert len(history_calls) == 2
+    assert history_calls[1][1].get("cursor") == "abc"
+
+
+async def test_discover_thread_truncates_on_char_budget():
+    long = "x" * 3000  # two of these exceeds 4000
+    session = FakeSlackSession({
+        "auth.test": [{"ok": True, "team_id": "T1"}],
+        "conversations.info": [
+            {"ok": True, "channel": {"id": "C1", "is_archived": False, "name": "g"}}],
+        "conversations.members": [
+            {"ok": True, "members": ["U1"], "response_metadata": {}}],
+        "conversations.history": [{"ok": True, "messages": [
+            {"ts": "1.0", "thread_ts": "1.0", "reply_count": 5,
+             "user": "U1", "text": "Q"}], "has_more": False}],
+        "conversations.replies": [
+            {"ok": True, "messages": [
+                {"ts": "1.0", "thread_ts": "1.0", "text": "Q", "user": "U1"},
+                {"ts": "1.1", "thread_ts": "1.0", "text": long, "user": "U1"},
+                {"ts": "1.2", "thread_ts": "1.0", "text": long, "user": "U1"},
+            ], "has_more": True,
+             "response_metadata": {"next_cursor": "next"}},
+        ],
+    })
+    job = SlackBackfillAdapter(
+        org_id=uuid.uuid4(), source_filter={
+            "channels": ["C1"], "include_threads": True},
+        since=datetime(1970, 1, 1, tzinfo=timezone.utc),
+        until=datetime(2099, 1, 1, tzinfo=timezone.utc),
+        dry_run=True, token_budget=10**9, vault=FakeVault(),
+        credentials_ref="slack:o", session=session)
+    await job.prepare()
+    out = [it async for it in job.discover()]
+    assert len(out) == 1
+    assert out[0].extra["thread_truncated"] is True
+    # only one replies call — second page never fetched
+    replies_calls = [c for c in session.calls if c[0] == "conversations.replies"]
+    assert len(replies_calls) == 1
+
+
+async def test_discover_uses_channel_name_in_title():
+    session = FakeSlackSession({
+        "auth.test": [{"ok": True, "team_id": "T1"}],
+        "conversations.info": [
+            {"ok": True, "channel": {"id": "C1", "is_archived": False, "name": "engineering"}}],
+        "conversations.members": [
+            {"ok": True, "members": ["U1"], "response_metadata": {}}],
+        "conversations.history": [
+            {"ok": True, "messages": [
+                {"ts": "1735689600.0", "user": "U1", "text": "hello"},
+            ], "has_more": False}],
+    })
+    job = SlackBackfillAdapter(
+        org_id=uuid.uuid4(), source_filter={"channels": ["C1"]},
+        since=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        until=datetime(2026, 4, 1, tzinfo=timezone.utc),
+        dry_run=True, token_budget=10**9, vault=FakeVault(),
+        credentials_ref="slack:o", session=session)
+    await job.prepare()
+    out = [it async for it in job.discover()]
+    assert len(out) == 1
+    assert out[0].title.startswith("[#engineering]")
