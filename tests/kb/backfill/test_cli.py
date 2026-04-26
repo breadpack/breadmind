@@ -119,3 +119,53 @@ def test_dry_run_output_matches_spec_section_7():
     assert "Sample titles" in out
     assert "No data was indexed." in out
     assert "To run for real: re-issue without --dry-run." in out
+
+
+def test_dry_run_drop_pct_zero_when_no_discovery():
+    report = JobReport(
+        job_id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
+        org_id=uuid.UUID("8c4f0000-0000-0000-0000-00000000009a"),
+        source_kind="slack_msg", dry_run=True,
+        estimated_count=0, estimated_tokens=0, indexed_count=0,
+        skipped={}, progress=JobProgress(discovered=0, filtered_out=0),
+        sample_titles=[],
+    )
+    ctx = {
+        "project_name": "p", "team_id": "T", "team_name": "n",
+        "channels": [("C1", "g")],
+        "since": datetime(2026, 1, 1, tzinfo=timezone.utc),
+        "until": datetime(2026, 4, 1, tzinfo=timezone.utc),
+        "token_budget": 100_000, "monthly_remaining": 1, "monthly_ceiling": 2,
+        "membership_count": 0,
+        "membership_snapshotted_at": datetime(
+            2026, 4, 26, tzinfo=timezone.utc),
+        "thread_root_count": 0, "top_level_count": 0,
+    }
+    out = format_dry_run(report, ctx)
+    assert "drop rate 0.0%" in out
+    assert "Sample titles (0 of 0)" in out
+
+
+def test_dry_run_within_budget_no_when_over():
+    report = JobReport(
+        job_id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
+        org_id=uuid.UUID("8c4f0000-0000-0000-0000-00000000009a"),
+        source_kind="slack_msg", dry_run=True,
+        estimated_count=100, estimated_tokens=999_999_999,
+        indexed_count=0, skipped={},
+        progress=JobProgress(discovered=200, filtered_out=100),
+        sample_titles=[],
+    )
+    ctx = {
+        "project_name": "p", "team_id": "T", "team_name": "n",
+        "channels": [("C1", "g")],
+        "since": datetime(2026, 1, 1, tzinfo=timezone.utc),
+        "until": datetime(2026, 4, 1, tzinfo=timezone.utc),
+        "token_budget": 1, "monthly_remaining": 1, "monthly_ceiling": 2,
+        "membership_count": 0,
+        "membership_snapshotted_at": datetime(
+            2026, 4, 26, tzinfo=timezone.utc),
+        "thread_root_count": 0, "top_level_count": 0,
+    }
+    out = format_dry_run(report, ctx)
+    assert "within budget: no" in out

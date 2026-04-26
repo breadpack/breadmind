@@ -4,6 +4,8 @@ import argparse
 import uuid
 from datetime import datetime, timezone
 
+from breadmind.kb.backfill.base import JobReport
+
 
 def _iso_date(s: str) -> datetime:
     return datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=timezone.utc)
@@ -48,12 +50,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return build_parser().parse_args(argv)
 
 
-def format_dry_run(report, ctx: dict) -> str:
+def format_dry_run(report: JobReport, ctx: dict) -> str:
     def fmt_int(n: int) -> str:
         return f"{n:,}"
     since = ctx["since"].strftime("%Y-%m-%dT%H:%M:%SZ")
     until = ctx["until"].strftime("%Y-%m-%dT%H:%M:%SZ")
-    drop = report.progress.discovered - report.estimated_count
+    drop = max(0, report.progress.discovered - report.estimated_count)
     drop_pct = (drop / report.progress.discovered * 100
                 if report.progress.discovered else 0.0)
     within = "yes" if report.estimated_tokens <= ctx["token_budget"] \
@@ -100,12 +102,15 @@ def format_dry_run(report, ctx: dict) -> str:
         f"   (within budget: {within})",
         f"Estimated embeddings:        {fmt_int(report.estimated_count)}",
         f"Estimated DB rows:           {fmt_int(report.estimated_count)} "
-        f"org_knowledge + {fmt_int(report.estimated_count)} kb_sources",
+        f"org_knowledge  (kb_sources rows deferred — schema/writer not yet wired)",
         "",
-        f"Sample titles (10 of {fmt_int(report.estimated_count)})",
+    ]
+    shown_titles = report.sample_titles[:10]
+    lines += [
+        f"Sample titles ({len(shown_titles)} of {fmt_int(report.estimated_count)})",
         "----------------------------",
     ]
-    for t in report.sample_titles[:10]:
+    for t in shown_titles:
         lines.append(f"  {t}")
     lines += ["", "No data was indexed.",
               "To run for real: re-issue without --dry-run."]
