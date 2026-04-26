@@ -44,5 +44,5 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def parse_slack_args(argv: list[str]) -> argparse.Namespace:
+def parse_args(argv: list[str]) -> argparse.Namespace:
     return build_parser().parse_args(argv)

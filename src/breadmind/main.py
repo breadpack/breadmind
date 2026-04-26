@@ -223,7 +223,9 @@ def _build_parser() -> argparse.ArgumentParser:
     # REMAINDER and pass it through during dispatch.
     kb_parser = sub.add_parser("kb", help="Knowledge base operations")
     kb_sub = kb_parser.add_subparsers(dest="kb_command")
-    bf_parser = kb_sub.add_parser("backfill", help="Bulk history backfill")
+    bf_parser = kb_sub.add_parser(
+        "backfill",
+        help="Bulk history backfill (run `... backfill <subcommand> --help` for options)")
     bf_parser.add_argument("rest", nargs=argparse.REMAINDER)
 
     return parser

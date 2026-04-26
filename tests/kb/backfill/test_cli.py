@@ -1,6 +1,6 @@
 from __future__ import annotations
 import pytest
-from breadmind.kb.backfill.cli import build_parser, parse_slack_args
+from breadmind.kb.backfill.cli import build_parser, parse_args
 
 
 def test_parser_requires_org_and_channel():
