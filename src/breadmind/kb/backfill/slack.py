@@ -44,7 +44,7 @@ class SlackBackfillAdapter(BackfillJob):
         return self._team_id
 
     def cursor_of(self, item: BackfillItem) -> str:
-        # spec §6.6: f"{ts_ms}:{channel_id}:{message_ts}"
+        # spec §6.6: f"{ts_ms}:{channel_id}:{message_ts}" — ts_ms first so cursors sort monotonically as strings
         ts_ms = int(item.source_updated_at.timestamp() * 1000)
         # source_native_id is "<channel_id>:<message_ts>[:thread]"
         return f"{ts_ms}:{item.source_native_id}"

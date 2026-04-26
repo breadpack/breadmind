@@ -97,4 +97,18 @@ def test_cursor_of_thread_format():
         source_uri="u", source_created_at=ts, source_updated_at=ts,
         title="t", body="b", author="U1")
     cur = j.cursor_of(item)
-    assert cur.endswith(":C1:1.0:thread") or cur.endswith(":C1:1.0")
+    assert cur == f"{int(ts.timestamp() * 1000)}:C1:1.0:thread"
+
+
+def test_cursor_of_round_trip_to_oldest():
+    j = _job()
+    ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    item = BackfillItem(
+        source_kind="slack_msg", source_native_id="C1:1735689600.0",
+        source_uri="u", source_created_at=ts, source_updated_at=ts,
+        title="t", body="b", author="U1")
+    cur = j.cursor_of(item)
+    # _cursor_to_oldest must reverse cursor → seconds float string suitable
+    # for Slack `oldest=` parameter on resume (T17).
+    oldest = j._cursor_to_oldest(cur)
+    assert oldest == f"{int(ts.timestamp())}.000000"
