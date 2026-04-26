@@ -326,3 +326,93 @@ async def test_drain_recall_messages_empty_when_recall_raises(tool_executor_fact
 
     await ex._do_recall(tool_name="echo", args={}, user_id=None)
     assert ex.drain_recall_messages() == []
+
+
+# ── P1 cap ──
+
+
+@pytest.mark.asyncio
+async def test_recall_buffer_default_cap_drops_oldest(tool_executor_factory, monkeypatch):
+    """Default cap (8) keeps only the most recent 8 prior_runs system messages
+    when _do_recall fires more than 8 times in a single turn.
+
+    With 10 distinct tool_names recalled, the buffer must contain exactly 8
+    entries on drain, and the first 2 tool_names must be absent (FIFO drop).
+    """
+    monkeypatch.delenv("BREADMIND_EPISODIC_RECALL_MESSAGES_MAX", raising=False)
+
+    tool_names = [f"tool_{i:02d}" for i in range(10)]
+    notes_per_call = [
+        [_make_note(summary=f"prior-{name}", tool_name=name, outcome="ok")]
+        for name in tool_names
+    ]
+    store = AsyncMock()
+    store.search.side_effect = notes_per_call
+    ex = tool_executor_factory(store=store, recorder=AsyncMock())
+
+    for name in tool_names:
+        await ex._do_recall(tool_name=name, args={"k": name}, user_id="alice")
+
+    assert len(ex._recall_messages) == 8
+    msgs = ex.drain_recall_messages()
+    assert len(msgs) == 8
+
+    contents = "\n".join(m.content for m in msgs)
+    # First two tool_names dropped (FIFO).
+    assert "tool_00" not in contents
+    assert "tool_01" not in contents
+    # Remaining 8 are present.
+    for name in tool_names[2:]:
+        assert name in contents
+
+
+@pytest.mark.asyncio
+async def test_recall_buffer_env_override_honored(tool_executor_factory, monkeypatch):
+    """BREADMIND_EPISODIC_RECALL_MESSAGES_MAX=2 caps buffer at 2 regardless
+    of how many recalls fire."""
+    monkeypatch.setenv("BREADMIND_EPISODIC_RECALL_MESSAGES_MAX", "2")
+
+    tool_names = [f"tool_{i}" for i in range(5)]
+    notes_per_call = [
+        [_make_note(summary=f"prior-{name}", tool_name=name, outcome="ok")]
+        for name in tool_names
+    ]
+    store = AsyncMock()
+    store.search.side_effect = notes_per_call
+    ex = tool_executor_factory(store=store, recorder=AsyncMock())
+
+    for name in tool_names:
+        await ex._do_recall(tool_name=name, args={"k": name}, user_id="alice")
+        assert len(ex._recall_messages) <= 2
+
+    msgs = ex.drain_recall_messages()
+    assert len(msgs) == 2
+    contents = "\n".join(m.content for m in msgs)
+    # Only the last two tool_names survive.
+    assert "tool_3" in contents
+    assert "tool_4" in contents
+    assert "tool_0" not in contents
+    assert "tool_1" not in contents
+    assert "tool_2" not in contents
+
+
+@pytest.mark.asyncio
+async def test_recall_buffer_cap_zero_disables_buffering(tool_executor_factory, monkeypatch):
+    """BREADMIND_EPISODIC_RECALL_MESSAGES_MAX=0 disables the buffer entirely:
+    drain returns [] regardless of how many recalls fire."""
+    monkeypatch.setenv("BREADMIND_EPISODIC_RECALL_MESSAGES_MAX", "0")
+
+    tool_names = [f"tool_{i}" for i in range(5)]
+    notes_per_call = [
+        [_make_note(summary=f"prior-{name}", tool_name=name, outcome="ok")]
+        for name in tool_names
+    ]
+    store = AsyncMock()
+    store.search.side_effect = notes_per_call
+    ex = tool_executor_factory(store=store, recorder=AsyncMock())
+
+    for name in tool_names:
+        await ex._do_recall(tool_name=name, args={"k": name}, user_id="alice")
+
+    assert ex._recall_messages == []
+    assert ex.drain_recall_messages() == []
