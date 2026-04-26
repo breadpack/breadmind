@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 
 import pytest
 
-from breadmind.kb.backfill.base import BackfillItem, JobProgress, JobReport
+from breadmind.kb.backfill.base import (
+    BackfillItem,
+    BackfillJob,
+    JobProgress,
+    JobReport,
+    Skipped,
+)
 
 
 def _ts() -> datetime:
@@ -114,3 +121,71 @@ def test_job_report_cursor_is_opaque_str():
     )
     # Pipeline never parses; just stores verbatim.
     assert isinstance(r.cursor, str)
+
+
+class _Concrete(BackfillJob):
+    source_kind = "slack_msg"
+
+    async def prepare(self) -> None: ...
+
+    async def discover(self) -> AsyncIterator[BackfillItem]:
+        if False:
+            yield  # type: ignore[unreachable]
+
+    def filter(self, item: BackfillItem) -> bool:
+        return True
+
+    def instance_id_of(self, source_filter: dict) -> str:
+        return "T1"
+
+
+def test_backfill_job_cannot_instantiate_abstract():
+    with pytest.raises(TypeError):
+        BackfillJob(  # type: ignore[abstract]
+            org_id=uuid.uuid4(),
+            source_filter={},
+            since=datetime.now(timezone.utc),
+            until=datetime.now(timezone.utc),
+            dry_run=True,
+            token_budget=1,
+        )
+
+
+def test_backfill_job_concrete_constructs():
+    job = _Concrete(
+        org_id=uuid.uuid4(),
+        source_filter={"channels": ["C1"]},
+        since=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        until=datetime(2026, 4, 1, tzinfo=timezone.utc),
+        dry_run=True,
+        token_budget=500_000,
+    )
+    assert job.source_kind == "slack_msg"
+    assert job.instance_id_of({}) == "T1"
+
+
+def test_cursor_of_default_returns_native_id():
+    job = _Concrete(
+        org_id=uuid.uuid4(),
+        source_filter={},
+        since=datetime.now(timezone.utc),
+        until=datetime.now(timezone.utc),
+        dry_run=True,
+        token_budget=1,
+    )
+    item = BackfillItem(
+        source_kind="slack_msg",
+        source_native_id="X1",
+        source_uri="u",
+        source_created_at=datetime.now(timezone.utc),
+        source_updated_at=datetime.now(timezone.utc),
+        title="t",
+        body="b",
+        author=None,
+    )
+    assert job.cursor_of(item) == "X1"
+
+
+def test_skipped_exception_carries_reason():
+    e = Skipped("acl_lock")
+    assert e.reason == "acl_lock"
