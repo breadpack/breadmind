@@ -1,0 +1,113 @@
+{
+  "issues": [
+    {
+      "id": 42117,
+      "project": {"id": 7, "name": "Ops"},
+      "tracker": {"id": 1, "name": "Bug"},
+      "status": {"id": 5, "name": "Resolved", "is_closed": true},
+      "subject": "Database deadlock on heavy write load",
+      "description": "Under high concurrency the primary DB node enters a deadlock state. First observed 2025-09-10. Root cause: missing index on write path.",
+      "author": {"id": 101, "name": "Alice Dev", "login": "alice"},
+      "created_on": "2025-09-10T08:00:00Z",
+      "updated_on": "2025-09-12T10:14:00Z",
+      "journals": [
+        {
+          "id": 1001,
+          "user": {"id": 101, "name": "Alice Dev"},
+          "notes": "Reproduced locally with pgbench. Adding index on tx_id column.",
+          "private_notes": false,
+          "created_on": "2025-09-11T09:00:00Z",
+          "details": []
+        },
+        {
+          "id": 1002,
+          "user": {"id": 102, "name": "Bob Ops"},
+          "notes": "",
+          "private_notes": false,
+          "created_on": "2025-09-11T12:00:00Z",
+          "details": [{"property": "status", "old_value": "1", "new_value": "5"}]
+        },
+        {
+          "id": 1003,
+          "user": {"id": 101, "name": "Alice Dev"},
+          "notes": "Index deployed to prod. Monitoring for 24h.",
+          "private_notes": false,
+          "created_on": "2025-09-12T10:14:00Z",
+          "details": []
+        },
+        {
+          "id": 1004,
+          "user": {"id": 103, "name": "CI Bot"},
+          "notes": "Auto-closed by CI pipeline after successful deploy.",
+          "private_notes": true,
+          "created_on": "2025-09-12T10:30:00Z",
+          "details": []
+        }
+      ],
+      "attachments": [
+        {
+          "id": 501,
+          "filename": "deadlock_trace.txt",
+          "filesize": 4096,
+          "content_type": "text/plain",
+          "content_url": "https://redmine.acme.internal/attachments/download/501/deadlock_trace.txt",
+          "created_on": "2025-09-11T09:05:00Z",
+          "author": {"id": 101, "name": "Alice Dev"}
+        },
+        {
+          "id": 502,
+          "filename": "screenshot.png",
+          "filesize": 2097152,
+          "content_type": "image/png",
+          "content_url": "https://redmine.acme.internal/attachments/download/502/screenshot.png",
+          "created_on": "2025-09-11T09:10:00Z",
+          "author": {"id": 101, "name": "Alice Dev"}
+        }
+      ],
+      "custom_fields": [
+        {"id": 1, "name": "Root cause", "value": "Missing index"},
+        {"id": 2, "name": "Customer", "value": "internal"}
+      ]
+    },
+    {
+      "id": 42118,
+      "project": {"id": 7, "name": "Ops"},
+      "tracker": {"id": 2, "name": "Feature"},
+      "status": {"id": 1, "name": "New", "is_closed": false},
+      "subject": "Add observability dashboard",
+      "description": "We need a Grafana dashboard for service health.",
+      "author": {"id": 102, "name": "Bob Ops", "login": "bob"},
+      "created_on": "2025-09-13T08:00:00Z",
+      "updated_on": "2025-09-13T08:00:00Z",
+      "journals": [],
+      "attachments": [],
+      "custom_fields": []
+    },
+    {
+      "id": 42119,
+      "project": {"id": 7, "name": "Ops"},
+      "tracker": {"id": 1, "name": "Bug"},
+      "status": {"id": 6, "name": "Closed"},
+      "subject": "Memory leak in worker process",
+      "description": "Worker OOM after 48h uptime. Cause: event listener not cleaned up.",
+      "author": {"id": 104, "name": "jenkins", "login": "jenkins"},
+      "created_on": "2025-09-05T10:00:00Z",
+      "updated_on": "2025-09-08T14:00:00Z",
+      "journals": [
+        {
+          "id": 1005,
+          "user": {"id": 104, "name": "jenkins"},
+          "notes": "Automated build triggered by commit abc123.",
+          "private_notes": false,
+          "created_on": "2025-09-06T11:00:00Z",
+          "details": []
+        }
+      ],
+      "attachments": [],
+      "custom_fields": []
+    }
+  ],
+  "total_count": 3,
+  "offset": 0,
+  "limit": 100
+}

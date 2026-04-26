@@ -1,3 +1,4 @@
+from breadmind.kb.backfill.adapters.redmine import RedmineBackfillAdapter
 from breadmind.kb.backfill.base import (
     BackfillItem,
     BackfillJob,
@@ -18,6 +19,7 @@ __all__ = [
     "JobReport",
     "OrgMonthlyBudget",
     "OrgMonthlyBudgetExceeded",
+    "RedmineBackfillAdapter",
     "SlackBackfillAdapter",
     "Skipped",
 ]

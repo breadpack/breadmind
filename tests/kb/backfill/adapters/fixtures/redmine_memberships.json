@@ -1,0 +1,32 @@
+{
+  "memberships": [
+    {
+      "id": 1,
+      "project": {"id": 7, "name": "Ops"},
+      "user": {"id": 101, "name": "Alice Dev"},
+      "roles": [
+        {"id": 3, "name": "Developer"},
+        {"id": 4, "name": "Reporter"}
+      ]
+    },
+    {
+      "id": 2,
+      "project": {"id": 7, "name": "Ops"},
+      "user": {"id": 102, "name": "Bob Ops"},
+      "roles": [
+        {"id": 2, "name": "Manager"}
+      ]
+    },
+    {
+      "id": 3,
+      "project": {"id": 7, "name": "Ops"},
+      "user": {"id": 104, "name": "jenkins"},
+      "roles": [
+        {"id": 5, "name": "CI"}
+      ]
+    }
+  ],
+  "total_count": 3,
+  "offset": 0,
+  "limit": 25
+}
