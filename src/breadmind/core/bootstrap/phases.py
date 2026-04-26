@@ -169,11 +169,22 @@ async def init_phase_messengers(
         try:
             from breadmind.core.bootstrap import init_messenger
 
+            # T8: wire agent.handle_message so the router can resolve org_id
+            # via dispatch_to_agent. Phase 5 has already populated
+            # ``components.agent``; if it failed we fall back to None and the
+            # router stays unwired (messages won't reach the agent — same as
+            # pre-T8 behaviour).
+            agent_handle = (
+                components.agent.handle_message
+                if components.agent is not None
+                else None
+            )
             messenger_result = await init_messenger(
                 components.db,
                 message_router,
                 event_callback,
                 vault=components.credential_vault,
+                agent_handle_message=agent_handle,
             )
             # Register messenger connection orchestrator in container for messenger plugin
             if components.container and messenger_result.get("orchestrator"):

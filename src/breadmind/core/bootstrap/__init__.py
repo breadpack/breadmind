@@ -580,8 +580,53 @@ async def init_agent(config, provider, registry, guard, db, memory_components, o
 
 # ── Phase 6: Messenger ──────────────────────────────────────────────────
 
-async def init_messenger(db, message_router, event_callback=None, vault=None):
-    """Initialize messenger auto-connect, lifecycle, and security components."""
+
+def _make_route_handler(db, agent_handle_message):
+    """Build a message-router handler that dispatches via ``dispatch_to_agent``.
+
+    Factored out of :func:`init_messenger` so the closure's exception
+    behaviour (swallow + log + return ``None``) can be unit-tested without
+    spinning up a real :class:`MessageRouter`.
+
+    Any exception raised by the org_id lookup or by the agent itself is
+    caught here. Re-raising would propagate up through
+    ``MessageRouter.handle_message`` (semantically ``str | None``) into the
+    gateway's slack-bolt loop and risk killing the connection — see the
+    defensive wrapper in
+    :meth:`MessengerGateway._make_wrapped_on_message`.
+    """
+    from breadmind.messenger.org_routing import dispatch_to_agent
+
+    async def _route(msg):
+        try:
+            return await dispatch_to_agent(msg, db, agent_handle_message)
+        except Exception:
+            logger.exception(
+                "messenger dispatch failed for platform=%s user=%s",
+                getattr(msg, "platform", "?"),
+                getattr(msg, "user_id", "?"),
+            )
+            return None
+
+    return _route
+
+
+async def init_messenger(
+    db,
+    message_router,
+    event_callback=None,
+    vault=None,
+    *,
+    agent_handle_message=None,
+):
+    """Initialize messenger auto-connect, lifecycle, and security components.
+
+    T8: when ``agent_handle_message`` is supplied, the message router is
+    wired to ``messenger.org_routing.dispatch_to_agent`` so every inbound
+    message resolves the per-tenant ``org_id`` (Slack today; other
+    platforms inherit ``org_id=None`` until their lookups are added) and
+    forwards to the agent in a single hop.
+    """
     from breadmind.messenger.security import MessengerSecurityManager
     from breadmind.messenger.lifecycle import GatewayLifecycleManager
     from breadmind.messenger.auto_connect.orchestrator import ConnectionOrchestrator
@@ -600,6 +645,11 @@ async def init_messenger(db, message_router, event_callback=None, vault=None):
         lifecycle_manager=lifecycle,
         db=db,
     )
+
+    if agent_handle_message is not None:
+        message_router.set_message_handler(
+            _make_route_handler(db, agent_handle_message),
+        )
 
     results = await lifecycle.auto_start_all()
     started = [p for p, ok in results.items() if ok]

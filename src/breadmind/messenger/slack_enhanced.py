@@ -54,6 +54,10 @@ class SlackEnhancedGateway(SlackGateway):
 
     def _build_incoming(self, event: dict[str, Any]) -> IncomingMessage:
         text = self._strip_mention(event.get("text", ""))
+        # T8: extract workspace identifier (``team`` preferred, ``team_id``
+        # fallback) so the router can resolve org_id. Empty strings are
+        # normalized to ``None`` to match SlackGateway._build_msg.
+        team_raw = event.get("team") or event.get("team_id")
         return IncomingMessage(
             text=text,
             user_id=event.get("user", ""),
@@ -61,6 +65,7 @@ class SlackEnhancedGateway(SlackGateway):
             platform="slack",
             thread_ts=event.get("thread_ts"),
             is_dm=event.get("channel_type") == "im",
+            tenant_native_id=team_raw if team_raw else None,
         )
 
     async def _handle_feedback_action(

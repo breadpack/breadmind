@@ -22,6 +22,11 @@ class IncomingMessage:
     approved: bool | None = None
     thread_ts: str | None = None
     is_dm: bool = False
+    # T8: Per-platform tenant identifier (Slack team_id, Discord guild_id, …).
+    # Gateways populate this from the inbound payload; the router/wiring
+    # layer (see ``messenger.org_routing.dispatch_to_agent``) resolves it to
+    # an internal ``org_projects.id`` UUID before invoking the agent.
+    tenant_native_id: str | None = None
 
 @dataclass
 class OutgoingMessage:

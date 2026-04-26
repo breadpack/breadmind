@@ -178,3 +178,253 @@ async def test_scenario_pin(test_db):
         limit=5,
     )
     assert any(n.pinned for n in notes)
+
+
+# ── T9: Multi-tenancy integration scenarios 5/6/7/8 ─────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_scenario_5_two_tenant_isolation(test_db, insert_org):
+    """Two distinct orgs, same user_id → recall is isolated per-org filter.
+
+    Records two notes through the SignalDetector → EpisodicRecorder → store
+    pipeline, stamping each ``TurnSnapshot`` with a different ``org_id``.
+    Verifies the org_id propagates from snapshot → event → note → SQL.
+    """
+    user_id = _uid("5")
+    org_a = uuid.uuid4()
+    org_b = uuid.uuid4()
+    await insert_org(org_a)
+    await insert_org(org_b)
+
+    store = PostgresEpisodicStore(test_db)
+    rec = EpisodicRecorder(
+        store=store,
+        llm=AsyncMock(),
+        config=RecorderConfig(normalize=False),
+    )
+    sig = SignalDetector()
+
+    # Distinguishing keyword so we can fish only this scenario's notes out.
+    kw = f"twoTenant{uuid.uuid4().hex[:6]}"
+
+    async def _record(org_id: uuid.UUID, vpc_name: str) -> None:
+        snap = TurnSnapshot(
+            user_id=user_id,
+            session_id=uuid.uuid4(),
+            user_message="",
+            last_tool_name=None,
+            prior_turn_summary=None,
+            org_id=org_id,
+        )
+        evt = sig.on_tool_finished(
+            snap,
+            tool_name="aws_vpc_create",
+            tool_args={"region": "ap-northeast-2", "name": vpc_name, "tag": kw},
+            ok=True,
+            result_text=f"vpc {vpc_name} created",
+        )
+        # Sanity-check that the recorder will see the org_id via the event.
+        assert evt.org_id == org_id
+        await rec.record(evt)
+
+    await _record(org_a, "vpc-a")
+    await _record(org_b, "vpc-b")
+
+    # The raw_note path falls back to keyword_extract on content, so query by
+    # tool_name + same digest. tool_args differ between A and B (vpc_name), so
+    # we filter by user_id + tool_name + org_id and rely on the org_id clause.
+    common_filter_kwargs = dict(
+        tool_name="aws_vpc_create",
+        kinds=[SignalKind.TOOL_EXECUTED, SignalKind.TOOL_FAILED],
+    )
+
+    res_a = await store.search(
+        user_id=user_id,
+        query=None,
+        filters=EpisodicFilter(org_id=org_a, **common_filter_kwargs),
+        limit=10,
+    )
+    contents_a = [n.content for n in res_a]
+    assert any("vpc-a" in c for c in contents_a), (
+        f"org_a filter must surface vpc-a note; got {contents_a!r}"
+    )
+    assert not any("vpc-b" in c for c in contents_a), (
+        f"org_a filter must NOT surface vpc-b note; got {contents_a!r}"
+    )
+
+    res_b = await store.search(
+        user_id=user_id,
+        query=None,
+        filters=EpisodicFilter(org_id=org_b, **common_filter_kwargs),
+        limit=10,
+    )
+    contents_b = [n.content for n in res_b]
+    assert any("vpc-b" in c for c in contents_b), (
+        f"org_b filter must surface vpc-b note; got {contents_b!r}"
+    )
+    assert not any("vpc-a" in c for c in contents_b), (
+        f"org_b filter must NOT surface vpc-a note; got {contents_b!r}"
+    )
+
+    # org_id=None → no org clause → both notes returned.
+    res_all = await store.search(
+        user_id=user_id,
+        query=None,
+        filters=EpisodicFilter(org_id=None, **common_filter_kwargs),
+        limit=10,
+    )
+    contents_all = [n.content for n in res_all]
+    assert any("vpc-a" in c for c in contents_all)
+    assert any("vpc-b" in c for c in contents_all)
+
+
+@pytest.mark.asyncio
+async def test_scenario_6_single_tenant_fallback(test_db, monkeypatch):
+    """env / explicit / ctx all None → Phase 1 single-tenant behaviour intact.
+
+    Confirms the new org_id machinery has zero observable effect when nothing
+    is wired: snapshot.org_id=None → event.org_id=None → note.org_id IS NULL,
+    and an org_id=None search returns the note.
+    """
+    monkeypatch.delenv("BREADMIND_DEFAULT_ORG_ID", raising=False)
+    user_id = _uid("6")
+
+    store = PostgresEpisodicStore(test_db)
+    rec = EpisodicRecorder(
+        store=store,
+        llm=AsyncMock(),
+        config=RecorderConfig(normalize=False),
+    )
+    sig = SignalDetector()
+
+    snap = TurnSnapshot(
+        user_id=user_id,
+        session_id=uuid.uuid4(),
+        user_message="",
+        last_tool_name=None,
+        prior_turn_summary=None,
+        org_id=None,  # explicit single-tenant
+    )
+    evt = sig.on_tool_finished(
+        snap,
+        tool_name="aws_vpc_create",
+        tool_args={"region": "ap-northeast-1"},
+        ok=True,
+        result_text="vpc-single created",
+    )
+    assert evt.org_id is None
+    await rec.record(evt)
+
+    notes = await store.search(
+        user_id=user_id,
+        query=None,
+        filters=EpisodicFilter(
+            tool_name="aws_vpc_create",
+            kinds=[SignalKind.TOOL_EXECUTED, SignalKind.TOOL_FAILED],
+            org_id=None,
+        ),
+        limit=5,
+    )
+    assert notes, "single-tenant recall must return the recorded note"
+    assert all(n.org_id is None for n in notes if n.user_id == user_id), (
+        "single-tenant note must persist with org_id=NULL"
+    )
+
+
+@pytest.mark.asyncio
+async def test_scenario_7_fk_set_null_on_org_delete(test_db, insert_org):
+    """Deleting an org_projects row must SET NULL the FK on episodic_notes.
+
+    Migration 009 declares ``ON DELETE SET NULL`` on episodic_notes.org_id;
+    this round-trips the constraint against a real DB.
+    """
+    user_id = _uid("7")
+    org_a = uuid.uuid4()
+    await insert_org(org_a)
+
+    store = PostgresEpisodicStore(test_db)
+    rec = EpisodicRecorder(
+        store=store,
+        llm=AsyncMock(),
+        config=RecorderConfig(normalize=False),
+    )
+    sig = SignalDetector()
+    snap = TurnSnapshot(
+        user_id=user_id,
+        session_id=uuid.uuid4(),
+        user_message="",
+        last_tool_name=None,
+        prior_turn_summary=None,
+        org_id=org_a,
+    )
+    evt = sig.on_tool_finished(
+        snap,
+        tool_name="aws_vpc_create",
+        tool_args={"region": "us-east-1", "name": "vpc-fk"},
+        ok=True,
+        result_text="vpc-fk created",
+    )
+    await rec.record(evt)
+
+    # Locate the freshly persisted note id via the recorder's pipeline output.
+    notes = await store.search(
+        user_id=user_id,
+        query=None,
+        filters=EpisodicFilter(
+            tool_name="aws_vpc_create",
+            kinds=[SignalKind.TOOL_EXECUTED, SignalKind.TOOL_FAILED],
+            org_id=org_a,
+        ),
+        limit=5,
+    )
+    assert notes, "note must be persisted before FK test"
+    note_id = notes[0].id
+    assert note_id is not None
+    assert notes[0].org_id == org_a
+
+    # Delete the org row → FK SET NULL should cascade onto episodic_notes.org_id.
+    async with test_db.acquire() as conn:
+        await conn.execute("DELETE FROM org_projects WHERE id = $1", org_a)
+        row = await conn.fetchrow(
+            "SELECT org_id FROM episodic_notes WHERE id = $1", note_id
+        )
+    assert row is not None, "episodic_notes row must still exist after org delete"
+    assert row["org_id"] is None, (
+        f"FK ON DELETE SET NULL must null out org_id; got {row['org_id']!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_scenario_8_slack_lookup_roundtrip(test_db, insert_org):
+    """Real-DB roundtrip for the Slack team_id → org_id lookup helper.
+
+    Unit tests in ``tests/memory/test_org_id_resolver.py`` already cover
+    cache/warn semantics via mocked DBs; this scenario confirms the SQL
+    resolves against an actual ``org_projects`` row inserted via the shared
+    fixture.
+    """
+    from breadmind.memory.runtime import (
+        _lookup_org_id_by_slack_team,
+        clear_org_lookup_cache,
+    )
+
+    org_a = uuid.uuid4()
+    await insert_org(org_a)
+    # ``insert_org`` writes ``slack_team_id = "T" + str(org_id)[:8]``.
+    team_id = f"T{str(org_a)[:8]}"
+
+    clear_org_lookup_cache()
+    try:
+        first = await _lookup_org_id_by_slack_team(team_id, test_db)
+        assert first == org_a
+
+        # Cached value must match (cache-hit semantics covered by unit tests).
+        second = await _lookup_org_id_by_slack_team(team_id, test_db)
+        assert second == org_a
+
+        # Unknown team_id → None (and cache the miss).
+        unknown = await _lookup_org_id_by_slack_team("T99999999", test_db)
+        assert unknown is None
+    finally:
+        clear_org_lookup_cache()

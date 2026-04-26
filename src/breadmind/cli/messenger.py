@@ -12,6 +12,8 @@ async def cmd_setup(args):
     config = load_config(args.config_dir)
     db = await init_database(config, args.config_dir)
     router = MessageRouter()
+    # Setup-only path: no agent handler wired — inbound messages are not
+    # dispatched (this command only drives the connection orchestrator).
     components = await init_messenger(db, router)
     orchestrator = components["orchestrator"]
 
@@ -84,6 +86,8 @@ async def cmd_status(args):
     config = load_config(args.config_dir)
     db = await init_database(config, args.config_dir)
     router = MessageRouter()
+    # Status-only path: no agent handler wired — inbound messages are not
+    # dispatched (this command only inspects gateway lifecycle state).
     components = await init_messenger(db, router)
     lifecycle = components["lifecycle"]
 
@@ -110,6 +114,8 @@ async def cmd_restart(args):
     config = load_config(args.config_dir)
     db = await init_database(config, args.config_dir)
     router = MessageRouter()
+    # Restart-only path: no agent handler wired — inbound messages are not
+    # dispatched (this command only restarts gateway processes).
     components = await init_messenger(db, router)
     lifecycle = components["lifecycle"]
 

@@ -1,5 +1,7 @@
 import logging
-from breadmind.messenger.router import MessengerGateway
+from typing import Any
+
+from breadmind.messenger.router import IncomingMessage, MessengerGateway
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +25,23 @@ class SlackGateway(MessengerGateway):
         # (non-KB) P1 deployment.
         self._kb_db = kb_db
 
+    def _build_msg(self, message: dict[str, Any]) -> IncomingMessage:
+        """Construct an IncomingMessage from a slack-bolt event dict.
+
+        T8: extracts the workspace identifier (``team`` preferred, ``team_id``
+        accepted as a fallback for older payload variants) into
+        ``tenant_native_id``. Empty strings are normalized to ``None`` so the
+        router skips the lookup for malformed payloads.
+        """
+        team_raw = message.get("team") or message.get("team_id")
+        tenant_native_id = team_raw if team_raw else None
+        return self._create_incoming_message(
+            text=message.get("text", ""),
+            user=message.get("user", ""),
+            channel=message.get("channel", ""),
+            tenant_native_id=tenant_native_id,
+        )
+
     async def start(self):
         try:
             from slack_bolt.async_app import AsyncApp
@@ -33,11 +52,7 @@ class SlackGateway(MessengerGateway):
             @self._app.message("")
             async def handle_message(message, say):
                 if self._on_message:
-                    msg = self._create_incoming_message(
-                        text=message.get("text", ""),
-                        user=message.get("user", ""),
-                        channel=message.get("channel", ""),
-                    )
+                    msg = self._build_msg(message)
                     response = await self._on_message(msg)
                     if response:
                         await say(response)

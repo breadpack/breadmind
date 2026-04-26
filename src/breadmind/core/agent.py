@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from typing import TYPE_CHECKING
 
 from breadmind.llm.base import LLMProvider, LLMMessage, LLMResponse
@@ -260,6 +261,7 @@ class CoreAgent:
 
     async def _emit_user_signal(
         self, user_message: str, session_id: str, user: str,
+        *, org_id: uuid.UUID | None = None,
     ) -> None:
         """Run the SignalDetector against the incoming user message and, if it
         classifies as a USER_CORRECTION / EXPLICIT_PIN / ROLLBACK_REQUEST,
@@ -267,6 +269,9 @@ class CoreAgent:
 
         Recorder failures must NEVER bubble into the user's turn — both this
         method and the spawned task swallow exceptions defensively.
+
+        ``org_id`` (T7): plumbed through ``TurnSnapshot.org_id`` so the emitted
+        SignalEvent carries the resolved org for multi-tenant scoping.
         """
         if self._episodic_recorder is None:
             return
@@ -288,6 +293,7 @@ class CoreAgent:
                 user_message=user_message,
                 last_tool_name=last_tool,
                 prior_turn_summary=prior_summary,
+                org_id=org_id,
             )
             evt = self._signal_detector.on_user_message(snap)
             if evt is None:
@@ -461,13 +467,29 @@ class CoreAgent:
         )
 
         try:
+            # T7 note: org_id is not threaded through the approval queue; the
+            # nested handle_message will re-resolve via env fallback. Multi-
+            # tenant approval routing is a follow-up task.
             return await self.handle_message(resume_text, user=user, channel=channel)
         except Exception:
             logger.exception("Failed to resume after approval")
             return f"Tool '{tool_name}' executed: {result_content}"
 
-    async def handle_message(self, message: str, user: str, channel: str) -> str:
+    async def handle_message(
+        self,
+        message: str,
+        user: str,
+        channel: str,
+        *,
+        org_id: uuid.UUID | None = None,
+    ) -> str:
         session_id = f"{user}:{channel}"
+        # T7: resolve org_id once at the entry point (ctx-only contract).
+        # Explicit kwarg wins; otherwise _resolve_org_id consults
+        # BREADMIND_DEFAULT_ORG_ID. The resolved value is plumbed through
+        # _emit_user_signal and ToolExecutionContext below.
+        from breadmind.memory.runtime import _resolve_org_id
+        org_id = _resolve_org_id(explicit=org_id, ctx_org_id=None)
         logger.info(json.dumps({"event": "session_start", "user": user, "channel": channel}))
 
         # Publish session start via EventBus (fire-and-forget)
@@ -564,11 +586,11 @@ class CoreAgent:
             # Run the episodic-memory user-signal hook BEFORE storing the new
             # user message, so `last_tool_name` / `last_turn_summary` reflect
             # the previous (pre-current-turn) conversation state.
-            await self._emit_user_signal(message, session_id, user)
+            await self._emit_user_signal(message, session_id, user, org_id=org_id)
             self._working_memory.add_message(session_id, stored_user_msg)
         else:
             # No working memory — still emit the signal so explicit pins land.
-            await self._emit_user_signal(message, session_id, user)
+            await self._emit_user_signal(message, session_id, user, org_id=org_id)
             messages = [system_msg, user_msg]
 
         # Step 2: Enrich context with intent-aware memory retrieval
@@ -785,6 +807,7 @@ class CoreAgent:
                 pending_approvals=self._pending_approvals,
                 on_new_tool_detected=self._detect_new_tool,
                 _injected_provider=self._provider,
+                org_id=org_id,
             )
             msg_count_before = len(messages)
             await self._tool_executor.process_tool_calls(

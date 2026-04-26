@@ -46,6 +46,10 @@ class ToolExecutionContext:
     pending_approvals: dict[str, dict] = field(default_factory=dict)
     on_new_tool_detected: object | None = None  # async callback(cmd, output)
     _injected_provider: object | None = None  # LLMProvider for subagent tools
+    # T7: per-turn org_id resolved by CoreAgent.handle_message (ctx-only).
+    # Plumbed into _do_recall (EpisodicFilter.org_id) and _emit_tool_signal
+    # (TurnSnapshot.org_id → SignalEvent.org_id).
+    org_id: uuid.UUID | None = None
 
 
 class ToolExecutor:
@@ -191,6 +195,7 @@ class ToolExecutor:
         tool_name: str,
         args: dict,
         user_id: str | None,
+        org_id: uuid.UUID | None = None,
     ) -> None:
         """Pre-call episodic recall — populates ``self._last_recall_notes``.
 
@@ -198,6 +203,10 @@ class ToolExecutor:
         and :meth:`_execute_one` (the production agent path used inside
         ``process_tool_calls``). Failures are warned and swallowed — recall
         MUST NEVER block tool execution.
+
+        ``org_id`` (T7): when supplied, scopes the EpisodicFilter to a single
+        org. ``execute()`` (standalone path, no ctx) leaves it ``None``;
+        ``_execute_one`` forwards ``ctx.org_id`` from ToolExecutionContext.
         """
         if self._episodic_store is None:
             self._last_recall_notes = []
@@ -227,6 +236,7 @@ class ToolExecutor:
                 tool_name=tool_name,
                 tool_args_digest=stable_hash(args),
                 keywords=kw or None,
+                org_id=org_id,
             )
             notes = await self._episodic_store.search(
                 user_id=user_id,
@@ -306,6 +316,7 @@ class ToolExecutor:
         result_text: str,
         user_id: str | None,
         session_id: uuid.UUID | None,
+        org_id: uuid.UUID | None = None,
     ) -> None:
         """Post-call signal + fire-and-forget record.
 
@@ -317,6 +328,10 @@ class ToolExecutor:
         production agent path only has a string session id, so callers must
         pass ``None`` when their session id is not a UUID (mirroring the
         approach taken by ``CoreAgent._emit_user_signal``).
+
+        ``org_id`` (T7): plumbed into ``TurnSnapshot.org_id`` so the
+        SignalDetector propagates it onto the emitted SignalEvent (and
+        ultimately onto the persisted EpisodicNote).
         """
         if self._signal_detector is None or self._episodic_recorder is None:
             return
@@ -334,6 +349,7 @@ class ToolExecutor:
                 user_message="",
                 last_tool_name=tool_name,
                 prior_turn_summary=None,
+                org_id=org_id,
             )
             evt = self._signal_detector.on_tool_finished(
                 snap,
@@ -524,6 +540,7 @@ class ToolExecutor:
                     tool_name=tc.name,
                     args=effective_args,
                     user_id=ctx.user,
+                    org_id=ctx.org_id,
                 )
                 sandbox_result = await self._sandbox.execute(command, workdir)
                 elapsed = (time.monotonic() - t_start) * 1000
@@ -565,6 +582,7 @@ class ToolExecutor:
                 tool_name=tc.name,
                 args=effective_args,
                 user_id=ctx.user,
+                org_id=ctx.org_id,
             )
 
             # Determine timeout
@@ -635,4 +653,5 @@ class ToolExecutor:
                 result_text=output,
                 user_id=ctx.user,
                 session_id=None,  # ctx.session_id is a string, not UUID
+                org_id=ctx.org_id,
             )

@@ -899,7 +899,9 @@ async def run(args: argparse.Namespace | None = None):
             message_router = MessageRouter()
             messenger_components = None
             try:
-                messenger_components = await init_messenger(db, message_router)
+                messenger_components = await init_messenger(
+                    db, message_router, agent_handle_message=agent.handle_message,
+                )
             except Exception as e:
                 logger.warning("Messenger init failed: %s", e)
 

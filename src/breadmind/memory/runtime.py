@@ -77,10 +77,18 @@ def _resolve_org_id(
 
 _team_to_org_cache: dict[str, uuid.UUID | None] = {}
 _cache_lock = asyncio.Lock()
+# T8: process-level dedupe for "team_id not mapped" warnings. Cleared by
+# ``clear_org_lookup_cache()`` so tests can re-trigger the WARN deterministically.
+_warned_team_ids: set[str] = set()
 
 
 async def _lookup_org_id_by_slack_team(team_id: str, db: "Database") -> uuid.UUID | None:
-    """Resolve a Slack team_id to org_projects.id; cache hits and misses."""
+    """Resolve a Slack team_id to org_projects.id; cache hits and misses.
+
+    T8: emits ``breadmind_org_id_lookup_total{outcome="hit"|"miss"}`` and
+    logs a single WARN per process per unmapped team_id. Subsequent misses
+    for the same team_id are silent until ``clear_org_lookup_cache()`` runs.
+    """
     if team_id in _team_to_org_cache:
         return _team_to_org_cache[team_id]
     async with _cache_lock:
@@ -92,16 +100,40 @@ async def _lookup_org_id_by_slack_team(team_id: str, db: "Database") -> uuid.UUI
                 team_id,
             )
         org_id = row["id"] if row else None
-        # TODO(T8): emit breadmind_org_id_lookup_total{outcome="hit"|"miss"}
-        # + 1-time WARN log on miss per spec R2 (call-site, Slack router).
         _team_to_org_cache[team_id] = org_id
+        _emit_lookup_outcome(team_id, org_id)
         return org_id
+
+
+def _emit_lookup_outcome(team_id: str, org_id: uuid.UUID | None) -> None:
+    """Emit hit/miss metric + warn-once log for ``team_id``.
+
+    Defensive: metric inc failures are swallowed (a broken Prometheus
+    backend must not break message routing).
+    """
+    from breadmind.memory.metrics import org_id_lookup_total
+
+    outcome = "hit" if org_id is not None else "miss"
+    try:
+        org_id_lookup_total.labels(outcome=outcome).inc()
+    except Exception:  # pragma: no cover - defensive
+        logger.debug("org_id_lookup_total inc failed", exc_info=True)
+    if org_id is None and team_id not in _warned_team_ids:
+        _warned_team_ids.add(team_id)
+        logger.warning(
+            "Slack team_id %r not mapped to org_projects; "
+            "episodic notes will land with org_id=NULL",
+            team_id,
+        )
 
 
 def clear_org_lookup_cache() -> None:
     """Test/operator hook to invalidate the in-memory mapping cache.
 
-    The lock is intentionally NOT reset — clearing a held lock would race
-    with concurrent lookups.
+    Clears both the team→org map and the per-team warn-once set so a
+    subsequent miss for a previously-warned team_id will warn again. The
+    asyncio.Lock is intentionally NOT reset — clearing a held lock would
+    race with concurrent lookups.
     """
     _team_to_org_cache.clear()
+    _warned_team_ids.clear()

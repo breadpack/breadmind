@@ -202,7 +202,9 @@ async def _bootstrap_daemon(args) -> dict | None:
         messenger_components = None
         messenger_count = 0
         try:
-            messenger_components = await init_messenger(db, message_router)
+            messenger_components = await init_messenger(
+                db, message_router, agent_handle_message=agent.handle_message,
+            )
             messenger_count = len(messenger_components.get("gateways", []))
         except Exception as e:
             logger.warning("Messenger init: %s", e)

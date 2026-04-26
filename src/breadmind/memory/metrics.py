@@ -14,6 +14,7 @@ Metric names are locked by the Phase 1 plan and must not be renamed:
 - ``breadmind_memory_normalize_latency_seconds`` — Histogram (default buckets)
 - ``breadmind_memory_recall_total{trigger}`` — Counter
 - ``breadmind_memory_recall_hit_count`` — Histogram, custom buckets
+- ``breadmind_org_id_lookup_total{outcome}`` — Counter (T8, hit | miss)
 """
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ __all__ = [
     "memory_normalize_latency_seconds",
     "memory_recall_total",
     "memory_recall_hit_count",
+    "org_id_lookup_total",
 ]
 
 
@@ -74,9 +76,15 @@ try:  # pragma: no cover - exercised whenever prometheus_client is installed
         "Top-K hit count per recall (0 means empty result)",
         buckets=_RECALL_HIT_BUCKETS,
     )
+    org_id_lookup_total: Any = Counter(
+        "breadmind_org_id_lookup_total",
+        "Slack team_id → org_projects.id lookup outcomes (hit | miss)",
+        ("outcome",),
+    )
 except Exception:  # pragma: no cover - defensive stub path
     memory_signal_detected_total = _NoopMetric()
     memory_normalize_total = _NoopMetric()
     memory_normalize_latency_seconds = _NoopMetric()
     memory_recall_total = _NoopMetric()
     memory_recall_hit_count = _NoopMetric()
+    org_id_lookup_total = _NoopMetric()
