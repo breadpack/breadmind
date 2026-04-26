@@ -1,4 +1,4 @@
-"""CLI entrypoint: breadmind kb backfill <slack|resume|list|cancel>."""
+"""CLI entrypoint: breadmind kb backfill <slack|confluence|resume|list|cancel>."""
 from __future__ import annotations
 import argparse
 import uuid
@@ -9,6 +9,11 @@ from breadmind.kb.backfill.base import JobReport
 
 def _iso_date(s: str) -> datetime:
     return datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+
+
+def _comma_list(s: str) -> list[str]:
+    """Split a comma-separated string into a stripped list."""
+    return [x.strip() for x in s.split(",") if x.strip()]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -34,6 +39,10 @@ def build_parser() -> argparse.ArgumentParser:
     mode = slack.add_mutually_exclusive_group(required=True)
     mode.add_argument("--dry-run", action="store_true")
     mode.add_argument("--confirm", action="store_true")
+
+    # Confluence subcommand registered via cli_confluence module
+    from breadmind.kb.backfill.cli_confluence import add_confluence_subparser  # noqa: PLC0415
+    add_confluence_subparser(sub)
 
     resume = sub.add_parser("resume", help="Resume a paused/failed job")
     resume.add_argument("job_id", type=uuid.UUID)
@@ -76,7 +85,27 @@ def _add_notion_subparser(sub: argparse._SubParsersAction) -> None:  # type: ign
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    return build_parser().parse_args(argv)
+    p = build_parser()
+    args = p.parse_args(argv)
+    # Enrich confluence args with a pre-built source_filter dict
+    if getattr(args, "subcommand", None) == "confluence":
+        if args.space:
+            args.source_filter = {
+                "kind": "space",
+                "spaces": list(args.space),
+                "labels_exclude": list(args.labels_exclude or []),
+            }
+        elif args.page_ids:
+            args.source_filter = {
+                "kind": "page_ids",
+                "ids": list(args.page_ids),
+            }
+        elif args.subtree:
+            args.source_filter = {
+                "kind": "subtree",
+                "root_page_id": args.subtree,
+            }
+    return args
 
 
 def format_dry_run(report: JobReport, ctx: dict) -> str:
@@ -177,12 +206,18 @@ async def main_async(
     Returns process exit code (0 on success, non-zero on usage / budget
     refusal). Resume / list / cancel paths are T17.
     """
-    args = build_parser().parse_args(argv)
+    from breadmind.kb.backfill.cli_confluence import run_confluence  # noqa: PLC0415
+
+    args = parse_args(argv)
     if args.subcommand == "slack":
         return await _run_slack(
             args, db=db, redactor=redactor, embedder=embedder,
             slack_session=slack_session, vault=vault,
             monthly_ceiling=monthly_ceiling)
+    if args.subcommand == "confluence":
+        return await run_confluence(
+            args, db=db, redactor=redactor, embedder=embedder,
+            vault=vault, monthly_ceiling=monthly_ceiling)
     if args.subcommand == "resume":
         return await _run_resume(
             args.job_id, db=db, redactor=redactor, embedder=embedder,
@@ -379,10 +414,15 @@ async def _build_dry_run_ctx(
 
 
 # ---------------------------------------------------------------------------
-# Notion subcommand — dry-run formatter + dispatcher (Tasks 11-13)
+# Tail re-exports — per-source CLI helpers (cli_<source>.py convention)
+# Public surface of cli.py stays stable for all existing test imports.
 # ---------------------------------------------------------------------------
-# Notion-specific functions live in cli_notion.py to keep this file ≤ 500 LOC.
-from breadmind.kb.backfill.cli_notion import (  # noqa: E402,F401  (re-export)
-    format_notion_dry_run,  # noqa: F401
-    main_async_notion,  # noqa: F401
+
+from breadmind.kb.backfill.cli_notion import (  # noqa: E402, F401
+    format_notion_dry_run,
+    main_async_notion,
+)
+from breadmind.kb.backfill.cli_confluence import (  # noqa: E402, F401
+    format_confluence_dry_run,
+    run_confluence as _run_confluence,
 )
