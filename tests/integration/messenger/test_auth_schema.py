@@ -2,7 +2,6 @@ import pytest
 from uuid import uuid4
 from datetime import datetime, timezone, timedelta
 
-@pytest.mark.asyncio
 async def test_session_round_trip(test_db, seed_workspace):
     wid, user_id = seed_workspace
     sid = uuid4()
@@ -16,7 +15,6 @@ async def test_session_round_trip(test_db, seed_workspace):
     row = await test_db.fetchrow("SELECT user_id FROM user_sessions WHERE id = $1", sid)
     assert row["user_id"] == user_id
 
-@pytest.mark.asyncio
 async def test_otp_pk_email_workspace(test_db):
     expires = datetime.now(timezone.utc) + timedelta(minutes=10)
     suffix = uuid4().hex[:8]
@@ -32,7 +30,6 @@ async def test_otp_pk_email_workspace(test_db):
             "VALUES ($1, $2, decode('bb','hex'), $3)", email, slug, expires,
         )
 
-@pytest.mark.asyncio
 async def test_invite_token_unique(test_db, seed_workspace):
     wid, owner_id = seed_workspace
     expires = datetime.now(timezone.utc) + timedelta(days=14)
@@ -52,7 +49,6 @@ async def test_invite_token_unique(test_db, seed_workspace):
             wid, owner_id, token, expires,
         )
 
-@pytest.mark.asyncio
 async def test_sso_config_one_per_workspace(test_db, seed_workspace):
     wid, _ = seed_workspace
     # First insert succeeds (workspace_id is PRIMARY KEY of sso_configs)

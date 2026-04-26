@@ -2,7 +2,6 @@ import pytest
 from uuid import uuid4
 from datetime import datetime, timezone, timedelta
 
-@pytest.mark.asyncio
 async def test_file_round_trip(test_db, seed_workspace):
     wid, owner_id = seed_workspace
     fid = uuid4()
@@ -18,7 +17,6 @@ async def test_file_round_trip(test_db, seed_workspace):
     assert row["filename"] == "doc.pdf"
     assert row["storage_backend"] == "s3"  # default
 
-@pytest.mark.asyncio
 async def test_message_attachment(test_db, seed_channel):
     wid, cid, user_id = seed_channel
     mid = uuid4()
@@ -40,7 +38,6 @@ async def test_message_attachment(test_db, seed_channel):
     )
     assert len(rows) == 1
 
-@pytest.mark.asyncio
 async def test_custom_emoji_alias_or_image_required(test_db, seed_workspace):
     wid, owner_id = seed_workspace
     with pytest.raises(Exception, match="violates check constraint"):
@@ -49,7 +46,6 @@ async def test_custom_emoji_alias_or_image_required(test_db, seed_workspace):
             wid, owner_id,
         )
 
-@pytest.mark.asyncio
 async def test_scheduled_message_due_index(test_db, seed_channel):
     wid, cid, user_id = seed_channel
     sid = uuid4()
@@ -63,7 +59,6 @@ async def test_scheduled_message_due_index(test_db, seed_channel):
     )
     assert any(r["id"] == sid for r in rows)
 
-@pytest.mark.asyncio
 async def test_read_cursor_upsert(test_db, seed_channel):
     wid, cid, user_id = seed_channel
     await test_db.execute(

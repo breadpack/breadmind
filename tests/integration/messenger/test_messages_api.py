@@ -1,8 +1,6 @@
-import pytest
 from uuid import uuid4
 
 
-@pytest.mark.asyncio
 async def test_post_message(messenger_app_client, owner_token, owner_workspace_id, owner_channel):
     cid = owner_channel
     r = await messenger_app_client.post(
@@ -16,7 +14,6 @@ async def test_post_message(messenger_app_client, owner_token, owner_workspace_i
     assert msg["kind"] == "text"
 
 
-@pytest.mark.asyncio
 async def test_idempotency_key_dedupes(
     messenger_app_client, owner_token, owner_workspace_id, owner_channel,
 ):
@@ -36,7 +33,6 @@ async def test_idempotency_key_dedupes(
     assert r1.json()["id"] == r2.json()["id"]
 
 
-@pytest.mark.asyncio
 async def test_edit_message(messenger_app_client, owner_token, owner_workspace_id, owner_channel):
     cid = owner_channel
     create = await messenger_app_client.post(
@@ -56,7 +52,6 @@ async def test_edit_message(messenger_app_client, owner_token, owner_workspace_i
     assert body["edited_at"] is not None
 
 
-@pytest.mark.asyncio
 async def test_soft_delete_message(
     messenger_app_client, owner_token, owner_workspace_id, owner_channel,
 ):
@@ -74,7 +69,6 @@ async def test_soft_delete_message(
     assert r.status_code == 204, r.text
 
 
-@pytest.mark.asyncio
 async def test_history_pagination(
     messenger_app_client, owner_token, owner_workspace_id, owner_channel,
 ):

@@ -1,8 +1,6 @@
-import pytest
 from uuid import uuid4
 
 
-@pytest.mark.asyncio
 async def test_create_public_channel(messenger_app_client, owner_token, owner_workspace_id):
     name = f"general-{uuid4().hex[:8]}"
     r = await messenger_app_client.post(
@@ -16,7 +14,6 @@ async def test_create_public_channel(messenger_app_client, owner_token, owner_wo
     assert body["kind"] == "public"
 
 
-@pytest.mark.asyncio
 async def test_list_channels(messenger_app_client, owner_token, owner_workspace_id):
     name = f"alpha-{uuid4().hex[:8]}"
     await messenger_app_client.post(
@@ -35,7 +32,6 @@ async def test_list_channels(messenger_app_client, owner_token, owner_workspace_
     assert any(c["name"] == name for c in body["channels"])
 
 
-@pytest.mark.asyncio
 async def test_archive_unarchive(messenger_app_client, owner_token, owner_workspace_id):
     name = f"tmp-{uuid4().hex[:8]}"
     create = await messenger_app_client.post(

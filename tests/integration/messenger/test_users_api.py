@@ -1,8 +1,6 @@
-import pytest
 from uuid import uuid4
 
 
-@pytest.mark.asyncio
 async def test_list_users(messenger_app_client, owner_token, owner_workspace_id):
     r = await messenger_app_client.get(
         f"/api/v1/workspaces/{owner_workspace_id}/users",
@@ -14,7 +12,6 @@ async def test_list_users(messenger_app_client, owner_token, owner_workspace_id)
     assert len(body["users"]) >= 1
 
 
-@pytest.mark.asyncio
 async def test_get_user_self(messenger_app_client, owner_token, owner_workspace_id, seed_workspace):
     _, uid = seed_workspace
     r = await messenger_app_client.get(
@@ -25,7 +22,6 @@ async def test_get_user_self(messenger_app_client, owner_token, owner_workspace_
     assert r.json()["id"] == str(uid)
 
 
-@pytest.mark.asyncio
 async def test_invite_user(messenger_app_client, owner_token, owner_workspace_id):
     # use unique email per run to avoid collision with workspace_invites' UNIQUE token_hash
     email = f"newbie-{uuid4().hex[:8]}@x.com"
@@ -38,7 +34,6 @@ async def test_invite_user(messenger_app_client, owner_token, owner_workspace_id
     assert r.json()["email"] == email
 
 
-@pytest.mark.asyncio
 async def test_lookup_by_email(messenger_app_client, owner_token, owner_workspace_id, test_db, seed_workspace):
     # seed_workspace uses uuid-suffixed email; query for that exact email
     _, owner_id = seed_workspace
@@ -54,7 +49,6 @@ async def test_lookup_by_email(messenger_app_client, owner_token, owner_workspac
     assert any(u["email"] == seeded_email for u in users)
 
 
-@pytest.mark.asyncio
 async def test_patch_profile_self(
     messenger_app_client, owner_token, owner_workspace_id, seed_workspace,
 ):

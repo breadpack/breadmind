@@ -1,7 +1,5 @@
-import pytest
 
 
-@pytest.mark.asyncio
 async def test_pin_then_list(
     messenger_app_client, owner_token, owner_workspace_id, owner_channel,
 ):
@@ -33,7 +31,6 @@ async def test_pin_then_list(
     assert pins[0]["id"] == mid
 
 
-@pytest.mark.asyncio
 async def test_unpin_then_list_empty(
     messenger_app_client, owner_token, owner_workspace_id, owner_channel,
 ):
@@ -67,7 +64,6 @@ async def test_unpin_then_list_empty(
     assert rl.json()["pins"] == []
 
 
-@pytest.mark.asyncio
 async def test_pin_twice_idempotent(
     messenger_app_client, owner_token, owner_workspace_id, owner_channel,
 ):

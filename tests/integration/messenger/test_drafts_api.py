@@ -1,8 +1,6 @@
-import pytest
 from uuid import uuid4
 
 
-@pytest.mark.asyncio
 async def test_upsert_then_get_draft(messenger_app_client, owner_token, owner_workspace_id, owner_channel):
     cid = owner_channel
     r = await messenger_app_client.put(
@@ -19,7 +17,6 @@ async def test_upsert_then_get_draft(messenger_app_client, owner_token, owner_wo
     assert any(d["text"] == "draft text" for d in drafts)
 
 
-@pytest.mark.asyncio
 async def test_draft_per_thread_independent(
     messenger_app_client, owner_token, owner_workspace_id, owner_channel, test_db, seed_workspace,
 ):

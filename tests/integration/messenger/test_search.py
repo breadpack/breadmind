@@ -1,8 +1,6 @@
-import pytest
 from uuid import uuid4
 
 
-@pytest.mark.asyncio
 async def test_fts_match(messenger_app_client, owner_token, owner_workspace_id, owner_channel):
     cid = owner_channel
     suffix = uuid4().hex[:8]
@@ -25,7 +23,6 @@ async def test_fts_match(messenger_app_client, owner_token, owner_workspace_id, 
     assert any(unique_term in (res.get("message") or {}).get("text", "") for res in body["results"])
 
 
-@pytest.mark.asyncio
 async def test_search_acl_excludes_invisible_channels(
     messenger_app_client, owner_token, member_token,
     owner_workspace_id, test_db, seed_workspace,
@@ -58,7 +55,6 @@ async def test_search_acl_excludes_invisible_channels(
     assert len(r.json()["results"]) == 0
 
 
-@pytest.mark.asyncio
 async def test_hybrid_rrf_returns_results(
     messenger_app_client, owner_token, owner_workspace_id, owner_channel,
 ):

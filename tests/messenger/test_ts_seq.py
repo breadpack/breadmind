@@ -1,11 +1,9 @@
 """Tests for per-channel monotonic ts_seq generator."""
-import pytest
 from datetime import datetime, timezone
 from uuid import uuid4
 from breadmind.messenger.ts_seq import next_ts_seq, format_slack_ts, parse_slack_ts
 
 
-@pytest.mark.asyncio
 async def test_next_ts_seq_monotonic_per_channel(test_db, seed_channel):
     _, cid, owner_id = seed_channel
     async with test_db.acquire() as conn:
@@ -27,7 +25,6 @@ async def test_next_ts_seq_monotonic_per_channel(test_db, seed_channel):
     assert a == 1 and b == 2 and c == 3
 
 
-@pytest.mark.asyncio
 async def test_next_ts_seq_independent_per_channel(test_db, seed_workspace):
     wid, owner_id = seed_workspace
     cid1 = uuid4()

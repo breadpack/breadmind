@@ -1,8 +1,6 @@
-import pytest
 from uuid import uuid4
 
 
-@pytest.mark.asyncio
 async def test_add_bookmark(
     messenger_app_client, owner_token, owner_workspace_id, owner_channel, test_db, seed_workspace,
 ):
@@ -21,7 +19,6 @@ async def test_add_bookmark(
     assert r.status_code == 201, r.text
 
 
-@pytest.mark.asyncio
 async def test_list_bookmarks_returns_added(
     messenger_app_client, owner_token, owner_workspace_id, owner_channel, test_db, seed_workspace,
 ):
@@ -46,7 +43,6 @@ async def test_list_bookmarks_returns_added(
     assert any(b["message_id"] == str(msg_id) for b in bms)
 
 
-@pytest.mark.asyncio
 async def test_remove_bookmark_empties_list(
     messenger_app_client, owner_token, owner_workspace_id, owner_channel, test_db, seed_workspace,
 ):

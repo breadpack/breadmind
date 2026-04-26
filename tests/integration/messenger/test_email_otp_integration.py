@@ -5,7 +5,6 @@ from breadmind.messenger.auth.email_otp import (
 )
 
 
-@pytest.mark.asyncio
 async def test_request_then_verify_success(test_db, fake_smtp):
     suffix = uuid4().hex[:8]
     email = f"alice-{suffix}@acme.com"
@@ -16,7 +15,6 @@ async def test_request_then_verify_success(test_db, fake_smtp):
     await verify_otp(test_db, email=email, workspace_slug=slug, code=code)
 
 
-@pytest.mark.asyncio
 async def test_verify_wrong_code_raises(test_db, fake_smtp):
     suffix = uuid4().hex[:8]
     email = f"alice-{suffix}@acme.com"
@@ -26,7 +24,6 @@ async def test_verify_wrong_code_raises(test_db, fake_smtp):
         await verify_otp(test_db, email=email, workspace_slug=slug, code="000000")
 
 
-@pytest.mark.asyncio
 async def test_verify_after_expiry_raises(test_db, fake_smtp):
     suffix = uuid4().hex[:8]
     email = f"alice-{suffix}@acme.com"
@@ -36,7 +33,6 @@ async def test_verify_after_expiry_raises(test_db, fake_smtp):
         await verify_otp(test_db, email=email, workspace_slug=slug, code=code)
 
 
-@pytest.mark.asyncio
 async def test_verify_consumes_otp(test_db, fake_smtp):
     suffix = uuid4().hex[:8]
     email = f"alice-{suffix}@acme.com"

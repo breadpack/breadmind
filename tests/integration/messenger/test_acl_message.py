@@ -1,9 +1,7 @@
-import pytest
 from uuid import uuid4
 from breadmind.messenger.acl.message import can_user_see_message, can_user_edit_message
 
 
-@pytest.mark.asyncio
 async def test_see_message_inherits_channel(test_db, seed_channel):
     wid, cid, owner_id = seed_channel
     mid = uuid4()
@@ -14,7 +12,6 @@ async def test_see_message_inherits_channel(test_db, seed_channel):
     assert await can_user_see_message(test_db, user_id=owner_id, message_id=mid)
 
 
-@pytest.mark.asyncio
 async def test_edit_own_message(test_db, seed_channel):
     wid, cid, user_id = seed_channel
     mid = uuid4()
@@ -25,7 +22,6 @@ async def test_edit_own_message(test_db, seed_channel):
     assert await can_user_edit_message(test_db, user_id=user_id, message_id=mid)
 
 
-@pytest.mark.asyncio
 async def test_cannot_edit_other_user_message(test_db, seed_workspace):
     wid, owner_id = seed_workspace
     suffix = uuid4().hex[:8]

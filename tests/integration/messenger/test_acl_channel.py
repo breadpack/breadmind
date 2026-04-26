@@ -1,11 +1,9 @@
-import pytest
 from uuid import uuid4
 from breadmind.messenger.acl.channel import (
     can_user_see_channel, can_user_post_message,
 )
 
 
-@pytest.mark.asyncio
 async def test_member_sees_public(test_db, seed_workspace):
     wid, owner_id = seed_workspace
     suffix = uuid4().hex[:8]
@@ -23,7 +21,6 @@ async def test_member_sees_public(test_db, seed_workspace):
     assert await can_user_see_channel(test_db, user_id=member_id, channel_id=cid)
 
 
-@pytest.mark.asyncio
 async def test_guest_sees_public_only_if_member(test_db, seed_workspace):
     wid, _ = seed_workspace
     suffix = uuid4().hex[:8]
@@ -45,7 +42,6 @@ async def test_guest_sees_public_only_if_member(test_db, seed_workspace):
     assert await can_user_see_channel(test_db, user_id=guest_id, channel_id=cid)
 
 
-@pytest.mark.asyncio
 async def test_admin_sees_all(test_db, seed_workspace):
     wid, owner_id = seed_workspace
     suffix = uuid4().hex[:8]
@@ -57,7 +53,6 @@ async def test_admin_sees_all(test_db, seed_workspace):
     assert await can_user_see_channel(test_db, user_id=owner_id, channel_id=cid)
 
 
-@pytest.mark.asyncio
 async def test_post_blocked_by_admins_only_policy(test_db, seed_workspace):
     wid, _ = seed_workspace
     suffix = uuid4().hex[:8]

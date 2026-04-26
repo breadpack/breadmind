@@ -2,7 +2,6 @@ import pytest
 from uuid import uuid4
 
 
-@pytest.mark.asyncio
 async def test_channel_public_round_trip(test_db, seed_workspace):
     wid, owner_id = seed_workspace  # fixture creates org_project + 1 owner
     cid = uuid4()
@@ -17,7 +16,6 @@ async def test_channel_public_round_trip(test_db, seed_workspace):
     assert row["posting_policy"] == "all"
 
 
-@pytest.mark.asyncio
 async def test_channel_dm_must_have_null_name(test_db, seed_workspace):
     wid, _ = seed_workspace
     with pytest.raises(Exception, match="violates check constraint"):
@@ -28,7 +26,6 @@ async def test_channel_dm_must_have_null_name(test_db, seed_workspace):
         )
 
 
-@pytest.mark.asyncio
 async def test_channel_public_unique_name(test_db, seed_workspace):
     wid, _ = seed_workspace
     await test_db.execute(
@@ -42,7 +39,6 @@ async def test_channel_public_unique_name(test_db, seed_workspace):
         )
 
 
-@pytest.mark.asyncio
 async def test_channel_member_pk(test_db, seed_workspace):
     wid, owner_id = seed_workspace
     cid = uuid4()

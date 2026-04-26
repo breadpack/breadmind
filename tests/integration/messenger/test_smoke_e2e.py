@@ -1,7 +1,6 @@
 """Smoke E2E — full user journey: workspace → channel → message → invite → search."""
 from uuid import uuid4
 
-import pytest
 
 from breadmind.messenger.auth.invite import create_invite, accept_invite
 from breadmind.messenger.auth.session import create_session
@@ -11,7 +10,6 @@ from breadmind.messenger.service.workspace_service import create_workspace
 KEY = "00" * 32
 
 
-@pytest.mark.asyncio
 async def test_full_user_journey(messenger_app_client, test_db):
     """End-to-end:
     1) Create workspace + auto-bootstraps agent (Task 37)

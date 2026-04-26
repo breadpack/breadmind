@@ -2,7 +2,6 @@ import pytest
 from uuid import uuid4
 
 
-@pytest.mark.asyncio
 async def test_oauth_app_round_trip(test_db, seed_workspace):
     wid, owner_id = seed_workspace
     aid = uuid4()
@@ -19,7 +18,6 @@ async def test_oauth_app_round_trip(test_db, seed_workspace):
     assert "chat:write" in row["scopes"]
 
 
-@pytest.mark.asyncio
 async def test_oauth_token_unique_hash(test_db, seed_workspace):
     wid, owner_id = seed_workspace
     aid = uuid4()

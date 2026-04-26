@@ -2,7 +2,6 @@ import pytest
 from uuid import uuid4
 
 
-@pytest.mark.asyncio
 async def test_workspace_user_insert_round_trip(test_db):
     workspace_id = uuid4()
     # Use a uuid-based slug so repeated test runs don't collide on the UNIQUE constraint.
@@ -28,7 +27,6 @@ async def test_workspace_user_insert_round_trip(test_db):
     assert row["locale"] == "ko"  # default
 
 
-@pytest.mark.asyncio
 async def test_workspace_user_email_unique_per_workspace(test_db):
     wid = uuid4()
     # Use a uuid-based slug so repeated test runs don't collide on the UNIQUE constraint.

@@ -6,7 +6,6 @@ from breadmind.messenger.auth.session import (
 KEY = "00" * 32
 
 
-@pytest.mark.asyncio
 async def test_create_session_returns_tokens(test_db, seed_workspace):
     wid, uid = seed_workspace
     sess = await create_session(
@@ -19,7 +18,6 @@ async def test_create_session_returns_tokens(test_db, seed_workspace):
     assert sess.session_id
 
 
-@pytest.mark.asyncio
 async def test_refresh_returns_new_access_and_rotates_refresh(test_db, seed_workspace):
     wid, uid = seed_workspace
     sess = await create_session(
@@ -39,7 +37,6 @@ async def test_refresh_returns_new_access_and_rotates_refresh(test_db, seed_work
         )
 
 
-@pytest.mark.asyncio
 async def test_revoke_blocks_refresh(test_db, seed_workspace):
     wid, uid = seed_workspace
     sess = await create_session(

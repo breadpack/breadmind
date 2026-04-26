@@ -1,8 +1,6 @@
-import pytest
 from uuid import uuid4
 
 
-@pytest.mark.asyncio
 async def test_create_group(messenger_app_client, owner_token, owner_workspace_id):
     suffix = uuid4().hex[:8]
     handle = f"eng-{suffix}"
@@ -18,7 +16,6 @@ async def test_create_group(messenger_app_client, owner_token, owner_workspace_i
     assert body["name"] == name
 
 
-@pytest.mark.asyncio
 async def test_list_groups(messenger_app_client, owner_token, owner_workspace_id):
     suffix = uuid4().hex[:8]
     handle = f"ops-{suffix}"
@@ -38,7 +35,6 @@ async def test_list_groups(messenger_app_client, owner_token, owner_workspace_id
     assert any(g["handle"] == handle for g in body["groups"])
 
 
-@pytest.mark.asyncio
 async def test_member_cannot_create(messenger_app_client, member_token, owner_workspace_id):
     suffix = uuid4().hex[:8]
     r = await messenger_app_client.post(
@@ -49,7 +45,6 @@ async def test_member_cannot_create(messenger_app_client, member_token, owner_wo
     assert r.status_code == 403, r.text
 
 
-@pytest.mark.asyncio
 async def test_set_members_replaces(
     messenger_app_client, owner_token, owner_workspace_id, seed_workspace, test_db,
 ):

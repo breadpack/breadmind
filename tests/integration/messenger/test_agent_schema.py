@@ -2,7 +2,6 @@ import pytest
 from uuid import uuid4
 
 
-@pytest.mark.asyncio
 async def test_agent_action_insert(test_db, seed_channel):
     wid, cid, user_id = seed_channel
     agent_id = uuid4()
@@ -28,7 +27,6 @@ async def test_agent_action_insert(test_db, seed_channel):
     assert row["action_kind"] == "tool_call"
 
 
-@pytest.mark.asyncio
 async def test_agent_subscription_pk(test_db, seed_channel):
     wid, cid, _ = seed_channel
     agent_id = uuid4()
@@ -49,7 +47,6 @@ async def test_agent_subscription_pk(test_db, seed_channel):
         )
 
 
-@pytest.mark.asyncio
 async def test_episodic_note_source_message_fk(test_db, seed_channel):
     """episodic_notes에 source_message_id 컬럼이 추가되었는지 확인."""
     wid, cid, user_id = seed_channel
@@ -62,7 +59,6 @@ async def test_episodic_note_source_message_fk(test_db, seed_channel):
     assert "source_channel_id" in names
 
 
-@pytest.mark.asyncio
 async def test_audit_log_messenger_columns(test_db):
     cols = await test_db.fetch(
         "SELECT column_name FROM information_schema.columns "

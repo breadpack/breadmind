@@ -6,7 +6,6 @@ from breadmind.messenger.idempotency import (
 )
 
 
-@pytest.mark.asyncio
 async def test_first_call_stores_response(redis_client):
     store = IdempotencyStore(redis_client)
     key = str(uuid4())
@@ -20,7 +19,6 @@ async def test_first_call_stores_response(redis_client):
     assert cached2.body == b'{"ok":true}'
 
 
-@pytest.mark.asyncio
 async def test_request_hash_mismatch_raises(redis_client):
     store = IdempotencyStore(redis_client)
     key = str(uuid4())
@@ -29,7 +27,6 @@ async def test_request_hash_mismatch_raises(redis_client):
         await store.get_or_lock(key, request_hash="B")
 
 
-@pytest.mark.asyncio
 async def test_lock_concurrent_request(redis_client):
     """Second request with same key (still locked) returns IN_PROGRESS sentinel."""
     store = IdempotencyStore(redis_client)

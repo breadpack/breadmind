@@ -1,7 +1,5 @@
-import pytest
 
 
-@pytest.mark.asyncio
 async def test_audit_read_admin_only(messenger_app_client, member_token, owner_workspace_id):
     r = await messenger_app_client.get(
         f"/api/v1/workspaces/{owner_workspace_id}/audit-log",
@@ -10,7 +8,6 @@ async def test_audit_read_admin_only(messenger_app_client, member_token, owner_w
     assert r.status_code == 403, r.text
 
 
-@pytest.mark.asyncio
 async def test_audit_read_admin_returns_entries(
     test_db, messenger_app_client, owner_token, owner_workspace_id,
 ):
@@ -29,7 +26,6 @@ async def test_audit_read_admin_returns_entries(
     assert len(body["entries"]) >= 1
 
 
-@pytest.mark.asyncio
 async def test_create_channel_writes_audit(
     test_db, messenger_app_client, owner_token, owner_workspace_id,
 ):

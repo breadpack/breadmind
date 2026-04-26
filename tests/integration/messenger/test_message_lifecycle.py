@@ -2,7 +2,6 @@ import pytest
 from uuid import uuid4
 
 
-@pytest.mark.asyncio
 async def test_message_text_round_trip(test_db, seed_channel):
     wid, cid, user_id = seed_channel
     mid = uuid4()
@@ -21,7 +20,6 @@ async def test_message_text_round_trip(test_db, seed_channel):
     assert row["deleted_at"] is None
 
 
-@pytest.mark.asyncio
 async def test_message_ts_seq_unique_per_channel(test_db, seed_channel):
     wid, cid, user_id = seed_channel
     await test_db.execute(
@@ -35,7 +33,6 @@ async def test_message_ts_seq_unique_per_channel(test_db, seed_channel):
         )
 
 
-@pytest.mark.asyncio
 async def test_message_thread_parent(test_db, seed_channel):
     wid, cid, user_id = seed_channel
     parent_id = uuid4()
@@ -55,7 +52,6 @@ async def test_message_thread_parent(test_db, seed_channel):
     assert [r["id"] for r in rows] == [reply_id]
 
 
-@pytest.mark.asyncio
 async def test_reaction_pk(test_db, seed_channel):
     wid, cid, user_id = seed_channel
     mid = uuid4()
@@ -74,7 +70,6 @@ async def test_reaction_pk(test_db, seed_channel):
         )
 
 
-@pytest.mark.asyncio
 async def test_outbox_insert_select_delete(test_db, seed_workspace):
     wid, _ = seed_workspace
     cid = uuid4()

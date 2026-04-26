@@ -1,4 +1,3 @@
-import pytest
 from uuid import uuid4
 
 
@@ -14,7 +13,6 @@ async def _create_member(test_db, workspace_id, suffix=None):
     return uid
 
 
-@pytest.mark.asyncio
 async def test_open_new_dm_201(
     messenger_app_client, owner_token, owner_workspace_id, seed_workspace, test_db,
 ):
@@ -32,7 +30,6 @@ async def test_open_new_dm_201(
     assert body["kind"] == "dm"
 
 
-@pytest.mark.asyncio
 async def test_reopen_same_dm_200(
     messenger_app_client, owner_token, owner_workspace_id, seed_workspace, test_db,
 ):
@@ -57,7 +54,6 @@ async def test_reopen_same_dm_200(
     assert r2.json()["id"] == cid1
 
 
-@pytest.mark.asyncio
 async def test_mpdm_3_people_201(
     messenger_app_client, owner_token, owner_workspace_id, seed_workspace, test_db,
 ):
@@ -76,7 +72,6 @@ async def test_mpdm_3_people_201(
     assert body["kind"] == "mpdm"
 
 
-@pytest.mark.asyncio
 async def test_mpdm_9_person_cap_422(
     messenger_app_client, owner_token, owner_workspace_id, seed_workspace, test_db,
 ):

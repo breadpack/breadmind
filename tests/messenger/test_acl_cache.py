@@ -1,9 +1,7 @@
-import pytest
 from uuid import uuid4
 from breadmind.messenger.acl.cache import VisibleChannelsCache
 
 
-@pytest.mark.asyncio
 async def test_set_then_get(redis_client):
     cache = VisibleChannelsCache(redis_client, ttl_sec=300)
     uid = uuid4()
@@ -13,13 +11,11 @@ async def test_set_then_get(redis_client):
     assert got == cids
 
 
-@pytest.mark.asyncio
 async def test_get_miss_returns_none(redis_client):
     cache = VisibleChannelsCache(redis_client, ttl_sec=300)
     assert await cache.get(user_id=uuid4()) is None
 
 
-@pytest.mark.asyncio
 async def test_invalidate_user(redis_client):
     cache = VisibleChannelsCache(redis_client, ttl_sec=300)
     uid = uuid4()
@@ -28,7 +24,6 @@ async def test_invalidate_user(redis_client):
     assert await cache.get(user_id=uid) is None
 
 
-@pytest.mark.asyncio
 async def test_invalidate_workspace(redis_client):
     cache = VisibleChannelsCache(redis_client, ttl_sec=300)
     wid = uuid4()

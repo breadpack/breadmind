@@ -5,7 +5,6 @@ from breadmind.messenger.auth.invite import (
 )
 
 
-@pytest.mark.asyncio
 async def test_create_and_accept(test_db, seed_workspace):
     wid, owner_id = seed_workspace
     suffix = uuid4().hex[:8]
@@ -24,7 +23,6 @@ async def test_create_and_accept(test_db, seed_workspace):
     assert row["role"] == "member"
 
 
-@pytest.mark.asyncio
 async def test_accept_expired_raises(test_db, seed_workspace):
     wid, owner_id = seed_workspace
     suffix = uuid4().hex[:8]
@@ -37,7 +35,6 @@ async def test_accept_expired_raises(test_db, seed_workspace):
         await accept_invite(test_db, token=invite.token, display_name="Bob")
 
 
-@pytest.mark.asyncio
 async def test_accept_revoked_raises(test_db, seed_workspace):
     wid, owner_id = seed_workspace
     suffix = uuid4().hex[:8]
@@ -51,7 +48,6 @@ async def test_accept_revoked_raises(test_db, seed_workspace):
         await accept_invite(test_db, token=invite.token, display_name="Bob")
 
 
-@pytest.mark.asyncio
 async def test_accept_twice_raises(test_db, seed_workspace):
     wid, owner_id = seed_workspace
     suffix = uuid4().hex[:8]

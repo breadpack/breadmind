@@ -1,8 +1,6 @@
-import pytest
 from uuid import uuid4
 
 
-@pytest.mark.asyncio
 async def test_create_workspace_returns_201(messenger_app_client, owner_token):
     suffix = uuid4().hex[:8]
     r = await messenger_app_client.post(
@@ -16,7 +14,6 @@ async def test_create_workspace_returns_201(messenger_app_client, owner_token):
     assert body["plan"] == "free"
 
 
-@pytest.mark.asyncio
 async def test_list_workspaces_only_user_workspaces(
     messenger_app_client, owner_token, owner_workspace_id,
 ):
@@ -29,7 +26,6 @@ async def test_list_workspaces_only_user_workspaces(
     assert str(owner_workspace_id) in ids
 
 
-@pytest.mark.asyncio
 async def test_get_workspace_404_for_other(messenger_app_client, owner_token):
     other = uuid4()
     r = await messenger_app_client.get(
@@ -39,7 +35,6 @@ async def test_get_workspace_404_for_other(messenger_app_client, owner_token):
     assert r.status_code in (403, 404)
 
 
-@pytest.mark.asyncio
 async def test_patch_workspace_admin_only(
     messenger_app_client, member_token, owner_workspace_id,
 ):

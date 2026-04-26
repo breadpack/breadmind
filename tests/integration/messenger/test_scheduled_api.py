@@ -1,4 +1,3 @@
-import pytest
 from datetime import datetime, timezone, timedelta
 from uuid import uuid4
 
@@ -13,7 +12,6 @@ def _past(minutes: int = 1) -> str:
     return (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
 
 
-@pytest.mark.asyncio
 async def test_schedule_and_list(
     messenger_app_client, owner_token, owner_workspace_id, owner_channel,
 ):
@@ -44,7 +42,6 @@ async def test_schedule_and_list(
     assert any(s["id"] == sid for s in scheduled)
 
 
-@pytest.mark.asyncio
 async def test_cancel_removes_from_list(
     messenger_app_client, owner_token, owner_workspace_id, owner_channel,
 ):
@@ -78,7 +75,6 @@ async def test_cancel_removes_from_list(
     assert all(s["id"] != sid for s in scheduled)
 
 
-@pytest.mark.asyncio
 async def test_dispatch_future_not_dispatched(test_db, seed_workspace, owner_channel):
     """dispatch_due_messages query does NOT pick up future-scheduled messages.
 
@@ -114,7 +110,6 @@ async def test_dispatch_future_not_dispatched(test_db, seed_workspace, owner_cha
     assert len(rows) == 0, "Future-scheduled message should not be picked up as due"
 
 
-@pytest.mark.asyncio
 async def test_past_scheduled_for_422(
     messenger_app_client, owner_token, owner_workspace_id, owner_channel,
 ):

@@ -1,8 +1,6 @@
-import pytest
 from uuid import uuid4
 
 
-@pytest.mark.asyncio
 async def test_add_reaction_201(
     messenger_app_client, owner_token, owner_workspace_id, owner_channel,
 ):
@@ -25,7 +23,6 @@ async def test_add_reaction_201(
     assert r.status_code == 201, r.text
 
 
-@pytest.mark.asyncio
 async def test_remove_reaction_204(
     messenger_app_client, owner_token, owner_workspace_id, owner_channel,
 ):
@@ -53,7 +50,6 @@ async def test_remove_reaction_204(
     assert r.status_code == 204, r.text
 
 
-@pytest.mark.asyncio
 async def test_add_reaction_idempotent(
     messenger_app_client, owner_token, owner_workspace_id, owner_channel,
 ):
@@ -94,7 +90,6 @@ async def test_add_reaction_idempotent(
     assert matching[0]["count"] == 1
 
 
-@pytest.mark.asyncio
 async def test_list_reactions_count(
     messenger_app_client, owner_token, owner_workspace_id, owner_channel, test_db, seed_workspace,
 ):

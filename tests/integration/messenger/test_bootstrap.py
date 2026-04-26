@@ -2,12 +2,10 @@
 import json
 from uuid import uuid4
 
-import pytest
 
 from breadmind.messenger.service.workspace_service import create_workspace
 
 
-@pytest.mark.asyncio
 async def test_workspace_bootstraps_default_agent(test_db):
     suffix = uuid4().hex[:8]
     row = await create_workspace(
@@ -30,7 +28,6 @@ async def test_workspace_bootstraps_default_agent(test_db):
     assert "kb.query" in cfg["tools_enabled"]
 
 
-@pytest.mark.asyncio
 async def test_create_workspace_via_api_also_bootstraps(
     messenger_app_client, owner_token, test_db,
 ):

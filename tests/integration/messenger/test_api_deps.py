@@ -1,4 +1,3 @@
-import pytest
 import pytest_asyncio
 from fastapi import FastAPI, Depends
 from httpx import AsyncClient, ASGITransport
@@ -30,7 +29,6 @@ def _build_app(db_pool):
     return app
 
 
-@pytest.mark.asyncio
 async def test_get_current_user_success(db_pool, seed_workspace):
     wid, uid = seed_workspace
     app = _build_app(db_pool)
@@ -41,7 +39,6 @@ async def test_get_current_user_success(db_pool, seed_workspace):
     assert r.json()["user_id"] == str(uid)
 
 
-@pytest.mark.asyncio
 async def test_missing_token_401(db_pool):
     app = _build_app(db_pool)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -49,7 +46,6 @@ async def test_missing_token_401(db_pool):
     assert r.status_code == 401
 
 
-@pytest.mark.asyncio
 async def test_invalid_token_401(db_pool):
     app = _build_app(db_pool)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -57,7 +53,6 @@ async def test_invalid_token_401(db_pool):
     assert r.status_code == 401
 
 
-@pytest.mark.asyncio
 async def test_workspace_context_mismatch_403(db_pool, seed_workspace):
     wid, uid = seed_workspace
     app = _build_app(db_pool)

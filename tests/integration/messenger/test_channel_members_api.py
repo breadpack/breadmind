@@ -1,8 +1,6 @@
-import pytest
 from uuid import uuid4
 
 
-@pytest.mark.asyncio
 async def test_channel_member_add_remove(
     messenger_app_client, owner_token, owner_workspace_id, test_db,
 ):

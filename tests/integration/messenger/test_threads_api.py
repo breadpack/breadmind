@@ -1,7 +1,5 @@
-import pytest
 
 
-@pytest.mark.asyncio
 async def test_thread_replies_returns_replies(
     messenger_app_client, owner_token, owner_workspace_id, owner_channel,
 ):
@@ -40,7 +38,6 @@ async def test_thread_replies_returns_replies(
     assert body["replies"][1]["text"] == "reply 1"
 
 
-@pytest.mark.asyncio
 async def test_empty_thread(
     messenger_app_client, owner_token, owner_workspace_id, owner_channel,
 ):
@@ -65,7 +62,6 @@ async def test_empty_thread(
     assert body["pagination"]["has_more"] is False
 
 
-@pytest.mark.asyncio
 async def test_deleted_parent_404(
     messenger_app_client, owner_token, owner_workspace_id, owner_channel,
 ):
