@@ -26,6 +26,10 @@ class BackfillItem:
     extra: dict[str, Any] = field(default_factory=dict)
 
 
+# WARNING: fields here are persisted to JSONB via dataclasses.asdict + json.dumps
+# (see breadmind.kb.backfill.checkpoint.JobCheckpointer.checkpoint).
+# Keep types JSON-serializable (no datetime/uuid). If you need a non-trivial
+# type, add a custom serializer in checkpoint.py instead.
 @dataclass
 class JobProgress:
     discovered: int = 0

@@ -177,7 +177,19 @@ class BackfillRunner:
                     )
                     continue
         finally:
-            await job.teardown()
+            # T9-review I1: capture but do NOT propagate teardown errors until
+            # AFTER the kb_backfill_jobs row converges to a terminal status.
+            # Otherwise a connector cleanup blip would leave the row stuck at
+            # status='running' forever — hostile to ops alerting.
+            teardown_err: BaseException | None = None
+            try:
+                await job.teardown()
+            except Exception as exc:
+                teardown_err = exc
+                # Don't shadow a primary error_message captured by abort logic.
+                if error_message is None:
+                    error_message = f"teardown failed: {exc}"
+                    aborted = True
             # T9: finalize the kb_backfill_jobs row even on abort/exception.
             # Final checkpoint write captures the latest cursor + counts so
             # a resumer reads the truth, then finish() stamps terminal state.
@@ -206,6 +218,10 @@ class BackfillRunner:
                         status="completed",
                         error=None,
                     )
+            # Re-raise the original teardown error after row convergence so
+            # the caller still observes the underlying failure.
+            if teardown_err is not None:
+                raise teardown_err
 
         finished_at = datetime.now(timezone.utc)
 
@@ -238,6 +254,9 @@ class BackfillRunner:
             progress=progress,
             sample_titles=sample_titles,
             budget_hit=budget_hit,
+            # If aborted/budget-hit before any STORED item, cursor=None signals
+            # the resumer to restart from since_ts (no prior progress to advance
+            # past).
             cursor=job.cursor_of(last_item) if last_item else None,
             aborted=aborted,
             error=error_message,
