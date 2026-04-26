@@ -1,10 +1,23 @@
 """E2E harness: Postgres via testcontainers + fakeredis + stubs."""
 from __future__ import annotations
 
+import pathlib
+
 import asyncpg
 import fakeredis.aioredis
 import pytest
 from testcontainers.postgres import PostgresContainer
+
+_E2E_DIR = pathlib.Path(__file__).parent.resolve()
+
+
+def pytest_collection_modifyitems(config, items):
+    for item in items:
+        try:
+            pathlib.Path(item.path).resolve().relative_to(_E2E_DIR)
+        except ValueError:
+            continue
+        item.add_marker(pytest.mark.e2e)
 
 
 @pytest.fixture(scope="session")
