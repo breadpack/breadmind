@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
 
 import pytest
 
-from breadmind.kb.backfill.base import BackfillItem
+from breadmind.kb.backfill.base import BackfillItem, JobProgress, JobReport
 
 
 def _ts() -> datetime:
@@ -70,3 +71,46 @@ def test_backfill_item_dual_timestamps_independent():
         author=None,
     )
     assert item.source_created_at != item.source_updated_at
+
+
+def test_job_progress_defaults_zero():
+    p = JobProgress()
+    assert p.discovered == 0 and p.embedded == 0 and p.tokens_consumed == 0
+    assert p.last_cursor is None
+
+
+def test_job_progress_mutable():
+    p = JobProgress()
+    p.discovered += 1
+    p.last_cursor = "abc"
+    assert p.discovered == 1 and p.last_cursor == "abc"
+
+
+def test_job_report_skipped_is_dict():
+    r = JobReport(
+        job_id=uuid.uuid4(),
+        org_id=uuid.uuid4(),
+        source_kind="slack_msg",
+        dry_run=True,
+        estimated_count=0,
+        estimated_tokens=0,
+        indexed_count=0,
+    )
+    assert r.skipped == {}
+    assert r.sample_titles == [] and r.budget_hit is False
+    assert r.cursor is None
+
+
+def test_job_report_cursor_is_opaque_str():
+    r = JobReport(
+        job_id=uuid.uuid4(),
+        org_id=uuid.uuid4(),
+        source_kind="slack_msg",
+        dry_run=False,
+        estimated_count=10,
+        estimated_tokens=100,
+        indexed_count=10,
+        cursor="1730000000:C1:1.0",
+    )
+    # Pipeline never parses; just stores verbatim.
+    assert isinstance(r.cursor, str)
