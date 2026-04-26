@@ -164,6 +164,21 @@ async def list_messages(
     return [_row_to_message(r) for r in rows[:limit]], has_more
 
 
+async def list_thread_replies(
+    db, *, channel_id: UUID, parent_id: UUID,
+    limit: int = 50,
+) -> tuple[list[MessageRow], bool]:
+    args: list = [channel_id, parent_id, limit + 1]
+    rows = await db.fetch(
+        f"SELECT {_COLS} FROM messages "
+        f"WHERE channel_id = $1 AND parent_id = $2 AND deleted_at IS NULL "
+        f"ORDER BY created_at ASC LIMIT $3",
+        *args,
+    )
+    has_more = len(rows) > limit
+    return [_row_to_message(r) for r in rows[:limit]], has_more
+
+
 def _row_to_message(row) -> MessageRow:
     d = dict(row)
     if isinstance(d.get("blocks"), str):

@@ -25,3 +25,13 @@ from breadmind.messenger.api.v1 import channel_members  # noqa: E402
 router.include_router(channel_members.router)
 from breadmind.messenger.api.v1 import messages as _messages  # noqa: E402
 router.include_router(_messages.router)
+from breadmind.messenger.api.v1 import threads  # noqa: E402
+router.include_router(threads.router)
+from breadmind.messenger.api.v1 import reactions  # noqa: E402
+router.include_router(reactions.router)
+from breadmind.messenger.api.v1 import pins  # noqa: E402
+router.include_router(pins.router)
+from breadmind.messenger.api.v1 import dms  # noqa: E402
+router.include_router(dms.router)
+from breadmind.messenger.api.v1 import scheduled  # noqa: E402
+router.include_router(scheduled.router)
