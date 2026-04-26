@@ -46,3 +46,67 @@ def build_parser() -> argparse.ArgumentParser:
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     return build_parser().parse_args(argv)
+
+
+def format_dry_run(report, ctx: dict) -> str:
+    def fmt_int(n: int) -> str:
+        return f"{n:,}"
+    since = ctx["since"].strftime("%Y-%m-%dT%H:%M:%SZ")
+    until = ctx["until"].strftime("%Y-%m-%dT%H:%M:%SZ")
+    drop = report.progress.discovered - report.estimated_count
+    drop_pct = (drop / report.progress.discovered * 100
+                if report.progress.discovered else 0.0)
+    within = "yes" if report.estimated_tokens <= ctx["token_budget"] \
+        else "no"
+    channels_line = ", ".join(
+        f"#{name} ({cid})" for cid, name in ctx["channels"])
+    lines = [
+        "Backfill DRY-RUN — Slack",
+        "========================",
+        f"Org:             {report.org_id} (project: {ctx['project_name']})",
+        f"Source:          {report.source_kind}",
+        f"Instance:        {ctx['team_id']} (workspace {ctx['team_name']})",
+        f"Channels:        {channels_line}",
+        f"Window:          {since} → {until}  "
+        "(filter: source_updated_at, half-open)",
+        f"Token budget:    {fmt_int(ctx['token_budget'])}  (job)  /  "
+        f"per-org monthly remaining: {fmt_int(ctx['monthly_remaining'])} "
+        f"/ {fmt_int(ctx['monthly_ceiling'])}",
+        f"Membership lock: {ctx['membership_count']} members snapshotted "
+        f"at {ctx['membership_snapshotted_at'].strftime('%Y-%m-%dT%H:%M:%SZ')}"
+        " (per-item ACL: label-only)",
+        "",
+        "Discovery",
+        "---------",
+        f"Discovered messages:        {fmt_int(report.progress.discovered)}",
+        f"  - top-level:               {fmt_int(ctx['top_level_count'])}",
+        f"  - thread roots:            {fmt_int(ctx['thread_root_count'])}",
+        f"After signal filter:         {fmt_int(report.estimated_count)}"
+        f"   (drop rate {drop_pct:.1f}%)",
+        "Skipped (by reason)",
+    ]
+    for k in ("signal_filter_short", "signal_filter_bot",
+             "signal_filter_no_engagement", "signal_filter_mention_only",
+             "acl_lock", "archived", "skipped_existing"):
+        v = report.skipped.get(k, 0)
+        comment = "  (dry-run does not touch DB)" \
+            if k == "skipped_existing" else ""
+        lines.append(f"  - {k}: {fmt_int(v)}{comment}")
+    lines += [
+        "",
+        "Cost estimate",
+        "-------------",
+        f"Estimated tokens (body):    ~{fmt_int(report.estimated_tokens)}"
+        f"   (within budget: {within})",
+        f"Estimated embeddings:        {fmt_int(report.estimated_count)}",
+        f"Estimated DB rows:           {fmt_int(report.estimated_count)} "
+        f"org_knowledge + {fmt_int(report.estimated_count)} kb_sources",
+        "",
+        f"Sample titles (10 of {fmt_int(report.estimated_count)})",
+        "----------------------------",
+    ]
+    for t in report.sample_titles[:10]:
+        lines.append(f"  {t}")
+    lines += ["", "No data was indexed.",
+              "To run for real: re-issue without --dry-run."]
+    return "\n".join(lines)
