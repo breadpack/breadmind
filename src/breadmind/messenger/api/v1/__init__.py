@@ -35,3 +35,9 @@ from breadmind.messenger.api.v1 import dms  # noqa: E402
 router.include_router(dms.router)
 from breadmind.messenger.api.v1 import scheduled  # noqa: E402
 router.include_router(scheduled.router)
+from breadmind.messenger.api.v1 import drafts  # noqa: E402
+router.include_router(drafts.router)
+from breadmind.messenger.api.v1 import bookmarks  # noqa: E402
+router.include_router(bookmarks.router)
+from breadmind.messenger.api.v1 import audit  # noqa: E402
+router.include_router(audit.router)
