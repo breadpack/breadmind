@@ -6,6 +6,34 @@ import uuid
 from datetime import datetime, timezone
 
 
+class _FakeSlack:
+    """Minimal Slack session for CLI dispatch tests.
+
+    Returns shapes that satisfy SlackBackfillAdapter construction. T16 tests
+    monkeypatch ``BackfillRunner.run`` (test 1) or short-circuit before
+    runner.run is invoked (test 2), so the session only needs to exist at
+    adapter __init__ time.
+    """
+
+    async def call(self, method, **params):
+        if method == "auth.test":
+            return {"ok": True, "team_id": "T1"}
+        if method == "conversations.info":
+            return {
+                "ok": True,
+                "channel": {
+                    "id": params.get("channel"),
+                    "is_archived": False,
+                    "name": "general",
+                },
+            }
+        if method == "conversations.members":
+            return {"ok": True, "members": [], "response_metadata": {}}
+        if method == "conversations.history":
+            return {"ok": True, "messages": [], "has_more": False}
+        return {"ok": True}
+
+
 def test_parser_requires_org_and_channel():
     parser = build_parser()
     with pytest.raises(SystemExit):
@@ -169,3 +197,68 @@ def test_dry_run_within_budget_no_when_over():
     }
     out = format_dry_run(report, ctx)
     assert "within budget: no" in out
+
+
+# ---------------------------------------------------------------------------
+# T16 — main_async dispatch + monthly budget pre-check
+# ---------------------------------------------------------------------------
+
+
+async def test_run_command_dispatches_dry_run(
+    monkeypatch, mem_backfill_db, seeded_org, fake_redactor, fake_embedder,
+):
+    from breadmind.kb.backfill import cli
+
+    captured: dict = {}
+
+    async def fake_run(self, job):
+        captured["dry_run"] = job.dry_run
+        return JobReport(
+            job_id=uuid.uuid4(),
+            org_id=job.org_id,
+            source_kind=job.source_kind,
+            dry_run=job.dry_run,
+            estimated_count=0,
+            estimated_tokens=0,
+            indexed_count=0,
+            progress=JobProgress(),
+        )
+
+    from breadmind.kb.backfill.runner import BackfillRunner
+    monkeypatch.setattr(BackfillRunner, "run", fake_run)
+    # Patch budget remaining lookup so test does not require a real DB row.
+    async def fake_remaining(*_a, **_kw):
+        return 10_000_000
+    monkeypatch.setattr(
+        "breadmind.kb.backfill.cli._monthly_remaining", fake_remaining)
+    argv = [
+        "slack", "--org", str(seeded_org), "--channel", "C1",
+        "--since", "2026-01-01", "--until", "2026-04-01", "--dry-run",
+    ]
+    rc = await cli.main_async(
+        argv, db=mem_backfill_db, redactor=fake_redactor,
+        embedder=fake_embedder, slack_session=_FakeSlack(),
+    )
+    assert rc == 0
+    assert captured["dry_run"] is True
+
+
+async def test_real_run_aborts_when_monthly_budget_zero(
+    monkeypatch, mem_backfill_db, seeded_org, fake_redactor, fake_embedder,
+):
+    """If OrgMonthlyBudget.remaining() == 0, refuse to start."""
+    from breadmind.kb.backfill import cli
+
+    async def zero_remaining(*_a, **_kw):
+        return 0
+    monkeypatch.setattr(
+        "breadmind.kb.backfill.cli._monthly_remaining", zero_remaining)
+    argv = [
+        "slack", "--org", str(seeded_org), "--channel", "C1",
+        "--since", "2026-01-01", "--until", "2026-04-01", "--confirm",
+    ]
+    rc = await cli.main_async(
+        argv, db=mem_backfill_db, redactor=fake_redactor,
+        embedder=fake_embedder, slack_session=_FakeSlack(),
+    )
+    assert rc != 0
