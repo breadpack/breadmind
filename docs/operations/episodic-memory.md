@@ -9,6 +9,7 @@
 | `BREADMIND_EPISODIC_QUEUE_MAX` | `200` | When in-flight normalize calls exceed this, new events bypass the LLM. |
 | `BREADMIND_EPISODIC_RECALL_TURN_K` | `5` | Turn-level recall top-K. |
 | `BREADMIND_EPISODIC_RECALL_TOOL_K` | `3` | Tool-level recall top-K. |
+| `BREADMIND_EPISODIC_RECALL_MESSAGES_MAX` | `8` | Per-turn cap for buffered prior_runs system messages drained into the next LLM prompt. Overflow drops oldest FIFO. `0` disables buffering. |
 | `BREADMIND_EPISODIC_RECALL_DECAY_DAYS` | `7` | Recency decay τ in days (Phase 2 wiring). |
 
 ## Rollout

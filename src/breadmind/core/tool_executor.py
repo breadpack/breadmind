@@ -239,7 +239,17 @@ class ToolExecutor:
                 from breadmind.memory.recall_render import render_previous_runs_for_tool
 
                 rendered = render_previous_runs_for_tool(tool_name, self._last_recall_notes)
+                cap = self._get_recall_messages_cap()
                 for entry in rendered:
+                    if cap == 0:
+                        # Cap=0 disables the buffer entirely; skip append.
+                        continue
+                    if len(self._recall_messages) >= cap:
+                        logger.warning(
+                            "episodic recall buffer overflow: dropping oldest entry (cap=%d)",
+                            cap,
+                        )
+                        self._recall_messages.pop(0)
                     self._recall_messages.append(
                         LLMMessage(role=entry["role"], content=entry["content"])
                     )
@@ -254,6 +264,25 @@ class ToolExecutor:
                 memory_recall_hit_count.observe(0.0)
             except Exception:  # pragma: no cover - defensive
                 logger.debug("recall_hit_count observe failed", exc_info=True)
+
+    @staticmethod
+    def _get_recall_messages_cap() -> int:
+        """Return the per-turn cap for ``self._recall_messages``.
+
+        Reads ``BREADMIND_EPISODIC_RECALL_MESSAGES_MAX`` (default 8). Invalid
+        ints fall back to 8. Negative values are clamped to 0 (which disables
+        the buffer entirely).
+        """
+        raw = os.getenv("BREADMIND_EPISODIC_RECALL_MESSAGES_MAX")
+        if raw is None or raw == "":
+            return 8
+        try:
+            cap = int(raw)
+        except (TypeError, ValueError):
+            return 8
+        if cap < 0:
+            return 0
+        return cap
 
     def drain_recall_messages(self) -> list[LLMMessage]:
         """Pop accumulated tool-level recall messages.
