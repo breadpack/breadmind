@@ -79,3 +79,49 @@ def test_chitchat_returns_none():
     d = SignalDetector()
     e = d.on_user_message(_snap(user_message="안녕"))
     assert e is None
+
+
+# ── P3: EN substring "no" must not false-positive on know/nothing/etc ──
+
+
+@pytest.mark.parametrize("msg", [
+    "I don't know what to do",
+    "Nothing changed in the output",
+    "Travel to the north for a bit",
+    "noted, please continue",
+    "now show the logs",
+    "ignore that for a sec",
+])
+def test_en_correction_no_false_positive_on_substrings(msg):
+    """`no` and other tokens must use word-boundary matching, not substring."""
+    d = SignalDetector()
+    e = d.on_user_message(_snap(user_message=msg, last_tool_name="aws_vpc_create"))
+    assert e is None, f"unexpected USER_CORRECTION on chit-chat: {msg!r}"
+
+
+@pytest.mark.parametrize("msg", [
+    "no, that's wrong",
+    "No that didn't work",
+    "wrong region; redo",
+    "Try again with us-east-1",
+    "use ap-northeast-2 instead",
+    "incorrect, fix it",
+    "not that one",
+])
+def test_en_correction_word_boundary_still_matches(msg):
+    """Whole-word matches must still be detected as USER_CORRECTION."""
+    d = SignalDetector()
+    e = d.on_user_message(_snap(user_message=msg, last_tool_name="aws_vpc_create"))
+    assert e is not None
+    assert e.kind is SignalKind.USER_CORRECTION
+
+
+def test_ko_correction_unaffected_by_en_word_boundary_change():
+    """Korean lexicon stays substring-based (Korean has no \\b boundaries)."""
+    d = SignalDetector()
+    e = d.on_user_message(_snap(
+        user_message="아니, 다른 region으로 다시 해줘",
+        last_tool_name="aws_vpc_create",
+    ))
+    assert e is not None
+    assert e.kind is SignalKind.USER_CORRECTION
