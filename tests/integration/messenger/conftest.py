@@ -17,3 +17,19 @@ async def seed_workspace(test_db):
         owner_id, wid, f"owner-{uuid4().hex[:8]}@test.com",
     )
     return wid, owner_id
+
+
+@pytest_asyncio.fixture
+async def seed_channel(test_db, seed_workspace):
+    wid, owner_id = seed_workspace
+    from uuid import uuid4
+    cid = uuid4()
+    await test_db.execute(
+        "INSERT INTO channels (id, workspace_id, kind, name) "
+        "VALUES ($1, $2, 'public', $3)", cid, wid, f"general-{cid.hex[:8]}",
+    )
+    await test_db.execute(
+        "INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)",
+        cid, owner_id,
+    )
+    return wid, cid, owner_id
