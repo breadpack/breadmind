@@ -1,0 +1,62 @@
+{
+  "results": [
+    {
+      "id": "blk-001-1",
+      "type": "heading_1",
+      "has_children": false,
+      "heading_1": {
+        "rich_text": [{"plain_text": "Architecture Decision Record"}]
+      }
+    },
+    {
+      "id": "blk-001-2",
+      "type": "paragraph",
+      "has_children": false,
+      "paragraph": {
+        "rich_text": [{"plain_text": "This document records the key architectural decisions made for the BreadMind platform during Q1 2026. Each decision includes context, the decision itself, and the rationale behind it."}]
+      }
+    },
+    {
+      "id": "blk-001-3",
+      "type": "heading_2",
+      "has_children": false,
+      "heading_2": {
+        "rich_text": [{"plain_text": "Decision 1: Use asyncpg for database access"}]
+      }
+    },
+    {
+      "id": "blk-001-4",
+      "type": "paragraph",
+      "has_children": false,
+      "paragraph": {
+        "rich_text": [{"plain_text": "We chose asyncpg over SQLAlchemy async for its performance characteristics and direct PostgreSQL protocol support. Benchmarks showed 3x throughput improvement in our workload profile."}]
+      }
+    },
+    {
+      "id": "blk-001-5",
+      "type": "bulleted_list_item",
+      "has_children": false,
+      "bulleted_list_item": {
+        "rich_text": [{"plain_text": "Pro: Native async, no ORM overhead"}]
+      }
+    },
+    {
+      "id": "blk-001-6",
+      "type": "bulleted_list_item",
+      "has_children": false,
+      "bulleted_list_item": {
+        "rich_text": [{"plain_text": "Pro: Direct pgvector type support"}]
+      }
+    },
+    {
+      "id": "blk-001-7",
+      "type": "bulleted_list_item",
+      "has_children": false,
+      "bulleted_list_item": {
+        "rich_text": [{"plain_text": "Con: More verbose query writing"}]
+      }
+    }
+  ],
+  "has_more": false,
+  "next_cursor": null
+}
