@@ -4,6 +4,12 @@ from uuid import uuid4
 
 
 @pytest_asyncio.fixture
+async def db_pool(test_db):
+    """Expose the underlying asyncpg.Pool from test_db for FastAPI deps testing."""
+    return test_db._pool
+
+
+@pytest_asyncio.fixture
 async def seed_workspace(test_db):
     wid = uuid4()
     owner_id = uuid4()
