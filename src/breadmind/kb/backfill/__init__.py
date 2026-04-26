@@ -5,11 +5,17 @@ from breadmind.kb.backfill.base import (
     JobReport,
     Skipped,
 )
+from breadmind.kb.backfill.budget import (
+    OrgMonthlyBudget,
+    OrgMonthlyBudgetExceeded,
+)
 
 __all__ = [
     "BackfillItem",
     "BackfillJob",
     "JobProgress",
     "JobReport",
+    "OrgMonthlyBudget",
+    "OrgMonthlyBudgetExceeded",
     "Skipped",
 ]
