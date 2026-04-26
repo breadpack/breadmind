@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 import asyncpg
 
 from breadmind.messenger.errors import NotFound, Conflict, ValidationFailed
+from breadmind.messenger.service.audit_service import write_audit
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +38,11 @@ async def create_workspace(
         )
     except asyncpg.UniqueViolationError as e:
         raise Conflict(f"slug '{slug}' already taken") from e
+    await write_audit(
+        db, workspace_id=wid, entity_kind="workspace",
+        action="create", actor_user_id=created_by,
+        entity_id=wid, payload={"name": name, "slug": slug},
+    )
     return WorkspaceRow(**dict(row))
 
 

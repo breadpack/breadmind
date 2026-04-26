@@ -4,6 +4,7 @@ from datetime import datetime
 from uuid import UUID
 
 from breadmind.messenger.errors import NotFound, ValidationFailed
+from breadmind.messenger.service.audit_service import write_audit
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +100,10 @@ async def update_user_role(
         "UPDATE workspace_users SET role = $1 WHERE id = $2 AND workspace_id = $3",
         role, user_id, workspace_id,
     )
+    await write_audit(
+        db, workspace_id=workspace_id, entity_kind="user",
+        action="role_change", entity_id=user_id, payload={"role": role},
+    )
     return await get_user(db, workspace_id=workspace_id, user_id=user_id)
 
 
@@ -107,4 +112,8 @@ async def deactivate_user(db, *, workspace_id: UUID, user_id: UUID) -> None:
         "UPDATE workspace_users SET deactivated_at = now() "
         "WHERE id = $1 AND workspace_id = $2 AND deactivated_at IS NULL",
         user_id, workspace_id,
+    )
+    await write_audit(
+        db, workspace_id=workspace_id, entity_kind="user",
+        action="deactivate", entity_id=user_id,
     )

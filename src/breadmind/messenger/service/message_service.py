@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 from breadmind.messenger.errors import NotFound, ValidationFailed, Forbidden
 from breadmind.messenger.ts_seq import next_ts_seq, format_slack_ts
 from breadmind.messenger.service.outbox_service import enqueue_outbox
+from breadmind.messenger.service.audit_service import write_audit
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +134,10 @@ async def delete_message(db, *, channel_id: UUID, message_id: UUID) -> None:
             return
         await db.execute(
             "UPDATE messages SET deleted_at = now() WHERE id = $1", message_id,
+        )
+        await write_audit(
+            db, workspace_id=row["workspace_id"], entity_kind="message",
+            action="delete", entity_id=message_id,
         )
         await enqueue_outbox(
             db, workspace_id=row["workspace_id"], channel_id=channel_id,

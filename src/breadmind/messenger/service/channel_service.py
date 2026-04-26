@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 import asyncpg
 
 from breadmind.messenger.errors import NotFound, Conflict, ValidationFailed
+from breadmind.messenger.service.audit_service import write_audit
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +61,11 @@ async def create_channel(
                 )
     except asyncpg.UniqueViolationError as e:
         raise Conflict(f"channel name '{name}' already exists") from e
+    await write_audit(
+        db, workspace_id=workspace_id, entity_kind="channel",
+        action="create", actor_user_id=created_by,
+        entity_id=cid, payload={"name": name, "kind": kind},
+    )
     return ChannelRow(**dict(row))
 
 
@@ -121,6 +127,10 @@ async def archive_channel(db, *, workspace_id: UUID, channel_id: UUID) -> None:
         "UPDATE channels SET is_archived = true, archived_at = now() "
         "WHERE id = $1 AND workspace_id = $2",
         channel_id, workspace_id,
+    )
+    await write_audit(
+        db, workspace_id=workspace_id, entity_kind="channel",
+        action="archive", entity_id=channel_id,
     )
 
 
