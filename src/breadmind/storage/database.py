@@ -65,19 +65,6 @@ class Database:
                     "user" TEXT DEFAULT ''
                 );
 
-                CREATE TABLE IF NOT EXISTS episodic_notes (
-                    id SERIAL PRIMARY KEY,
-                    content TEXT NOT NULL,
-                    keywords TEXT[] DEFAULT '{}',
-                    tags TEXT[] DEFAULT '{}',
-                    context_description TEXT DEFAULT '',
-                    embedding FLOAT8[],
-                    linked_note_ids INTEGER[] DEFAULT '{}',
-                    decay_weight FLOAT8 DEFAULT 1.0,
-                    created_at TIMESTAMPTZ DEFAULT NOW(),
-                    updated_at TIMESTAMPTZ DEFAULT NOW()
-                );
-
                 CREATE TABLE IF NOT EXISTS kg_entities (
                     id TEXT PRIMARY KEY,
                     entity_type TEXT,
