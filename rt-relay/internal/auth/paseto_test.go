@@ -2,6 +2,8 @@ package auth
 
 import (
 	"encoding/hex"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -77,8 +79,11 @@ func TestNewVerifier_RejectsBadKeyLength(t *testing.T) {
 }
 
 func TestVerify_PythonCompat(t *testing.T) {
-	t.Skip("manual: paste token from python REPL, run with -run=TestVerify_PythonCompat -v")
-	pythonToken := "v4.local.twtjAWH0tE_hkhdmmGhEREgFYXpZTXFzCOK4DDRc4S75_UlcKoRnCi71xvO7QMFnhV4IGhV6ed01s7uSVjxfz9iqEK8pfUeBUOXxeogbT21vpTU8SnPb7AH8zmUDZojUAGuH8mG-R3WbNNGj9EoLthiH_5a1gDkcRYuuivz_B2ODk8I68lqixnfuuFmzUhlWjbDH9laJ1jmQkxr7OtBmYuzGwuWaQZDZ9tENlCXqxHFZAtQO8D-agBtuPX3miF77JGeQ--p6WomJzYEIlAbEfSlGrJ_-BhixttXA92qoNtdT4UZ_kaZkSxDdF94"
+	tokenBytes, err := os.ReadFile("testdata/python_v4_token.txt")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	pythonToken := strings.TrimSpace(string(tokenBytes))
 	raw, _ := hex.DecodeString(testKeyHex)
 	v, _ := NewVerifier(raw)
 	claims, err := v.Verify(pythonToken)

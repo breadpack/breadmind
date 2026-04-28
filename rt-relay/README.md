@@ -47,6 +47,33 @@ make lint         # golangci-lint run
 make run          # go run ./cmd/relay
 ```
 
+## Configuration
+
+`rt-relay` is configured via environment variables (loaded by `internal/config/config.Load`):
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `BREADMIND_RELAY_LISTEN_ADDR` | `:8090` | WebSocket bind address |
+| `BREADMIND_RELAY_REDIS_URL` | `redis://localhost:6379` | Redis pub/sub (event fan-out) |
+| `BREADMIND_RELAY_CORE_BASE_URL` | `http://localhost:8080` | BreadMind core REST API |
+| `BREADMIND_RELAY_PG_DSN` | `postgres://breadmind:breadmind@localhost:5434/breadmind` | Postgres DSN |
+| `BREADMIND_MESSENGER_PASETO_KEY_HEX` | *(required)* | 64-hex-char PASETO v4.local key shared with Python issuer |
+| `BREADMIND_RELAY_PRESENCE_TTL_S` | `30` | Presence key TTL in Redis |
+| `BREADMIND_RELAY_TYPING_TTL_S` | `5` | Typing key TTL in Redis |
+| `BREADMIND_RELAY_HEARTBEAT_S` | `25` | Server→client WebSocket ping interval (keeps NAT/intermediaries alive) |
+| `BREADMIND_RELAY_IDLE_TIMEOUT_S` | `60` | Max time a client connection may go without sending an *application-level* envelope before being disconnected. Set to `0` to disable. |
+| `BREADMIND_RELAY_METRICS_ADDR` | `:9090` | Prometheus `/metrics` bind |
+
+### Heartbeat vs idle-timeout semantics
+
+These two are independent and operate at different protocol layers:
+
+- **`HEARTBEAT_S`** — server sends a WebSocket protocol-level *ping* control frame every N seconds. The client (and any intermediaries) auto-respond with a *pong* control frame. This keeps NAT/load-balancer connection state warm; it does NOT carry application data.
+
+- **`IDLE_TIMEOUT_S`** — server requires the client to send an *application-level* envelope (`protocol.TypePing`, `protocol.TypeSubscribe`, `protocol.TypeTyping`, …) at least this often. **Protocol-level pong responses to the server's pings do NOT count.** A client that only answers control pings but is otherwise silent at the application layer will be disconnected every `IDLE_TIMEOUT_S` seconds.
+
+  If you have a long-lived client that legitimately stays quiet (e.g., a presence-only listener), either (a) have it send a periodic `protocol.TypePing` envelope at less than `IDLE_TIMEOUT_S` cadence, or (b) set `BREADMIND_RELAY_IDLE_TIMEOUT_S=0` to disable the per-read deadline entirely (at the cost of holding goroutines for genuinely-dead TCP connections until keep-alive trips, often minutes).
+
 ## Docker
 
 ```bash

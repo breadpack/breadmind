@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"os"
@@ -16,9 +15,9 @@ import (
 	"github.com/breadpack/breadmind/rt-relay/internal/auth"
 	"github.com/breadpack/breadmind/rt-relay/internal/bus"
 	"github.com/breadpack/breadmind/rt-relay/internal/config"
+	"github.com/breadpack/breadmind/rt-relay/internal/dispatch"
 	"github.com/breadpack/breadmind/rt-relay/internal/metrics"
 	"github.com/breadpack/breadmind/rt-relay/internal/presence"
-	"github.com/breadpack/breadmind/rt-relay/internal/protocol"
 	"github.com/breadpack/breadmind/rt-relay/internal/session"
 	"github.com/breadpack/breadmind/rt-relay/internal/transport"
 	"github.com/breadpack/breadmind/rt-relay/internal/typing"
@@ -63,11 +62,10 @@ func main() {
 	redisBus := bus.NewRedisBus(rdb)
 
 	_ = presenceTr
-	_ = typingTr
 
 	// Subscribe to channel:* events and fan-out
 	stop, err := redisBus.Subscribe(ctx, "channel:*.events", func(payload []byte) {
-		dispatchToSubscribers(payload, subs, registry)
+		dispatch.ToSubscribers(payload, subs, registry)
 	})
 	if err != nil {
 		logger.Error("redis subscribe", "err", err)
@@ -75,7 +73,12 @@ func main() {
 	}
 	defer stop()
 
-	handler := transport.NewHandler(verifier, registry, subs, core)
+	handler := transport.NewHandler(
+		verifier, registry, subs, core,
+		typingTr,
+		time.Duration(cfg.HeartbeatSeconds)*time.Second,
+		time.Duration(cfg.IdleTimeoutSeconds)*time.Second,
+	)
 
 	mux := http.NewServeMux()
 	mux.Handle("/ws", handler)
@@ -108,26 +111,4 @@ func main() {
 	shutdownCtx, c2 := context.WithTimeout(context.Background(), 5*time.Second)
 	defer c2()
 	_ = srv.Shutdown(shutdownCtx)
-}
-
-func dispatchToSubscribers(payload []byte, subs *session.Subscription, reg *session.Registry) {
-	var env protocol.Envelope
-	if err := json.Unmarshal(payload, &env); err != nil {
-		return
-	}
-	var meta struct {
-		ChannelID string `json:"channel_id"`
-	}
-	// best-effort: skip events without channel_id
-	_ = json.Unmarshal(env.Payload, &meta)
-	if meta.ChannelID == "" {
-		return
-	}
-	for _, connID := range subs.Subscribers(meta.ChannelID) {
-		c, ok := reg.Get(connID)
-		if !ok {
-			continue
-		}
-		_ = c.Send(payload)
-	}
 }

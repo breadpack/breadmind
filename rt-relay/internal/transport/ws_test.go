@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -54,7 +55,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *auth.Verifier, *session.Reg
 	require.NoError(t, err)
 	reg := session.NewRegistry()
 	subs := session.NewSubscription()
-	h := NewHandler(v, reg, subs, nil)
+	h := NewHandler(v, reg, subs, nil, nil, 25*time.Second, 60*time.Second)
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	return srv, v, reg, subs
@@ -225,4 +226,73 @@ func TestBearerFromHeader(t *testing.T) {
 	assert.Equal(t, "", bearerFromHeader(""))
 	assert.Equal(t, "", bearerFromHeader("Bearer "))
 	assert.Equal(t, "", bearerFromHeader("Token abc"))
+}
+
+// --- A-3: TypeTyping client→server branch ---
+
+type recordingTypingTracker struct {
+	mu    sync.Mutex
+	marks []struct{ ChannelID, UserID string }
+}
+
+func (r *recordingTypingTracker) Mark(_ context.Context, channelID, userID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.marks = append(r.marks, struct{ ChannelID, UserID string }{channelID, userID})
+	return nil
+}
+
+type fakeTypingConn struct {
+	id   string
+	mu   sync.Mutex
+	sent [][]byte
+}
+
+func (f *fakeTypingConn) ID() string   { return f.id }
+func (f *fakeTypingConn) Close() error { return nil }
+func (f *fakeTypingConn) Send(p []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sent = append(f.sent, append([]byte(nil), p...))
+	return nil
+}
+
+func TestHandleClientMessage_Typing_MarksTracker(t *testing.T) {
+	tt := &recordingTypingTracker{}
+	h := &Handler{typingTracker: tt}
+	conn := &fakeTypingConn{id: "c1"}
+
+	payload, _ := json.Marshal(protocol.TypingRequest{ChannelID: "ch-1"})
+	env, _ := json.Marshal(protocol.Envelope{Type: protocol.TypeTyping, Payload: payload})
+
+	h.handleClientMessage(context.Background(), conn, &auth.Claims{UserID: "u-9"}, env)
+
+	assert.Equal(t, 1, len(tt.marks))
+	assert.Equal(t, "ch-1", tt.marks[0].ChannelID)
+	assert.Equal(t, "u-9", tt.marks[0].UserID)
+}
+
+func TestHandleClientMessage_Typing_EmptyChannel_Skips(t *testing.T) {
+	tt := &recordingTypingTracker{}
+	h := &Handler{typingTracker: tt}
+	conn := &fakeTypingConn{id: "c1"}
+
+	payload, _ := json.Marshal(protocol.TypingRequest{ChannelID: ""})
+	env, _ := json.Marshal(protocol.Envelope{Type: protocol.TypeTyping, Payload: payload})
+
+	h.handleClientMessage(context.Background(), conn, &auth.Claims{UserID: "u-9"}, env)
+
+	assert.Equal(t, 0, len(tt.marks))
+}
+
+func TestHandleClientMessage_Typing_NilTracker_NoPanic(t *testing.T) {
+	// Defensive: when typingTracker isn't wired, the branch must not crash.
+	h := &Handler{typingTracker: nil}
+	conn := &fakeTypingConn{id: "c1"}
+
+	payload, _ := json.Marshal(protocol.TypingRequest{ChannelID: "ch-1"})
+	env, _ := json.Marshal(protocol.Envelope{Type: protocol.TypeTyping, Payload: payload})
+
+	// Should not panic.
+	h.handleClientMessage(context.Background(), conn, &auth.Claims{UserID: "u-9"}, env)
 }

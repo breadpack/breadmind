@@ -440,6 +440,15 @@ class WebApp:
         # from the prometheus_client default registry. The legacy /metrics
         # endpoint below keeps serving the in-tree registry for back-compat.
         app.include_router(kb_metrics_router)
+        # Messenger v1 REST API — 16 sub-routers (workspaces, channels, messages,
+        # search, ...). Built in M1; mounted here so it's reachable from the
+        # main app and from rt-relay's BackfillSince callback. Closes M2a dep #1.
+        from breadmind.messenger.api.v1 import (
+            router as messenger_v1_router,
+            install_exception_handlers as _install_messenger_handlers,
+        )
+        app.include_router(messenger_v1_router)
+        _install_messenger_handlers(app)
         setup_export_routes(app, self)
         setup_backup_routes(app, self)
         setup_webhook_automation_routes(app, self)
