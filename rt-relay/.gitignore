@@ -1,0 +1,17 @@
+# Build output
+bin/
+*.exe
+
+# Test artifacts
+*.test
+*.out
+
+# IDE / editor artifacts
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS artifacts
+.DS_Store
+Thumbs.db

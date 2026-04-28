@@ -1,0 +1,28 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: breadmind
+      POSTGRES_PASSWORD: breadmind
+      POSTGRES_DB: breadmind
+    ports: ["5434:5432"]
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+  api:
+    build: .
+    environment:
+      BREADMIND_DATABASE_URL: postgres://breadmind:breadmind@postgres:5432/breadmind
+      BREADMIND_REDIS_URL: redis://redis:6379
+      BREADMIND_MESSENGER_PASETO_KEY_HEX: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    depends_on: [postgres, redis]
+    ports: ["8080:8080"]
+  rt-relay:
+    build: ./rt-relay
+    environment:
+      BREADMIND_MESSENGER_PASETO_KEY_HEX: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      BREADMIND_RELAY_REDIS_URL: redis://redis:6379
+      BREADMIND_RELAY_CORE_BASE_URL: http://api:8080
+      BREADMIND_RELAY_PG_DSN: postgres://breadmind:breadmind@postgres:5432/breadmind
+    depends_on: [redis, api]
+    ports: ["8090:8090", "9090:9090"]

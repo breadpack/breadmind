@@ -5,6 +5,8 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
+from breadmind.messenger.acl.channel import list_visible_channels
+
 
 @dataclass(frozen=True, slots=True)
 class SearchHit:
@@ -17,36 +19,11 @@ class SearchHit:
     highlight: Optional[str] = None
 
 
-async def _visible_channel_ids(
-    db, *, workspace_id: UUID, user_id: UUID, user_role: str,
-) -> list[UUID]:
-    if user_role in ("owner", "admin"):
-        rows = await db.fetch(
-            "SELECT id FROM channels WHERE workspace_id = $1", workspace_id,
-        )
-    else:
-        if user_role == "member":
-            rows = await db.fetch(
-                """SELECT id FROM channels
-                   WHERE workspace_id = $1 AND (kind = 'public' OR id IN
-                     (SELECT channel_id FROM channel_members WHERE user_id = $2))""",
-                workspace_id, user_id,
-            )
-        else:
-            rows = await db.fetch(
-                """SELECT id FROM channels
-                   WHERE workspace_id = $1 AND id IN
-                     (SELECT channel_id FROM channel_members WHERE user_id = $2)""",
-                workspace_id, user_id,
-            )
-    return [r["id"] for r in rows]
-
-
 async def fts_search_messages(
     db, *, workspace_id: UUID, user_id: UUID, user_role: str,
     query: str, limit: int = 50,
 ) -> list[SearchHit]:
-    visible = await _visible_channel_ids(
+    visible = await list_visible_channels(
         db, workspace_id=workspace_id, user_id=user_id, user_role=user_role,
     )
     if not visible:
@@ -76,7 +53,7 @@ async def semantic_search_messages(
     db, *, workspace_id: UUID, user_id: UUID, user_role: str,
     query_embedding: list[float], limit: int = 50,
 ) -> list[SearchHit]:
-    visible = await _visible_channel_ids(
+    visible = await list_visible_channels(
         db, workspace_id=workspace_id, user_id=user_id, user_role=user_role,
     )
     if not visible:

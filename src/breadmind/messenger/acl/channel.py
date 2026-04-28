@@ -67,6 +67,37 @@ async def can_user_post_message(db, *, user_id: UUID, channel_id: UUID) -> bool:
     return True
 
 
+async def list_visible_channels(
+    db, *, workspace_id: UUID, user_id: UUID, user_role: str,
+) -> list[UUID]:
+    """Channel IDs visible to user_id within workspace_id, filtered by role.
+
+    - owner/admin: all channels in workspace
+    - member: public channels + channels they're a member of
+    - guest/single_channel_guest: only channels they're a member of
+    """
+    if user_role in ("owner", "admin"):
+        rows = await db.fetch(
+            "SELECT id FROM channels WHERE workspace_id = $1",
+            workspace_id,
+        )
+    elif user_role == "member":
+        rows = await db.fetch(
+            """SELECT id FROM channels
+               WHERE workspace_id = $1 AND (kind = 'public' OR id IN
+                 (SELECT channel_id FROM channel_members WHERE user_id = $2))""",
+            workspace_id, user_id,
+        )
+    else:
+        rows = await db.fetch(
+            """SELECT id FROM channels
+               WHERE workspace_id = $1 AND id IN
+                 (SELECT channel_id FROM channel_members WHERE user_id = $2)""",
+            workspace_id, user_id,
+        )
+    return [r["id"] for r in rows]
+
+
 async def can_user_admin_channel(db, *, user_id: UUID, channel_id: UUID) -> bool:
     user = await _get_user_role(db, user_id)
     if user is None:

@@ -64,6 +64,32 @@ jobs:
       - run: pip install ruff
       - run: ruff check src/ tests/
 
+  go-relay:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rt-relay
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - run: go test ./... -race -count=1
+      - uses: golangci/golangci-lint-action@v6
+
+  relay-integration:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    needs: [go-relay]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -e ".[dev,messenger]"
+      - run: docker compose -f docker-compose.test.yml build
+      - run: pytest tests/integration/messenger/relay/ -m relay_integration -v
+
   weekly-quality-regression:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest

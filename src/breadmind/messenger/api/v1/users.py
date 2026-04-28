@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, status, Query
+from fastapi import APIRouter, Depends, status, Query, Request
 from pydantic import BaseModel, EmailStr
 
 from breadmind.messenger.api.v1.deps import (
@@ -15,6 +15,8 @@ from breadmind.messenger.service.user_service import (
     list_users, get_user, update_user_profile, deactivate_user,
 )
 from breadmind.messenger.auth.invite import create_invite
+from breadmind.messenger.acl.cache import VisibleChannelsCache
+from breadmind.messenger.acl.channel import list_visible_channels
 
 
 router = APIRouter(tags=["users"])
@@ -133,3 +135,29 @@ async def deactivate_user_endpoint(
     if ctx.user.role not in ("owner", "admin"):
         raise Forbidden("admin only")
     await deactivate_user(db, workspace_id=ctx.workspace_id, user_id=uid)
+
+
+@router.get("/workspaces/{wid}/users/{uid}/visible-channels")
+async def visible_channels_endpoint(
+    uid: UUID,
+    request: Request,
+    ctx: WorkspaceContext = Depends(get_workspace_context),
+    db=Depends(get_db),
+) -> dict[str, list[str]]:
+    cache = VisibleChannelsCache(request.app.state.redis, ttl_sec=300)
+    cached = await cache.get(user_id=uid)
+    if cached is not None:
+        return {"channel_ids": [str(cid) for cid in cached]}
+    # cache miss: query DB. Need user role from workspace_users.
+    role_row = await db.fetchrow(
+        "SELECT role FROM workspace_users WHERE id = $1 AND workspace_id = $2 "
+        "AND deactivated_at IS NULL",
+        uid, ctx.workspace_id,
+    )
+    if role_row is None:
+        return {"channel_ids": []}
+    ids = await list_visible_channels(
+        db, workspace_id=ctx.workspace_id, user_id=uid, user_role=role_row["role"],
+    )
+    await cache.set(user_id=uid, channel_ids=ids, workspace_id=ctx.workspace_id)
+    return {"channel_ids": [str(cid) for cid in ids]}
