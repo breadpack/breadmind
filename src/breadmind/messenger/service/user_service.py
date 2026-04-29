@@ -5,6 +5,8 @@ from uuid import UUID
 
 from breadmind.messenger.errors import NotFound, ValidationFailed
 from breadmind.messenger.service.audit_service import write_audit
+from breadmind.messenger.acl.cache import VisibleChannelsCache
+from breadmind.messenger.acl.realtime import publish_user_invalidate
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +95,7 @@ async def update_user_profile(
 
 async def update_user_role(
     db, *, workspace_id: UUID, user_id: UUID, role: str,
+    redis=None,
 ) -> UserRow:
     if role not in ("owner", "admin", "member", "guest", "single_channel_guest"):
         raise ValidationFailed([{"field": "role", "msg": "invalid"}])
@@ -104,6 +107,10 @@ async def update_user_role(
         db, workspace_id=workspace_id, entity_kind="user",
         action="role_change", entity_id=user_id, payload={"role": role},
     )
+    if redis is not None:
+        cache = VisibleChannelsCache(redis, ttl_sec=300)
+        await cache.invalidate_user(user_id)
+        await publish_user_invalidate(redis, user_id=user_id)
     return await get_user(db, workspace_id=workspace_id, user_id=user_id)
 
 

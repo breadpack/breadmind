@@ -48,14 +48,26 @@ func mintTestToken(t *testing.T, key paseto.V4SymmetricKey, exp time.Time) strin
 
 // newTestServer wires up a Handler against fresh registry/subscription state
 // and returns the httptest server plus those collaborators for assertions.
-func newTestServer(t *testing.T) (*httptest.Server, *auth.Verifier, *session.Registry, *session.Subscription) {
+//
+// visibleChannels seeds the per-connection ACL cache (post Task 5: ServeHTTP
+// fail-closes on a nil coreClient or VisibleChannels error, so every test
+// that completes the WS upgrade must supply at least one entry — typically
+// keyed on the test user "user-test"). Pass nil to allow only the channels
+// "ch-1", "ch-2" (a permissive default for the legacy tests in this file).
+func newTestServer(t *testing.T, visibleChannels ...string) (*httptest.Server, *auth.Verifier, *session.Registry, *session.Subscription) {
 	t.Helper()
 	_, raw := loadTestKey(t)
 	v, err := auth.NewVerifier(raw)
 	require.NoError(t, err)
 	reg := session.NewRegistry()
 	subs := session.NewSubscription()
-	h := NewHandler(v, reg, subs, nil, nil, 25*time.Second, 60*time.Second)
+	if len(visibleChannels) == 0 {
+		visibleChannels = []string{"ch-1", "ch-2", "ch-bye"}
+	}
+	core := &stubCoreClient{
+		visible: map[string][]string{"user-test": visibleChannels},
+	}
+	h := NewHandler(v, reg, subs, core, nil, 25*time.Second, 60*time.Second)
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	return srv, v, reg, subs
@@ -265,7 +277,7 @@ func TestHandleClientMessage_Typing_MarksTracker(t *testing.T) {
 	payload, _ := json.Marshal(protocol.TypingRequest{ChannelID: "ch-1"})
 	env, _ := json.Marshal(protocol.Envelope{Type: protocol.TypeTyping, Payload: payload})
 
-	h.handleClientMessage(context.Background(), conn, &auth.Claims{UserID: "u-9"}, env)
+	h.handleClientMessage(context.Background(), conn, &auth.Claims{UserID: "u-9"}, nil, env)
 
 	assert.Equal(t, 1, len(tt.marks))
 	assert.Equal(t, "ch-1", tt.marks[0].ChannelID)
@@ -280,7 +292,7 @@ func TestHandleClientMessage_Typing_EmptyChannel_Skips(t *testing.T) {
 	payload, _ := json.Marshal(protocol.TypingRequest{ChannelID: ""})
 	env, _ := json.Marshal(protocol.Envelope{Type: protocol.TypeTyping, Payload: payload})
 
-	h.handleClientMessage(context.Background(), conn, &auth.Claims{UserID: "u-9"}, env)
+	h.handleClientMessage(context.Background(), conn, &auth.Claims{UserID: "u-9"}, nil, env)
 
 	assert.Equal(t, 0, len(tt.marks))
 }
@@ -294,5 +306,5 @@ func TestHandleClientMessage_Typing_NilTracker_NoPanic(t *testing.T) {
 	env, _ := json.Marshal(protocol.Envelope{Type: protocol.TypeTyping, Payload: payload})
 
 	// Should not panic.
-	h.handleClientMessage(context.Background(), conn, &auth.Claims{UserID: "u-9"}, env)
+	h.handleClientMessage(context.Background(), conn, &auth.Claims{UserID: "u-9"}, nil, env)
 }

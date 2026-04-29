@@ -4,10 +4,12 @@ import hashlib
 import json
 from dataclasses import dataclass
 from typing import Final
+from uuid import UUID
 
 
 _TTL_SEC: Final[int] = 24 * 3600
 _LOCK_TTL_SEC: Final[int] = 30  # In-progress lock TTL
+_DEDUP_TTL_SEC: Final[int] = 24 * 3600
 
 
 class IdempotencyConflict(Exception):
@@ -75,3 +77,38 @@ def hash_request(method: str, path: str, body: bytes) -> str:
     h.update(b"\0")
     h.update(body)
     return h.hexdigest()
+
+
+class ClientMsgIdDedup:
+    """Body-keyed message dedup: scope = (sender_id, channel_id, client_msg_id).
+
+    Distinct from :class:`IdempotencyStore` (header-based, transport-layer
+    protection): this guards against logical client retries / double-tap
+    regardless of HTTP retry semantics. 24h TTL per spec D9.
+    """
+
+    def __init__(self, redis):
+        self._r = redis
+
+    @staticmethod
+    def _key(sender_id: UUID, channel_id: UUID, client_msg_id: UUID) -> str:
+        return f"msg:dedup:{sender_id}:{channel_id}:{client_msg_id}"
+
+    async def lookup(
+        self, *, sender_id: UUID, channel_id: UUID, client_msg_id: UUID,
+    ) -> UUID | None:
+        v = await self._r.get(self._key(sender_id, channel_id, client_msg_id))
+        if v is None:
+            return None
+        s = v.decode() if isinstance(v, (bytes, bytearray)) else v
+        return UUID(s)
+
+    async def remember(
+        self, *, sender_id: UUID, channel_id: UUID,
+        client_msg_id: UUID, message_id: UUID,
+    ) -> None:
+        await self._r.set(
+            self._key(sender_id, channel_id, client_msg_id),
+            str(message_id),
+            ex=_DEDUP_TTL_SEC,
+        )

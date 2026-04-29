@@ -7,7 +7,6 @@ pytestmark = pytest.mark.relay_integration
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="M2b: pending relay subscribe ACL check via core.VisibleChannels")
 async def test_non_member_cannot_subscribe_to_private_channel(compose_stack, private_channel_setup):
     _, ws_base = compose_stack
     intruder, channel_id = private_channel_setup

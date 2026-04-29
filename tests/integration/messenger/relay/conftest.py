@@ -92,7 +92,8 @@ async def two_users_one_channel(compose_stack, workspace_owner):
         )
         ch = ch_resp.json()
         await hc.post(
-            f"/api/v1/channels/{ch['id']}/members", json={"user_id": user_b.id}
+            f"/api/v1/workspaces/{workspace_owner.workspace_id}/channels/{ch['id']}/members",
+            json={"user_ids": [str(user_b.id)]},
         )
     return workspace_owner, user_b, ch["id"]
 

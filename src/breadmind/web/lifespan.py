@@ -1,0 +1,223 @@
+"""FastAPI lifespan helpers for migrations and background tasks.
+
+This module is the single source of truth for the FastAPI ``lifespan``
+context manager wired into ``WebApp`` (see ``breadmind.web.app``).
+
+It runs alembic auto-migrate on startup (gated by
+``BREADMIND_AUTO_MIGRATE``, default ``true``) and starts/stops the
+:class:`~breadmind.messenger.dispatcher.OutboxDispatcher` background
+task that drains ``message_outbox`` rows to Redis pub/sub.
+
+The dispatcher start is deliberately tolerant of no-DB / no-Redis
+environments (e.g., unit tests using ``TestClient`` without a real
+Postgres or Redis). It is also gated by
+``BREADMIND_OUTBOX_DISPATCHER_ENABLED`` (default ``true``) so deploys
+that run a separate dispatcher process can opt out.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, Final
+
+from breadmind.messenger.dispatcher import OutboxDispatcher
+from breadmind.storage.migrate_runner import DatabaseUrlNotSet, run_upgrade
+
+if TYPE_CHECKING:
+    from asyncpg import Pool
+
+logger = logging.getLogger(__name__)
+
+
+# Truthy strings for env-driven boolean flags. Matches typical conventions
+# (compatible with the env-flag parsing used elsewhere in BreadMind).
+_TRUTHY: Final[set[str]] = {"true", "1", "yes", "on"}
+
+# Maximum time we wait for the dispatcher task to acknowledge cancellation
+# during shutdown. The dispatcher's ``run()`` loop has frequent await
+# points so 5s is comfortably above the worst-case batch latency.
+_SHUTDOWN_TIMEOUT_SEC: Final[float] = 5.0
+
+
+def auto_migrate_enabled() -> bool:
+    """Return ``True`` when startup auto-migration should run.
+
+    Reads ``BREADMIND_AUTO_MIGRATE`` (default: ``true``). Operators can
+    set it to ``false``/``0``/``no``/``off`` to disable the auto-migrate
+    on startup (e.g., when running migrations manually via ``breadmind
+    migrate up`` in a deploy pipeline).
+    """
+    return os.environ.get("BREADMIND_AUTO_MIGRATE", "true").strip().lower() in _TRUTHY
+
+
+def outbox_dispatcher_enabled() -> bool:
+    """Return ``True`` when the in-process OutboxDispatcher should start.
+
+    Reads ``BREADMIND_OUTBOX_DISPATCHER_ENABLED`` (default: ``true``).
+    Set to ``false``/``0``/``no``/``off`` when running a dedicated
+    out-of-process dispatcher worker, or in test environments that
+    don't want the lifespan to spawn a background task.
+    """
+    return (
+        os.environ.get("BREADMIND_OUTBOX_DISPATCHER_ENABLED", "true")
+        .strip()
+        .lower()
+        in _TRUTHY
+    )
+
+
+async def maybe_run_migration() -> None:
+    """Apply migrations if ``BREADMIND_AUTO_MIGRATE`` is enabled (default true).
+
+    The PG advisory lock inside ``run_upgrade`` makes concurrent invocations
+    safe; only one worker actually performs the upgrade; others wait for
+    the lock and then no-op (alembic detects already-at-head).
+
+    No-DB environments (most unit tests using ``TestClient``) are tolerated
+    by catching ``DatabaseUrlNotSet`` (the typed sentinel raised by
+    ``migrate_runner._db_url`` when neither ``BREADMIND_DB_URL`` nor
+    ``DATABASE_URL`` is set) and logging+skipping. Other migration failures
+    still propagate so a misconfigured deploy doesn't silently start with
+    a stale schema.
+    """
+    if not auto_migrate_enabled():
+        logger.info("BREADMIND_AUTO_MIGRATE disabled; skipping startup migration")
+        return
+    logger.info("running startup alembic upgrade head")
+    try:
+        rev = await asyncio.to_thread(run_upgrade, "head")
+    except DatabaseUrlNotSet as e:
+        logger.info(
+            "BREADMIND_DB_URL/DATABASE_URL not set; skipping startup migration: %s", e
+        )
+        return
+    logger.info("alembic upgrade complete: rev=%s", rev)
+
+
+async def acquire_pg_pool() -> Pool:
+    """Return an asyncpg pool for the messenger dispatcher.
+
+    Constructs a fresh pool from ``BREADMIND_DB_URL`` / ``DATABASE_URL``
+    so the dispatcher has its own pool independent of the main
+    ``Database`` wrapper (the dispatcher's LISTEN connection holds an
+    open connection long-term, and we don't want it to starve handler
+    queries).
+
+    Raises :class:`DatabaseUrlNotSet` when neither env var is set so the
+    caller can degrade gracefully (no-DB unit tests). Other failures
+    (DNS, auth, connection refused, missing optional dep) propagate so a
+    misconfigured production deploy fails loudly on startup rather than
+    silently running without a dispatcher.
+    """
+    import asyncpg  # local import — keep cold-start light
+
+    url = os.environ.get("BREADMIND_DB_URL") or os.environ.get("DATABASE_URL")
+    if not url:
+        raise DatabaseUrlNotSet(
+            "BREADMIND_DB_URL/DATABASE_URL not set; cannot create asyncpg pool"
+        )
+    return await asyncpg.create_pool(url, min_size=2, max_size=10)
+
+
+async def _maybe_start_dispatcher(
+    app,
+) -> tuple[Pool | None, asyncio.Task | None]:
+    """Start :class:`OutboxDispatcher` if all prerequisites are satisfied.
+
+    Returns ``(pool, task)`` on success, or ``(None, None)`` when any
+    skip-gate fires. Each skip path logs at INFO so operators can see
+    which gate triggered.
+
+    Skip gates (in order):
+      1. ``BREADMIND_OUTBOX_DISPATCHER_ENABLED`` is falsy.
+      2. ``app.state.redis`` is unset/None.
+      3. ``BREADMIND_DB_URL`` / ``DATABASE_URL`` is unset
+         (:class:`DatabaseUrlNotSet`).
+
+    Other ``acquire_pg_pool`` failures (connection refused, auth, DNS,
+    ImportError) propagate so a misconfigured deploy fails loudly.
+    """
+    if not outbox_dispatcher_enabled():
+        logger.info(
+            "BREADMIND_OUTBOX_DISPATCHER_ENABLED disabled; skipping dispatcher start"
+        )
+        return None, None
+    redis = getattr(app.state, "redis", None)
+    if redis is None:
+        logger.info(
+            "app.state.redis not configured; skipping OutboxDispatcher start"
+        )
+        return None, None
+    try:
+        pool = await acquire_pg_pool()
+    except DatabaseUrlNotSet as e:
+        logger.info(
+            "BREADMIND_DB_URL/DATABASE_URL not set; skipping dispatcher start: %s",
+            e,
+        )
+        return None, None
+    dispatcher = OutboxDispatcher(pool, redis)
+    task = asyncio.create_task(dispatcher.run(), name="messenger-outbox-dispatcher")
+    app.state.outbox_dispatcher_task = task
+    logger.info("OutboxDispatcher started")
+    return pool, task
+
+
+async def _stop_dispatcher(
+    app,
+    pool: Pool | None,
+    task: asyncio.Task | None,
+) -> None:
+    """Cancel the dispatcher task and close the PG pool, best-effort.
+
+    Clears ``app.state.outbox_dispatcher_task`` so a subsequent lifespan
+    cycle (or other inspectors) doesn't see a stale, completed task
+    reference.
+    """
+    if task is None:
+        return
+    logger.info("cancelling OutboxDispatcher")
+    task.cancel()
+    try:
+        await asyncio.wait_for(task, timeout=_SHUTDOWN_TIMEOUT_SEC)
+    except (asyncio.CancelledError, asyncio.TimeoutError):
+        pass
+    except Exception:  # noqa: BLE001 - best-effort shutdown
+        logger.exception("OutboxDispatcher raised during shutdown")
+    if pool is not None:
+        try:
+            await pool.close()
+        except Exception:  # noqa: BLE001
+            logger.warning("pg pool close failed", exc_info=True)
+    # Clear stale reference so app.state.outbox_dispatcher_task never
+    # points at a completed/cancelled task after shutdown.
+    app.state.outbox_dispatcher_task = None
+    logger.info("OutboxDispatcher stopped")
+
+
+@asynccontextmanager
+async def lifespan(app):
+    """FastAPI lifespan: migrate -> start dispatcher -> yield -> cancel.
+
+    Order:
+      1. Run alembic migrations (gated by ``BREADMIND_AUTO_MIGRATE``).
+      2. Start :class:`OutboxDispatcher` as a background task (gated by
+         ``BREADMIND_OUTBOX_DISPATCHER_ENABLED`` AND availability of
+         ``BREADMIND_DB_URL`` AND ``app.state.redis``).
+      3. Yield control to the app.
+      4. On shutdown: cancel dispatcher with 5s timeout, close PG pool,
+         clear ``app.state.outbox_dispatcher_task``.
+
+    No-DB / no-Redis tolerance: when ``BREADMIND_DB_URL`` is missing or
+    ``app.state.redis`` is unavailable, the dispatcher is skipped with
+    an INFO log. This keeps unit tests that boot the app via
+    ``TestClient`` working without a real Postgres/Redis stack.
+    """
+    await maybe_run_migration()
+    pool, task = await _maybe_start_dispatcher(app)
+    try:
+        yield
+    finally:
+        await _stop_dispatcher(app, pool, task)

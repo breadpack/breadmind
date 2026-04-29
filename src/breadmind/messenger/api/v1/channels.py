@@ -117,3 +117,7 @@ async def archive_endpoint(
     if not await can_user_admin_channel(db, user_id=ctx.user.id, channel_id=cid):
         raise Forbidden("channel admin role required")
     await archive_channel(db, workspace_id=ctx.workspace_id, channel_id=cid)
+    # Spec D8 archive policy: archive != revoke. Members keep read-only
+    # visibility, so archive does NOT publish acl:invalidate :remove. Site 5
+    # (delete_channel `:remove` per member) is deferred until a hard-delete
+    # endpoint is added — see realtime.py for FU note.

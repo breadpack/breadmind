@@ -1,13 +1,11 @@
 # tests/integration/messenger/relay/test_auth.py
 import pytest
-import httpx
 import websockets
 
 pytestmark = pytest.mark.relay_integration
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="M2b: relay-integration job pending api router mount + startup migrations")
 async def test_ws_rejects_invalid_token(compose_stack):
     _, ws_base = compose_stack
     with pytest.raises(websockets.exceptions.InvalidStatus) as ei:
@@ -17,7 +15,6 @@ async def test_ws_rejects_invalid_token(compose_stack):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="M2b: relay-integration job pending api router mount + startup migrations")
 async def test_ws_accepts_valid_token(compose_stack, valid_user_token):
     _, ws_base = compose_stack
     async with websockets.connect(f"{ws_base}/ws?token={valid_user_token}") as ws:

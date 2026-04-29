@@ -9,7 +9,6 @@ pytestmark = pytest.mark.relay_integration
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="M2b: pending api router mount + Redis bridge + body_md/text field unification")
 async def test_message_fanout_to_two_clients(compose_stack, two_users_one_channel):
     _, ws_base = compose_stack
     user_a, user_b, channel_id = two_users_one_channel
@@ -27,7 +26,7 @@ async def test_message_fanout_to_two_clients(compose_stack, two_users_one_channe
         async with httpx.AsyncClient(headers={"Authorization": f"Bearer {user_a.token}"}) as hc:
             resp = await hc.post(
                 f"http://localhost:8080/api/v1/workspaces/{user_a.workspace_id}/channels/{channel_id}/messages",
-                json={"body_md": "hello"},
+                json={"text": "hello"},
             )
             assert resp.status_code == 201
 
@@ -39,7 +38,6 @@ async def test_message_fanout_to_two_clients(compose_stack, two_users_one_channe
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="M2b: pending client-side TypeTyping command branch in relay WS handler")
 async def test_typing_broadcast(compose_stack, two_users_one_channel):
     _, ws_base = compose_stack
     user_a, user_b, channel_id = two_users_one_channel

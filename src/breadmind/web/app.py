@@ -11,6 +11,7 @@ from pathlib import Path
 from breadmind.core.metrics import get_metrics_registry, normalize_path
 
 from breadmind.web.context import AppContext
+from breadmind.web.lifespan import lifespan
 from breadmind.web.idempotency import setup_idempotency
 from breadmind.web.rate_limiter import RateLimiter
 from breadmind.web.versioning import setup_versioning
@@ -71,7 +72,18 @@ class WebApp:
             _version = _pkg_ver("breadmind")
         except Exception:
             _version = "0.0.0"
-        self.app = FastAPI(title="BreadMind", version=_version)
+
+        # Lifespan: runs auto-migrate (BREADMIND_AUTO_MIGRATE, default true)
+        # before the app starts accepting requests, then starts the
+        # OutboxDispatcher background task (gated by
+        # BREADMIND_OUTBOX_DISPATCHER_ENABLED and availability of
+        # ``app.state.redis``) so messenger outbox rows fan out to Redis
+        # pub/sub. Existing ``@app.on_event("startup"|"shutdown")``
+        # handlers below continue to fire — FastAPI runs both the
+        # lifespan and on_event hooks (the latter emits a
+        # DeprecationWarning we accept until those hooks are migrated in
+        # a follow-up).
+        self.app = FastAPI(title="BreadMind", version=_version, lifespan=lifespan)
         # Expose self via FastAPI state so Depends() helpers can reach it
         self.app.state.app_state = self
         self._marketplace = None

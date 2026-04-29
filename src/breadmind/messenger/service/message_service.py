@@ -80,6 +80,24 @@ async def get_message(db, *, channel_id: UUID, message_id: UUID) -> MessageRow:
     return _row_to_message(row)
 
 
+async def get_message_by_client_msg_id(
+    db, *, workspace_id: UUID, client_msg_id: UUID,
+) -> MessageRow | None:
+    """Look up the row produced by a previous POST with this ``client_msg_id``.
+
+    Used by the dedup race-recovery path: if Redis missed but the DB UNIQUE
+    INDEX ``messages_client_msg_id`` on ``(workspace_id, client_msg_id)``
+    collided, this fetches the winner. Returns ``None`` if the index does not
+    contain such a row (defensive — should not happen in practice).
+    """
+    row = await db.fetchrow(
+        f"SELECT {_COLS} FROM messages "
+        f"WHERE workspace_id = $1 AND client_msg_id = $2",
+        workspace_id, client_msg_id,
+    )
+    return _row_to_message(row) if row else None
+
+
 async def edit_message(
     db, *, channel_id: UUID, message_id: UUID,
     text: str | None = None, blocks: list | None = None, edited_by: UUID,

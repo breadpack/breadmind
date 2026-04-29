@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	aclpkg "github.com/breadpack/breadmind/rt-relay/internal/acl"
 	"github.com/breadpack/breadmind/rt-relay/internal/auth"
 	"github.com/breadpack/breadmind/rt-relay/internal/bus"
 	"github.com/breadpack/breadmind/rt-relay/internal/config"
@@ -72,6 +73,18 @@ func main() {
 		os.Exit(1)
 	}
 	defer stop()
+
+	// ACL invalidation subscriber (Task 9): consume `acl:invalidate:*` from
+	// Redis and update each affected connection's per-conn ACL cache,
+	// emitting Revoked/Granted client envelopes when the local view changes.
+	// Workspace ID is read per-conn (multi-workspace correct).
+	aclHandler := aclpkg.NewConnectionsHandler(
+		transport.NewACLRegistry(registry),
+		core,
+		transport.NewEnvelopeFactory(),
+	)
+	aclCancel := aclpkg.Subscribe(ctx, rdb, aclHandler)
+	defer aclCancel()
 
 	handler := transport.NewHandler(
 		verifier, registry, subs, core,

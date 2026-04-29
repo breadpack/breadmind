@@ -17,6 +17,7 @@ from breadmind.messenger.service.user_service import (
 from breadmind.messenger.auth.invite import create_invite
 from breadmind.messenger.acl.cache import VisibleChannelsCache
 from breadmind.messenger.acl.channel import list_visible_channels
+from breadmind.messenger.acl.realtime import publish_user_invalidate
 
 
 router = APIRouter(tags=["users"])
@@ -129,12 +130,18 @@ async def patch_profile_endpoint(
 @router.delete("/workspaces/{wid}/users/{uid}", status_code=204)
 async def deactivate_user_endpoint(
     uid: UUID,
+    request: Request,
     ctx: WorkspaceContext = Depends(get_workspace_context),
     db=Depends(get_db),
 ):
     if ctx.user.role not in ("owner", "admin"):
         raise Forbidden("admin only")
     await deactivate_user(db, workspace_id=ctx.workspace_id, user_id=uid)
+    redis = getattr(request.app.state, "redis", None)
+    if redis is not None:
+        cache = VisibleChannelsCache(redis, ttl_sec=300)
+        await cache.invalidate_user(uid)
+        await publish_user_invalidate(redis, user_id=uid)
 
 
 @router.get("/workspaces/{wid}/users/{uid}/visible-channels")

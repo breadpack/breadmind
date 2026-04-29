@@ -10,6 +10,7 @@ from breadmind.messenger.api.v1.deps import (
 from breadmind.messenger.errors import Forbidden
 from breadmind.messenger.acl.channel import can_user_admin_channel
 from breadmind.messenger.acl.cache import VisibleChannelsCache
+from breadmind.messenger.acl.realtime import publish_user_channel_change
 from breadmind.messenger.service.channel_service import add_members, remove_member
 
 
@@ -31,9 +32,14 @@ async def add_members_endpoint(
     if not await can_user_admin_channel(db, user_id=ctx.user.id, channel_id=cid):
         raise Forbidden("channel admin role required")
     await add_members(db, channel_id=cid, user_ids=body.user_ids)
-    cache = VisibleChannelsCache(request.app.state.redis, ttl_sec=300)
-    for uid in body.user_ids:
-        await cache.invalidate_user(uid)
+    redis = getattr(request.app.state, "redis", None)
+    if redis is not None:
+        cache = VisibleChannelsCache(redis, ttl_sec=300)
+        for uid in body.user_ids:
+            await cache.invalidate_user(uid)
+            await publish_user_channel_change(
+                redis, user_id=uid, channel_id=cid, op="add",
+            )
     return {"added": [str(u) for u in body.user_ids]}
 
 
@@ -47,5 +53,10 @@ async def remove_member_endpoint(
     if uid != ctx.user.id and not await can_user_admin_channel(db, user_id=ctx.user.id, channel_id=cid):
         raise Forbidden("admin or self required")
     await remove_member(db, channel_id=cid, user_id=uid)
-    cache = VisibleChannelsCache(request.app.state.redis, ttl_sec=300)
-    await cache.invalidate_user(uid)
+    redis = getattr(request.app.state, "redis", None)
+    if redis is not None:
+        cache = VisibleChannelsCache(redis, ttl_sec=300)
+        await cache.invalidate_user(uid)
+        await publish_user_channel_change(
+            redis, user_id=uid, channel_id=cid, op="remove",
+        )
