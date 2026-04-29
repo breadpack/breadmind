@@ -19,4 +19,4 @@ COPY config/ config/
 RUN adduser --disabled-password --no-create-home breadmind
 USER breadmind
 
-CMD ["breadmind", "--web", "--host", "0.0.0.0"]
+CMD ["breadmind", "web", "--host", "0.0.0.0"]

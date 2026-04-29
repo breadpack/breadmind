@@ -5,18 +5,25 @@ services:
       POSTGRES_USER: breadmind
       POSTGRES_PASSWORD: breadmind
       POSTGRES_DB: breadmind
-    ports: ["5434:5432"]
+    # canary uses 15434 so dev breadmind-postgres can keep 5434
+    ports: ["15434:5432"]
   redis:
     image: redis:7-alpine
-    ports: ["6379:6379"]
+    # host port intentionally not published (avoid clash with unrelated tf-redis on 6379)
+    expose: ["6379"]
   api:
     build: .
     environment:
-      BREADMIND_DATABASE_URL: postgres://breadmind:breadmind@postgres:5432/breadmind
+      BREADMIND_DB_URL: postgresql://breadmind:breadmind@postgres:5432/breadmind
       BREADMIND_REDIS_URL: redis://redis:6379
       BREADMIND_MESSENGER_PASETO_KEY_HEX: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      # Canary stub: log OTP codes instead of mailing; expose them in
+      # /auth/otp/request response so the smoke flow can complete end-to-end.
+      BREADMIND_MESSENGER_OTP_STUB: "true"
+      BREADMIND_MESSENGER_OTP_RETURN_CODE: "true"
     depends_on: [postgres, redis]
-    ports: ["8080:8080"]
+    # host 8080/8081/18080 all occupied by other processes — using 28080 for canary
+    ports: ["28080:8080"]
   rt-relay:
     build: ./rt-relay
     environment:
@@ -25,4 +32,4 @@ services:
       BREADMIND_RELAY_CORE_BASE_URL: http://api:8080
       BREADMIND_RELAY_PG_DSN: postgres://breadmind:breadmind@postgres:5432/breadmind
     depends_on: [redis, api]
-    ports: ["8090:8090", "9090:9090"]
+    ports: ["28090:8090", "29090:9090"]

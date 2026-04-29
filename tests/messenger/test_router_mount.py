@@ -9,15 +9,21 @@ from fastapi.testclient import TestClient
 
 
 def test_messenger_router_mounted():
-    """The OpenAPI schema must include at least one /api/v1/workspaces/... path."""
+    """The OpenAPI schema must include at least one /api/workspaces/... path.
+
+    Routes register at the un-versioned `/api` prefix; the versioning
+    middleware rewrites `/api/v1/...` requests to that prefix at runtime.
+    OpenAPI therefore shows the un-versioned mount path while production
+    URLs carry `/v1` (mirrors `tests/web/test_versioning.py::TestV1RouteAccessible`).
+    """
     from breadmind.web.app import WebApp
     web = WebApp()
     client = TestClient(web.app)
     spec = client.get("/openapi.json").json()
     paths = spec.get("paths", {})
-    messenger_paths = [p for p in paths if p.startswith("/api/v1/workspaces")]
+    messenger_paths = [p for p in paths if p.startswith("/api/workspaces")]
     assert messenger_paths, (
-        "messenger v1 router not mounted; expected /api/v1/workspaces/* paths "
+        "messenger v1 router not mounted; expected /api/workspaces/* paths "
         "in OpenAPI"
     )
 

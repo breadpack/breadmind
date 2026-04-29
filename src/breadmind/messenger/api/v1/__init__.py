@@ -3,7 +3,7 @@ from fastapi.responses import Response
 
 from breadmind.messenger.errors import MessengerError, error_to_response
 
-router = APIRouter(prefix="/api/v1")
+router = APIRouter(prefix="/api")
 
 
 def install_exception_handlers(app):
@@ -13,6 +13,8 @@ def install_exception_handlers(app):
 
 
 # Register sub-routers
+from breadmind.messenger.api.v1 import auth  # noqa: E402
+router.include_router(auth.router)
 from breadmind.messenger.api.v1 import workspaces  # noqa: E402
 router.include_router(workspaces.router)
 from breadmind.messenger.api.v1 import users  # noqa: E402

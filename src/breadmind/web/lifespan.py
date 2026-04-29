@@ -197,27 +197,123 @@ async def _stop_dispatcher(
     logger.info("OutboxDispatcher stopped")
 
 
+async def _setup_messenger_app_state(
+    app,
+) -> tuple["Pool | None", "object | None"]:
+    """Wire ``app.state.{db_pool, redis, paseto_key_hex}`` for the messenger v1 API.
+
+    The messenger router's dependencies (``messenger/api/v1/deps.py``) and
+    its sub-routers (``channels``, ``messages``, ``users``) read these
+    three slots off ``app.state``. Tests preset them via ``messenger_app``
+    fixture; production previously had no equivalent wiring, leaving every
+    messenger request 500/AttributeError. This helper plugs the gap.
+
+    Each slot is independently tolerant of missing env vars: an unset env
+    var is logged at INFO and the slot is left untouched (so existing
+    test fixtures that pre-populate ``app.state.redis`` keep working).
+
+    Returns ``(api_pool, redis_client)`` so the caller can clean them up
+    on shutdown.
+    """
+    # PASETO key — required by deps.get_current_user and auth router.
+    key_hex = os.environ.get("BREADMIND_MESSENGER_PASETO_KEY_HEX")
+    if key_hex:
+        app.state.paseto_key_hex = key_hex
+        logger.info("messenger PASETO key configured on app.state")
+    else:
+        logger.info(
+            "BREADMIND_MESSENGER_PASETO_KEY_HEX not set; "
+            "messenger auth endpoints will reject requests"
+        )
+
+    # Dedicated asyncpg pool for messenger API request handlers. Kept
+    # separate from the dispatcher pool so the dispatcher's LISTEN
+    # connection (long-lived) cannot starve handler queries.
+    api_pool = None
+    try:
+        api_pool = await acquire_pg_pool()
+        app.state.db_pool = api_pool
+        logger.info("messenger db_pool configured on app.state")
+    except DatabaseUrlNotSet as e:
+        logger.info(
+            "BREADMIND_DB_URL/DATABASE_URL not set; messenger db_pool unavailable: %s",
+            e,
+        )
+
+    # Redis client — backs OutboxDispatcher pub/sub, VisibleChannelsCache,
+    # and IdempotencyStore. Use a fresh client (not shared with any other
+    # subsystem) so its lifecycle matches the lifespan exactly.
+    redis_client = None
+    redis_url = os.environ.get("BREADMIND_REDIS_URL")
+    if redis_url:
+        try:
+            import redis.asyncio as aioredis  # local import — keep cold-start light
+
+            redis_client = aioredis.from_url(redis_url)
+            await redis_client.ping()
+            app.state.redis = redis_client
+            logger.info("redis client configured on app.state")
+        except Exception as e:  # noqa: BLE001 - tolerant by design
+            logger.warning(
+                "redis client init failed (%s); messenger pub/sub features disabled",
+                e,
+            )
+            if redis_client is not None:
+                try:
+                    await redis_client.aclose()
+                except Exception:  # noqa: BLE001
+                    pass
+            redis_client = None
+    else:
+        logger.info(
+            "BREADMIND_REDIS_URL not set; messenger pub/sub features disabled"
+        )
+
+    return api_pool, redis_client
+
+
+async def _teardown_messenger_app_state(
+    api_pool: "Pool | None",
+    redis_client: "object | None",
+) -> None:
+    """Best-effort close of resources created by ``_setup_messenger_app_state``."""
+    if redis_client is not None:
+        try:
+            await redis_client.aclose()
+        except Exception:  # noqa: BLE001
+            logger.warning("redis client close failed", exc_info=True)
+    if api_pool is not None:
+        try:
+            await api_pool.close()
+        except Exception:  # noqa: BLE001
+            logger.warning("messenger api pool close failed", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app):
-    """FastAPI lifespan: migrate -> start dispatcher -> yield -> cancel.
+    """FastAPI lifespan: migrate -> wire app.state -> start dispatcher -> yield -> cancel.
 
     Order:
       1. Run alembic migrations (gated by ``BREADMIND_AUTO_MIGRATE``).
-      2. Start :class:`OutboxDispatcher` as a background task (gated by
+      2. Wire ``app.state.{db_pool, redis, paseto_key_hex}`` for the
+         messenger v1 API (each slot independently tolerant of missing
+         env vars).
+      3. Start :class:`OutboxDispatcher` as a background task (gated by
          ``BREADMIND_OUTBOX_DISPATCHER_ENABLED`` AND availability of
          ``BREADMIND_DB_URL`` AND ``app.state.redis``).
-      3. Yield control to the app.
-      4. On shutdown: cancel dispatcher with 5s timeout, close PG pool,
-         clear ``app.state.outbox_dispatcher_task``.
+      4. Yield control to the app.
+      5. On shutdown: cancel dispatcher, close dispatcher PG pool,
+         close messenger api pool + redis client.
 
-    No-DB / no-Redis tolerance: when ``BREADMIND_DB_URL`` is missing or
-    ``app.state.redis`` is unavailable, the dispatcher is skipped with
-    an INFO log. This keeps unit tests that boot the app via
+    No-DB / no-Redis tolerance: when env vars are missing, each subsystem
+    skips with an INFO log. This keeps unit tests that boot the app via
     ``TestClient`` working without a real Postgres/Redis stack.
     """
     await maybe_run_migration()
+    api_pool, redis_client = await _setup_messenger_app_state(app)
     pool, task = await _maybe_start_dispatcher(app)
     try:
         yield
     finally:
         await _stop_dispatcher(app, pool, task)
+        await _teardown_messenger_app_state(api_pool, redis_client)

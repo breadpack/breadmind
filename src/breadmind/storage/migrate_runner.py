@@ -151,12 +151,24 @@ def run_stamp(rev: str) -> None:
 
 
 def current_head() -> str:
-    """Return current DB revision (read-only; no advisory lock)."""
+    """Return current DB revision (read-only; no advisory lock).
+
+    Reads ``alembic_version.version_num`` directly via psycopg rather than
+    handing the raw psycopg connection to ``alembic.MigrationContext.configure``
+    — alembic's ``configure`` requires a SQLAlchemy connection (it
+    immediately reads ``connection.dialect``) and silently fails with an
+    AttributeError on raw DBAPI connections.
+    """
     dsn = _normalize_db_url(_db_url())
     with psycopg.connect(dsn, autocommit=True) as conn:
-        ctx = MigrationContext.configure(conn)
-        rev = ctx.get_current_revision()
-        return rev or "(empty)"
+        try:
+            row = conn.execute(
+                "SELECT version_num FROM alembic_version LIMIT 1",
+            ).fetchone()
+        except psycopg.errors.UndefinedTable:
+            # Fresh DB — no migrations applied yet.
+            return "(empty)"
+        return row[0] if row else "(empty)"
 
 
 def pending_count() -> int:

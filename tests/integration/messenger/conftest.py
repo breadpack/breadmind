@@ -70,15 +70,22 @@ async def redis_client():
 
 @pytest_asyncio.fixture
 async def messenger_app(db_pool, redis_client):
-    """FastAPI app with full /api/v1 router mounted, ready for httpx.AsyncClient."""
+    """FastAPI app with full /api/v1 router mounted, ready for httpx.AsyncClient.
+
+    Mirrors production wiring: router carries the bare `/api` prefix and
+    `setup_versioning` installs the middleware that rewrites incoming
+    `/api/v1/...` scopes to `/api/...` so the same routes match.
+    """
     from fastapi import FastAPI
     from breadmind.messenger.api.v1 import router, install_exception_handlers
+    from breadmind.web.versioning import setup_versioning
     app = FastAPI()
     install_exception_handlers(app)
     app.state.db_pool = db_pool
     app.state.redis = redis_client
     app.state.paseto_key_hex = "00" * 32
     app.include_router(router)
+    setup_versioning(app)
     return app
 
 
